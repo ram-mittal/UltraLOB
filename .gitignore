@@ -1,0 +1,20 @@
+# Build directories
+build/
+.cache/
+
+# Executables and debug symbols
+*.exe
+*.pdb
+*.obj
+*.lib
+*.a
+*.dll
+
+# Logs and Journals
+*.journal
+*.log
+out.txt
+
+# OS generated files
+.DS_Store
+Thumbs.db
