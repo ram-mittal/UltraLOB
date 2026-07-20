@@ -59,6 +59,33 @@ graph TD
     MDPublisher -->|UDP Multicast| MDClient[UDP Multicast Subscribers]
 ```
 
+## Performance Benchmarks
+
+The system was benchmarked locally on an 8-core CPU (1.89 GHz). Below are the metrics captured from the C++ Google Benchmark suites.
+
+### Latency
+Order processing times (from queue dequeue to execution report emission) are consistently bounded in the sub-microsecond range.
+| Operation | Average Latency |
+| :--- | :--- |
+| **Limit Order Add** | ~364 ns |
+| **Immediate Fill (IOC)** | ~364 ns |
+| **Market Order** | ~384 ns |
+| **Add / Cancel Cycle** | ~454 ns |
+
+### Throughput
+Peak matching engine processing capabilities on a single core.
+| Workload | Orders per Second |
+| :--- | :--- |
+| **Limit Order Rain** (Uncrossed) | ~4.10 Million/sec |
+| **Market Order Flood** | ~2.90 Million/sec |
+| **Aggressive Crossing** (Heavy fills) | ~2.72 Million/sec |
+
+### Core Infrastructure
+| Component | Metric | Performance |
+| :--- | :--- | :--- |
+| **Sequencer** | Roundtrip Latency | ~700 ns |
+| **Journaling** | Append Throughput | ~10.5 Million/sec |
+
 ## How to Run
 
 ### 1. Start the Server
