@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "ultralob/matching_engine.hpp"
+#include "ultralob/util/profiler.hpp"
 
 #include <chrono>
 #include <stdexcept>
@@ -132,6 +133,7 @@ Order* MatchingEngine::allocate_and_validate(const OrderRequest& req,
 // submit
 // ─────────────────────────────────────────────────────────────────────────────
 Order* MatchingEngine::submit(const OrderRequest& req) {
+    TRACE_EVENT("MatchingEngine::submit");
     RejectReason reason = RejectReason::None;
     Order* o = allocate_and_validate(req, reason);
 

@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "ultralob/order_book.hpp"
+#include "ultralob/util/profiler.hpp"
 
 #include <chrono>
 #include <cassert>
@@ -166,6 +167,7 @@ bool OrderBook::can_fill_sell(Qty qty, Price limit) const noexcept {
 // match_buy — match an incoming Buy against the ask side
 // ─────────────────────────────────────────────────────────────────────────────
 void OrderBook::match_buy(Order* aggressor) {
+    TRACE_EVENT("OrderBook::match_buy");
     while (aggressor->leaves_qty > 0 && !asks_.empty()) {
         auto best_ask_price_opt = asks_.best_price();
         if (!best_ask_price_opt) break;
@@ -212,6 +214,7 @@ void OrderBook::match_buy(Order* aggressor) {
 // match_sell — match an incoming Sell against the bid side
 // ─────────────────────────────────────────────────────────────────────────────
 void OrderBook::match_sell(Order* aggressor) {
+    TRACE_EVENT("OrderBook::match_sell");
     while (aggressor->leaves_qty > 0 && !bids_.empty()) {
         auto best_bid_price_opt = bids_.best_price();
         if (!best_bid_price_opt) break;
@@ -343,6 +346,7 @@ void OrderBook::activate_stops(Price new_last_trade_price) {
 // submit — main order routing entry point
 // ─────────────────────────────────────────────────────────────────────────────
 void OrderBook::submit(Order* o) {
+    TRACE_EVENT("OrderBook::submit");
     assert(o != nullptr);
 
     // Emit acknowledgment report
