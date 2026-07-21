@@ -116,6 +116,7 @@ target_include_directories(ultralob PUBLIC
 target_compile_definitions(ultralob PUBLIC 
   ASIO_STANDALONE 
   ASIO_NO_TYPEID
+  ULTRALOB_PROFILING=1
 )
 
 if(WIN32)
