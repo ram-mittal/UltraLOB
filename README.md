@@ -1,124 +1,269 @@
-# UltraLOB - Ultra-Low-Latency Order Book Engine
+# UltraLOB
 
-UltraLOB is a high-performance, institutional-grade Limit Order Book and Matching Engine written in C++20. Designed for ultra-low latency, it employs lock-free concurrency, memory pools, atomic risk checks, and UDP multicast market data dissemination to achieve sub-microsecond matching and deterministic performance.
+### Ultra-Low-Latency Limit Order Book & Matching Engine
 
-## Key Features
+UltraLOB is a high-performance, deterministic exchange-engine research project written in **C++20**. It models the core execution path of a modern electronic market: inbound order handling, pre-trade risk checks, sequencing, price-time-priority matching, journaling, execution reporting, and market-data dissemination.
 
-### 1. **Core Matching Engine (`MatchingEngine`, `OrderBook`)**
-At the heart of UltraLOB is a single-threaded matching engine per symbol. This avoids lock contention on the hot path (similar to real exchange architectures like Nasdaq and CME).
-- **Price-Time Priority (FIFO):** Uses a hybrid data structure: `std::map<Price, PriceLevel>` for price levels and intrusive doubly-linked lists (`std::list` conceptually, but implemented with raw pointers `prev`/`next` in `Order`) for O(1) order insertion and deletion.
-- **O(1) Order Lookup:** A hash map maps `OrderId` to the resting `Order*` for instant cancel/modify operations.
-- **Stop & Stop-Limit Orders:** Built-in support for stop orders, which trigger automatically when the Last Traded Price crosses the trigger price.
+The project is built around a simple systems principle:
 
-### 2. **Lock-Free Concurrency (`ExchangeNode`, `MPSCQueue`)**
-- **Disruptor Pattern (Sequencer):** The matching engine thread runs a tight spin-loop, polling an inbound Multi-Producer Single-Consumer (MPSC) lock-free queue.
-- **Thread Pinning:** The sequencer thread can be pinned to an isolated CPU core to ensure CPU cache warmth and prevent OS context-switching jitter.
-- **Wait-Free Allocation:** Uses pre-allocated `OrderPool` and `PriceLevelPool` to ensure 0 memory allocations (`new`/`malloc`) on the hot path.
+> **Keep the critical path deterministic, allocation-free, and explicit.**
 
-### 3. **Crash-Resilient Journaling (`Journal`)**
-- **Memory-Mapped Files:** Inbound requests (Adds, Cancels, Modifies) are synchronously appended to a memory-mapped ring buffer journal before execution.
-- **Deterministic Replay:** In the event of a crash, the ExchangeNode replays the journal to reconstruct the exact state of the order book and risk engine.
-- **Ultra-Low Overhead:** Journal appending takes ~60-80ns per message using SIMD-accelerated memory copies and atomic cursors.
+---
 
-### 4. **Pre-Trade Risk Engine (`RiskEngine`)**
-- **Thread-Safe Account Management:** Handles atomic buying power reservations (e.g. `held_buying_power`) to prevent naked short-selling or over-leveraging.
-- **Fat-Finger Checks:** Prevents orders exceeding maximum size limits.
-- **Integration:** The TCP Gateway synchronously performs Risk Checks using lock-free atomics before handing the order off to the sequencer queue.
+## System Overview
 
-### 5. **Market Data Dissemination (`MarketDataPublisher`)**
-- **UDP Multicast:** Broadcasts incremental order book events (Add, Execute, Cancel) via UDP Multicast (simulating protocols like Nasdaq ITCH).
-- **Zero-Allocation Broadcast:** The sequencer pushes market data structs to an asynchronous Publisher thread via a lock-free queue, avoiding I/O blocking on the matching engine core.
-
-### 6. **TCP Gateway (`Gateway`)**
-- Uses `asio` (standalone) for non-blocking asynchronous TCP socket handling.
-- Implements a fixed-length binary wire protocol for minimum serialization overhead.
-
-## Architecture Diagram
+UltraLOB separates network-facing concerns from the single-threaded matching path while using lock-free queues and preallocated memory to minimize contention and runtime allocation.
 
 ```mermaid
 graph TD
-    Client1[TCP Client 1] -->|Inbound Req| Gateway
-    Client2[TCP Client 2] -->|Inbound Req| Gateway
-    
-    Gateway -->|Atomic Check| RiskEngine[Risk Engine]
-    RiskEngine -->|Reject| Gateway
-    RiskEngine -->|Approve| MPSC_In[Lock-Free Inbound Queue]
-    
-    MPSC_In --> Sequencer[ExchangeNode Spin Loop]
-    Sequencer -->|Append| Journal[(Memory-Mapped Journal)]
-    Sequencer --> MatchingEngine[Matching Engine]
-    
-    MatchingEngine -->|Exec Reports| MPSC_Out[Lock-Free Outbound Queue]
-    MatchingEngine -->|MD Events| MPSC_MD[Lock-Free MD Queue]
-    
-    MPSC_Out --> Gateway
-    Gateway -->|Responses| Client1
-    Gateway -->|Responses| Client2
-    
-    MPSC_MD --> MDPublisher[Market Data Publisher Thread]
-    MDPublisher -->|UDP Multicast| MDClient[UDP Multicast Subscribers]
+    C1[TCP Client] --> G[Asio TCP Gateway]
+    C2[TCP Client] --> G
+
+    G --> R[Pre-Trade Risk Engine]
+    R -->|Reject| G
+    R -->|Approve| Q[Lock-Free MPSC Queue]
+
+    Q --> X[ExchangeNode / Sequencer]
+    X --> J[Memory-Mapped Journal]
+    X --> M[Matching Engine]
+
+    M --> O[Execution Queue]
+    M --> D[Market Data Queue]
+
+    O --> G
+    D --> P[Market Data Publisher]
+    P --> U[UDP Multicast Subscribers]
 ```
 
-## How to Run
+---
 
-### 1. Start the Server
+## Core Design
+
+### Matching Engine
+
+The matching engine is organized as a **single-threaded execution context per symbol**, keeping the hot path free from conventional mutex contention.
+
+- Price-time priority (FIFO)
+- `std::map<Price, PriceLevel>` for price-level organization
+- Intrusive order links for constant-time insertion/removal within a level
+- Hash-based `OrderId → Order*` lookup for cancellation and modification
+- Market, limit, stop and stop-limit order handling
+
+### Concurrency Model
+
+UltraLOB uses concurrency primarily at the system boundaries rather than inside the matching algorithm.
+
+- Multi-Producer Single-Consumer lock-free queue
+- Sequencer spin loop
+- Optional CPU thread pinning
+- Preallocated order and price-level pools
+- No `new`/`malloc` allocation on the matching hot path
+
+This architecture intentionally favors deterministic execution over unrestricted parallelism. Symbol-level partitioning provides the path toward multi-engine scaling.
+
+### Journaling & Deterministic Recovery
+
+Inbound requests are appended to a memory-mapped journal before execution.
+
+The journal provides:
+
+- Crash-resilient event persistence
+- Deterministic replay
+- Order-book state reconstruction
+- Risk-state reconstruction
+- Reproducible execution sequences
+
+The measured journal append path is approximately **60–80 ns per message** in the current benchmark environment.
+
+### Pre-Trade Risk
+
+Risk validation is performed before an order enters the matching-engine queue.
+
+Current controls include:
+
+- Atomic buying-power reservations
+- Position / leverage protection
+- Maximum-order-size (fat-finger) checks
+- Lock-free account-state updates
+
+The objective is to reject invalid orders before they reach the exchange execution path rather than adding risk logic to the matching hot loop.
+
+### Market Data
+
+Matched and book-state events are forwarded asynchronously to a dedicated market-data publisher.
+
+- UDP multicast dissemination
+- Incremental book events
+- Add / Execute / Cancel events
+- Lock-free handoff from the matching engine
+- No network I/O on the matching-engine thread
+
+The design is intended to resemble the separation between an exchange's internal matching process and its downstream market-data distribution layer.
+
+### Gateway
+
+The network gateway uses **standalone Asio** for asynchronous TCP communication and a fixed-length binary protocol to keep serialization overhead predictable.
+
+---
+
+## Performance
+
+Benchmarks are included in the repository and should be interpreted in the context of the stated test hardware and workload rather than as universal latency claims.
+
+### Lock-Free Queue Scaling
+
+| Producer Threads | Throughput | Latency |
+|---:|---:|---:|
+| 1 | ~2.98 M/s | 342 ns |
+| 2 | ~2.86 M/s | 345 ns |
+| 4 | ~1.86 M/s | 547 ns |
+| 8 | ~1.48 M/s | 804 ns |
+| 16 | ~1.60 M/s | 1160 ns |
+
+The results illustrate the expected contention trade-off around a single consumer. UltraLOB therefore treats **symbol partitioning across independent engine instances** as the appropriate route to horizontal scaling.
+
+### Symbol Scaling
+
+| Active Symbols | Throughput | Latency |
+|---:|---:|---:|
+| 1 | ~2.78 M/s | 368 ns |
+| 10 | ~3.01 M/s | 346 ns |
+| 100 | ~1.68 M/s | 581 ns |
+| 1,000 | ~1.77 M/s | 571 ns |
+| 10,000 | ~1.56 M/s | 645 ns |
+
+### Memory Topology
+
+| Component | Measurement |
+|---|---:|
+| `sizeof(Order)` | 128 bytes |
+| `sizeof(PriceLevel)` | 32 bytes |
+| `OrderPool` — 1M preallocated | ~122 MB |
+| Journal virtual mapping | 1 GB |
+| Engine working set | ~4 MB |
+| Pagefile usage | 0 MB |
+
+**Benchmark hardware:** 8 × 1.89 GHz CPUs, 6 MiB L3 cache.
+
+> Benchmark results are workload- and hardware-dependent. Re-run the supplied benchmarks when comparing revisions or machines.
+
+---
+
+## Profiling & Observability
+
+The project includes a profiling benchmark targeting the execution-critical components:
+
+- `OrderBook::submit()`
+- `match_buy()`
+- `match_sell()`
+
+The profiler generates a Chrome Tracing-compatible JSON trace that can be inspected with `chrome://tracing` or **Perfetto**.
+
+This makes performance investigation reproducible rather than relying only on aggregate throughput numbers.
+
+---
+
+## Repository Structure
+
+```text
+UltraLOB/
+├── include/ultralob/      # Public engine interfaces
+├── src/                   # Core implementation
+├── server/                # Exchange server / gateway
+├── scripts/               # Client and market-data utilities
+├── tests/                 # Functional and engine tests
+├── bench/                 # Performance benchmarks / profiling
+├── CMakeLists.txt
+├── BENCHMARKS.md
+└── README.md
+```
+
+---
+
+## Build
+
+UltraLOB uses **CMake** and a C++20 toolchain.
+
+```bash
+git clone https://github.com/ram-mittal/UltraLOB.git
+cd UltraLOB
+cmake -S . -B build
+cmake --build build --config Release
+```
+
+### Run the exchange server
+
 ```bash
 ./build/ultralob_server.exe 8080
 ```
-This will start the TCP Gateway on port 8080, the UDP Multicast feed on `239.255.0.1:9001`, and initialize the memory-mapped journal (`ultralob_events.journal`).
 
-### 2. Start the Market Data Subscriber
-In a separate terminal, run the python script to listen for live order book updates:
+The server initializes the TCP gateway, UDP market-data feed and memory-mapped journal.
+
+### Subscribe to market data
+
 ```bash
 python scripts/md_client.py
 ```
 
-### 3. Connect a Client & Send Orders
-In a third terminal, run the python client to submit an order:
+### Submit orders
+
 ```bash
 python scripts/client.py
 ```
-You will see the `md_client.py` terminal output `ADD` and `EXEC` events as orders match on the engine!
 
-## 🚀 Performance & Benchmarks
+---
 
-The system achieves ultra-low latency through careful memory management, lock-free structures, and cache alignment.
+## Engineering Trade-offs
 
-### 1. Scaling Benchmark (Threads & Symbols)
-*Test Hardware: 8x 1.89GHz CPUs (L3 Cache 6144 KiB)*
+UltraLOB deliberately prioritizes:
 
-**Thread Scaling (Lock-Free MPSC contention test):**
-| Concurrent Threads | Items/Second | Latency (ns) |
-|--------------------|--------------|--------------|
-| 1 Thread           | ~2.98 M/s    | 342 ns       |
-| 2 Threads          | ~2.86 M/s    | 345 ns       |
-| 4 Threads          | ~1.86 M/s    | 547 ns       |
-| 8 Threads          | ~1.48 M/s    | 804 ns       |
-| 16 Threads         | ~1.60 M/s    | 1160 ns      |
+**Determinism** over unrestricted parallelism  
+**Preallocation** over dynamic memory convenience  
+**Explicit data structures** over abstraction-heavy designs  
+**Measured performance** over theoretical throughput claims  
+**Reproducibility** over opaque optimization
 
-*Note: Performance scales inversely as threads increase due to the MPSC spin-lock contention on a single sequencer engine. For true multi-core scaling, the system distributes symbols across multiple engine threads.*
+The architecture reflects the constraints of an electronic execution system: correctness and predictable behavior remain prerequisites for low latency.
 
-**Symbol Scaling (Order Book density test):**
-| Active Symbols | Items/Second | Latency (ns) |
-|----------------|--------------|--------------|
-| 1 Symbol       | ~2.78 M/s    | 368 ns       |
-| 10 Symbols     | ~3.01 M/s    | 346 ns       |
-| 100 Symbols    | ~1.68 M/s    | 581 ns       |
-| 1,000 Symbols  | ~1.77 M/s    | 571 ns       |
-| 10,000 Symbols | ~1.56 M/s    | 645 ns       |
+---
 
-### 2. Memory Topology & Utilization
-Object sizes and pool mappings (zero-allocation hot path):
+## Research Direction
 
-| Component                  | Size / Metric |
-|----------------------------|---------------|
-| `sizeof(Order)`            | 128 bytes     |
-| `sizeof(PriceLevel)`       | 32 bytes      |
-| `OrderPool` (1M Pre-alloc) | 122 MB        |
-| Journal Map Virtual Size   | 1024 MB (1GB) |
-| Engine Working Set (RAM)   | ~4 MB         |
-| Engine Pagefile Usage      | 0 MB          |
+Future work is focused on the boundary between exchange infrastructure and quantitative research:
 
-### 3. Flame Graphs & Profiling
-A full Chrome Tracing `.json` trace is generated by `bench_profiler.cpp` targeting the exact duration of `OrderBook::submit()`, `match_buy()`, and `match_sell()`. 
-You can load `trace.json` into `chrome://tracing` or `ui.perfetto.dev` to visualize execution bottlenecks.
+- Multi-symbol engine partitioning
+- More complete exchange matching semantics
+- Hardware-aware latency measurement
+- Order-flow and market-microstructure replay
+- Historical market-data ingestion
+- Execution-cost modelling
+- Deeper latency-distribution analysis (p50 / p95 / p99 / tail latency)
+- Integration with quantitative backtesting infrastructure
+
+---
+
+## Research Pipeline
+
+```text
+Market Data
+     ↓
+Market Microstructure
+     ↓
+Hypothesis
+     ↓
+Simulation / Backtest
+     ↓
+Statistical Validation
+     ↓
+Risk Analysis
+     ↓
+Execution Infrastructure
+```
+
+UltraLOB represents the **execution-infrastructure layer** of that pipeline.
+
+---
+
+## License
+
+See the repository license for terms of use.
