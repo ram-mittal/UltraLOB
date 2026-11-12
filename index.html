@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UltraLOB — FIX 4.4 Institutional Trading Terminal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #0f172a;
+      --border: #1e293b;
+      --primary: #38bdf8;
+      --buy: #10b981;
+      --buy-bg: rgba(16, 185, 129, 0.15);
+      --sell: #f43f5e;
+      --sell-bg: rgba(244, 63, 94, 0.15);
+      --accent: #6366f1;
+    }
+    body {
+      background: #090d16;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+    .soh-tag {
+      background: #1e293b;
+      color: #94a3b8;
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 11px;
+    }
+    .soh-delim {
+      color: #38bdf8;
+      font-weight: bold;
+      margin: 0 1px;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0b1120; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    @keyframes pulse-fast {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.15); }
+    }
+    .live-dot {
+      animation: pulse-fast 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="p-3 antialiased min-h-screen flex flex-col gap-3">
+
+  <!-- TOP BAR / HEADER -->
+  <header class="bg-[#0f172a] border border-[#1e293b] rounded-lg px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <div class="w-3 h-3 rounded-full bg-emerald-500 live-dot"></div>
+        <span class="font-bold tracking-wider text-base bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
+          ULTRALOB
+        </span>
+      </div>
+      <span class="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+        FIX 4.4 Engine
+      </span>
+      <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        SESSION: <span id="sessionStateText" class="font-bold">ACTIVE</span>
+      </span>
+    </div>
+
+    <!-- Session telemetry indicators -->
+    <div class="flex items-center gap-4 text-xs font-mono">
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Sender:</span>
+        <span class="text-sky-300 font-semibold" id="senderCompId">TRADER-1</span>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Target:</span>
+        <span class="text-sky-300 font-semibold" id="targetCompId">ULTRALOB-MOCK</span>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">OutSeq:</span>
+        <span class="text-amber-400 font-bold" id="outSeqNum">1</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">InSeq:</span>
+        <span class="text-emerald-400 font-bold" id="inSeqNum">1</span>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Heartbeat:</span>
+        <span class="text-slate-300" id="hbTimer">10s</span>
+        <div class="w-12 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div id="hbBar" class="h-full bg-sky-400 transition-all duration-300" style="width: 100%"></div>
+        </div>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Engine Latency:</span>
+        <span class="text-emerald-400 font-semibold">184 ns</span>
+      </div>
+    </div>
+
+    <!-- Top Action Buttons -->
+    <div class="flex items-center gap-2">
+      <button onclick="runAutoDemo()" id="btnAutoDemo" class="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 font-semibold text-white transition flex items-center gap-1.5 shadow">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        Run Full Demo
+      </button>
+      <button onclick="triggerSequenceGap()" class="px-2 py-1 text-xs rounded bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/40 font-mono transition" title="Injects a gap to trigger FIX ResendRequest (35=2) and SequenceReset (35=4)">
+        Simulate Gap Fill
+      </button>
+      <button onclick="resetAll()" class="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-mono transition">
+        Reset
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN GRID: 3 COLUMNS -->
+  <main class="grid grid-cols-12 gap-3 flex-1">
+
+    <!-- LEFT COLUMN: ORDER ENTRY + SYMBOL INFO (3 COLS) -->
+    <div class="col-span-12 lg:col-span-3 flex flex-col gap-3">
+      
+      <!-- Symbol Selector & Market Stats -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Instrument</label>
+          <span class="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">TRADING</span>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5 mb-3">
+          <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">AAPL</button>
+          <button onclick="selectSymbol('MSFT')" id="tab-MSFT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">MSFT</button>
+          <button onclick="selectSymbol('GOOGL')" id="tab-GOOGL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">GOOGL</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
+          <div>
+            <div class="text-[10px] text-slate-500">LAST TRADED</div>
+            <div class="text-base font-bold text-sky-400" id="symLastPrice">$150.25</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">24H SPREAD</div>
+            <div class="text-base font-bold text-slate-300" id="symSpread">$0.05</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">BEST BID</div>
+            <div class="text-emerald-400 font-semibold" id="symBestBid">$150.20</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">BEST ASK</div>
+            <div class="text-rose-400 font-semibold" id="symBestAsk">$150.25</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FIX Order Entry Ticket -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex-1 flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+              Order Entry Ticket
+            </span>
+            <span class="text-[10px] font-mono text-slate-500">Tag 35=D (NOS)</span>
+          </div>
+
+          <!-- Side Toggle (Buy / Sell) -->
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <button type="button" onclick="setSide('1')" id="btnSideBuy" class="py-2 text-xs font-bold rounded bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 transition">
+              BUY (Side=1)
+            </button>
+            <button type="button" onclick="setSide('2')" id="btnSideSell" class="py-2 text-xs font-bold rounded bg-slate-800 text-slate-400 hover:text-white transition">
+              SELL (Side=2)
+            </button>
+          </div>
+
+          <!-- Order Type & TIF -->
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">OrdType (Tag 40)</label>
+              <select id="inputOrdType" class="w-full bg-slate-900 border border-slate-700 text-xs rounded px-2 py-1.5 font-mono text-slate-200 focus:outline-none focus:border-sky-500">
+                <option value="2">2 - Limit</option>
+                <option value="1">1 - Market</option>
+                <option value="3">3 - Stop</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">TIF (Tag 59)</label>
+              <select id="inputTIF" class="w-full bg-slate-900 border border-slate-700 text-xs rounded px-2 py-1.5 font-mono text-slate-200 focus:outline-none focus:border-sky-500">
+                <option value="0">0 - Day</option>
+                <option value="1">1 - GTC</option>
+                <option value="3">3 - IOC</option>
+                <option value="4">4 - FOK</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Price & Quantity -->
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">Price (Tag 44)</label>
+              <div class="relative">
+                <span class="absolute left-2.5 top-1.5 text-xs text-slate-500">$</span>
+                <input type="number" id="inputPrice" step="0.05" value="150.25" class="w-full bg-slate-900 border border-slate-700 text-xs rounded pl-6 pr-2 py-1.5 font-mono text-slate-100 focus:outline-none focus:border-sky-500">
+              </div>
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">OrderQty (Tag 38)</label>
+              <input type="number" id="inputQty" step="10" value="100" class="w-full bg-slate-900 border border-slate-700 text-xs rounded px-2 py-1.5 font-mono text-slate-100 focus:outline-none focus:border-sky-500">
+            </div>
+          </div>
+
+          <!-- ClOrdID & Account -->
+          <div class="grid grid-cols-2 gap-2 mb-4 text-xs font-mono">
+            <div>
+              <label class="block text-[11px] font-sans text-slate-400 mb-1">ClOrdID (Tag 11)</label>
+              <input type="text" id="inputClOrdID" value="ORD-001" readonly class="w-full bg-slate-900/60 border border-slate-800 text-[11px] rounded px-2 py-1 text-slate-400">
+            </div>
+            <div>
+              <label class="block text-[11px] font-sans text-slate-400 mb-1">Account (Tag 1)</label>
+              <input type="text" value="ALPHA-PRO" readonly class="w-full bg-slate-900/60 border border-slate-800 text-[11px] rounded px-2 py-1 text-slate-400">
+            </div>
+          </div>
+        </div>
+
+        <button onclick="submitManualOrder()" id="btnSubmitOrder" class="w-full py-2.5 text-xs font-bold uppercase tracking-wider rounded bg-emerald-500 hover:bg-emerald-400 text-white transition shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2">
+          <span>Submit FIX Order</span>
+          <span class="font-mono text-[11px] opacity-80">(8=FIX.4.4)</span>
+        </button>
+      </div>
+
+    </div>
+
+    <!-- MIDDLE COLUMN: LIMIT ORDER BOOK L2 DEPTH LADDER (4 COLS) -->
+    <div class="col-span-12 lg:col-span-4 flex flex-col gap-3">
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex-1 flex flex-col">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Level 2 Order Book</span>
+            <span id="bookSymbolBadge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/30">AAPL</span>
+          </div>
+          <span class="text-[11px] font-mono text-slate-400">Fixed-Point Scale: 10<sup>8</sup></span>
+        </div>
+
+        <!-- Table Header -->
+        <div class="grid grid-cols-3 text-[11px] font-mono uppercase text-slate-400 pb-1.5 px-2 border-b border-slate-800">
+          <div>Price ($)</div>
+          <div class="text-right">Qty (Shares)</div>
+          <div class="text-right">Orders (Count)</div>
+        </div>
+
+        <!-- ASKS (SELL ORDERS) - RED / REVERSE ORDER -->
+        <div id="asksContainer" class="flex flex-col gap-0.5 py-1 text-xs font-mono">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- SPREAD / MID-PRICE DIVIDER -->
+        <div class="my-1.5 py-1 px-3 bg-slate-900/90 rounded border border-slate-800 flex items-center justify-between text-xs font-mono">
+          <div class="flex items-center gap-2">
+            <span class="text-slate-500 text-[10px] uppercase">Spread:</span>
+            <span id="spreadDisplay" class="text-amber-400 font-bold">$0.05</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-slate-500 text-[10px] uppercase">Mid:</span>
+            <span id="midDisplay" class="text-sky-300 font-bold">$150.225</span>
+          </div>
+        </div>
+
+        <!-- BIDS (BUY ORDERS) - GREEN -->
+        <div id="bidsContainer" class="flex flex-col gap-0.5 py-1 text-xs font-mono">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Order Book Depth Visual Bar -->
+        <div class="mt-auto pt-2 border-t border-slate-800">
+          <div class="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+            <span>BUY DEPTH: <strong id="bidDepthSum" class="text-emerald-400">620</strong></span>
+            <span>SELL DEPTH: <strong id="askDepthSum" class="text-rose-400">540</strong></span>
+          </div>
+          <div class="h-2 w-full bg-slate-800 rounded-full overflow-hidden flex">
+            <div id="bidDepthBar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 53%"></div>
+            <div id="askDepthBar" class="h-full bg-rose-500 transition-all duration-300" style="width: 47%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: EXECUTION BLOTTER & FIX MESSAGE STREAM (5 COLS) -->
+    <div class="col-span-12 lg:col-span-5 flex flex-col gap-3">
+
+      <!-- FIX Message Log & Packet Inspector -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col h-72">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Live FIX 4.4 Wire Stream</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">SOH (\x01) FRAMED</span>
+          </div>
+          <button onclick="clearFixLog()" class="text-[10px] text-slate-400 hover:text-slate-200 font-mono">Clear</button>
+        </div>
+
+        <!-- Scrollable Message Stream -->
+        <div id="fixStreamContainer" class="flex-1 overflow-y-auto space-y-1.5 font-mono text-[11px] pr-1">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Execution Blotter (Trade Reports) -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col flex-1">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Execution Blotter (Tag 35=8)</span>
+          <span class="text-[10px] font-mono text-emerald-400" id="fillCounterBadge">0 Fills</span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto">
+          <table class="w-full text-left font-mono text-[11px]">
+            <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-[#0f172a]">
+              <tr>
+                <th class="pb-1">Time</th>
+                <th class="pb-1">ClOrdID</th>
+                <th class="pb-1">Symbol</th>
+                <th class="pb-1">Side</th>
+                <th class="pb-1">Status</th>
+                <th class="pb-1 text-right">LastPx</th>
+                <th class="pb-1 text-right">LastQty</th>
+                <th class="pb-1 text-right">Leaves</th>
+              </tr>
+            </thead>
+            <tbody id="execBlotterBody" class="divide-y divide-slate-800/60">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- BOTTOM BAR: PERSISTENCE STORE & ACTIVE ORDERS BLOTTER -->
+  <section class="grid grid-cols-12 gap-3">
+    <!-- Active Orders Table -->
+    <div class="col-span-12 lg:col-span-8 bg-[#0f172a] border border-[#1e293b] rounded-lg p-3">
+      <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Working Orders Blotter</span>
+        <span class="text-[11px] font-mono text-slate-400" id="workingOrdersCount">0 Active</span>
+      </div>
+      <div class="overflow-x-auto max-h-36 overflow-y-auto">
+        <table class="w-full text-left font-mono text-[11px]">
+          <thead class="text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="pb-1">ClOrdID</th>
+              <th class="pb-1">OrigID</th>
+              <th class="pb-1">Symbol</th>
+              <th class="pb-1">Side</th>
+              <th class="pb-1">Type</th>
+              <th class="pb-1 text-right">Price</th>
+              <th class="pb-1 text-right">Qty</th>
+              <th class="pb-1 text-right">Leaves</th>
+              <th class="pb-1 text-right">Cum</th>
+              <th class="pb-1">Status</th>
+              <th class="pb-1 text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="workingOrdersBody" class="divide-y divide-slate-800/60">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Memory-Mapped Message Store Telemetry -->
+    <div class="col-span-12 lg:col-span-4 bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col justify-between">
+      <div>
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Persistent FixStore (mmap)</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">O(1) INDEX</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
+          <div>
+            <div class="text-[10px] text-slate-500">STORE FILE</div>
+            <div class="text-slate-200 truncate" title="fix_client_demo.store">fix_demo.store</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">MAP SIZE</div>
+            <div class="text-slate-200">64.0 MB</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">RECORDS LOGGED</div>
+            <div class="text-amber-400 font-bold" id="storeRecordCount">0</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">MAX SEQUENCES</div>
+            <div class="text-slate-300">1,048,576</div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-2 text-[11px] text-slate-400 flex items-center justify-between">
+        <span>Crash Recovery Status:</span>
+        <span class="text-emerald-400 font-mono font-semibold flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+          SYNCED TO DISK
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- JAVASCRIPT ENGINE & SIMULATOR -->
+  <script>
+    // State
+    let activeSymbol = 'AAPL';
+    let currentSide = '1'; // 1=Buy, 2=Sell
+    let outSeq = 1;
+    let inSeq = 1;
+    let clOrdCounter = 1;
+    let storeRecords = 0;
+    let hbSeconds = 10;
+    let workingOrders = [];
+    let fillReports = [];
+
+    // Order books per symbol
+    const orderBooks = {
+      'AAPL': {
+        bids: [
+          { price: 150.20, qty: 150, orders: 2 },
+          { price: 150.15, qty: 220, orders: 4 },
+          { price: 150.10, qty: 100, orders: 1 },
+          { price: 150.05, qty: 150, orders: 3 },
+        ],
+        asks: [
+          { price: 150.40, qty: 140, orders: 2 },
+          { price: 150.35, qty: 180, orders: 3 },
+          { price: 150.30, qty: 120, orders: 2 },
+          { price: 150.25, qty: 100, orders: 1 },
+        ]
+      },
+      'MSFT': {
+        bids: [
+          { price: 310.40, qty: 100, orders: 1 },
+          { price: 310.35, qty: 250, orders: 3 },
+          { price: 310.20, qty: 150, orders: 2 },
+        ],
+        asks: [
+          { price: 310.60, qty: 120, orders: 2 },
+          { price: 310.55, qty: 200, orders: 3 },
+          { price: 310.50, qty: 80, orders: 1 },
+        ]
+      },
+      'GOOGL': {
+        bids: [
+          { price: 2799.50, qty: 80, orders: 1 },
+          { price: 2799.00, qty: 150, orders: 2 },
+        ],
+        asks: [
+          { price: 2800.50, qty: 100, orders: 1 },
+          { price: 2801.00, qty: 120, orders: 2 },
+        ]
+      }
+    };
+
+    function getTimeStr() {
+      const d = new Date();
+      return d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
+    }
+
+    function selectSymbol(sym) {
+      activeSymbol = sym;
+      document.querySelectorAll('.symbol-tab').forEach(b => {
+        b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
+      });
+      document.getElementById('tab-' + sym).className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
+      document.getElementById('bookSymbolBadge').innerText = sym;
+
+      if (sym === 'AAPL') {
+        document.getElementById('inputPrice').value = '150.25';
+      } else if (sym === 'MSFT') {
+        document.getElementById('inputPrice').value = '310.50';
+      } else if (sym === 'GOOGL') {
+        document.getElementById('inputPrice').value = '2800.00';
+      }
+      renderBook();
+    }
+
+    function setSide(side) {
+      currentSide = side;
+      const buyBtn = document.getElementById('btnSideBuy');
+      const sellBtn = document.getElementById('btnSideSell');
+      const submitBtn = document.getElementById('btnSubmitOrder');
+
+      if (side === '1') {
+        buyBtn.className = 'py-2 text-xs font-bold rounded bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 transition';
+        sellBtn.className = 'py-2 text-xs font-bold rounded bg-slate-800 text-slate-400 hover:text-white transition';
+        submitBtn.className = 'w-full py-2.5 text-xs font-bold uppercase tracking-wider rounded bg-emerald-500 hover:bg-emerald-400 text-white transition shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2';
+      } else {
+        sellBtn.className = 'py-2 text-xs font-bold rounded bg-rose-500 text-white shadow-lg shadow-rose-500/20 transition';
+        buyBtn.className = 'py-2 text-xs font-bold rounded bg-slate-800 text-slate-400 hover:text-white transition';
+        submitBtn.className = 'w-full py-2.5 text-xs font-bold uppercase tracking-wider rounded bg-rose-500 hover:bg-rose-400 text-white transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2';
+      }
+    }
+
+    function logFixMessage(direction, type, rawMsg) {
+      const container = document.getElementById('fixStreamContainer');
+      const row = document.createElement('div');
+      row.className = 'p-1.5 rounded bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 transition flex flex-col gap-1 cursor-pointer';
+      
+      const isOut = direction === 'OUT';
+      const dirBadge = isOut 
+        ? '<span class="px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 font-bold">>> OUT</span>'
+        : '<span class="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold"><< IN</span>';
+
+      // Format SOH (\x01) with clean visual separators
+      const formatted = rawMsg.split('\x01').filter(Boolean).map(field => {
+        const [tag, val] = field.split('=');
+        if (tag === '35') return `<span class="bg-indigo-500/30 text-indigo-300 px-1 rounded font-bold">${tag}=${val}</span>`;
+        if (tag === '11') return `<span class="text-amber-300 font-semibold">${tag}=${val}</span>`;
+        if (tag === '34') return `<span class="text-sky-300">${tag}=${val}</span>`;
+        if (tag === '10') return `<span class="text-emerald-400">${tag}=${val}</span>`;
+        return `<span class="text-slate-400">${tag}=${val}</span>`;
+      }).join('<span class="soh-delim">|</span>');
+
+      row.innerHTML = `
+        <div class="flex items-center justify-between text-[10px]">
+          <div class="flex items-center gap-1.5">${dirBadge} <span class="font-bold text-slate-200">MsgType=${type}</span></div>
+          <span class="text-slate-500">${getTimeStr()}</span>
+        </div>
+        <div class="text-[10px] break-all text-slate-300 leading-tight">${formatted}</div>
+      `;
+
+      container.appendChild(row);
+      container.scrollTop = container.scrollHeight;
+
+      storeRecords++;
+      document.getElementById('storeRecordCount').innerText = storeRecords;
+    }
+
+    function renderBook() {
+      const book = orderBooks[activeSymbol];
+      if (!book) return;
+
+      const asksDiv = document.getElementById('asksContainer');
+      const bidsDiv = document.getElementById('bidsContainer');
+
+      // Sort asks high-to-low so lowest ask is at bottom
+      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
+      // Sort bids high-to-low so highest bid is at top
+      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
+
+      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
+      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
+
+      asksDiv.innerHTML = sortedAsks.map(a => {
+        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
+        return `
+          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
+            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
+            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
+            <div class="text-right text-slate-200 z-10">${a.qty}</div>
+            <div class="text-right text-slate-400 z-10">${a.orders}</div>
+          </div>
+        `;
+      }).join('');
+
+      bidsDiv.innerHTML = sortedBids.map(b => {
+        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
+        return `
+          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
+            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
+            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
+            <div class="text-right text-slate-200 z-10">${b.qty}</div>
+            <div class="text-right text-slate-400 z-10">${b.orders}</div>
+          </div>
+        `;
+      }).join('');
+
+      const bestBid = sortedBids[0]?.price || 0;
+      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
+      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
+      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
+
+      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
+      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
+      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
+      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
+      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
+      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
+
+      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
+      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
+      const totalDepth = totalBidQty + totalAskQty || 1;
+
+      document.getElementById('bidDepthSum').innerText = totalBidQty;
+      document.getElementById('askDepthSum').innerText = totalAskQty;
+      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
+      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
+    }
+
+    function renderWorkingOrders() {
+      const tbody = document.getElementById('workingOrdersBody');
+      tbody.innerHTML = workingOrders.map(o => {
+        const sideColor = o.side === '1' ? 'text-emerald-400' : 'text-rose-400';
+        const sideText = o.side === '1' ? 'BUY' : 'SELL';
+        return `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-1 font-bold text-slate-200">${o.clOrdId}</td>
+            <td class="py-1 text-slate-400">${o.origId || '-'}</td>
+            <td class="py-1 text-sky-400 font-semibold">${o.symbol}</td>
+            <td class="py-1 ${sideColor} font-bold">${sideText}</td>
+            <td class="py-1 text-slate-300">Limit</td>
+            <td class="py-1 text-right text-slate-200">$${o.price.toFixed(2)}</td>
+            <td class="py-1 text-right text-slate-300">${o.qty}</td>
+            <td class="py-1 text-right font-bold text-amber-300">${o.leavesQty}</td>
+            <td class="py-1 text-right text-emerald-400">${o.cumQty}</td>
+            <td class="py-1">
+              <span class="px-1.5 py-0.5 rounded text-[10px] ${o.status === 'NEW' ? 'bg-sky-500/20 text-sky-300' : 'bg-emerald-500/20 text-emerald-300'} font-bold">
+                ${o.status}
+              </span>
+            </td>
+            <td class="py-1 text-center">
+              ${o.leavesQty > 0 ? `<button onclick="cancelOrder('${o.clOrdId}')" class="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 text-[10px] border border-rose-500/30">Cancel</button>` : '-'}
+            </td>
+          </tr>
+        `;
+      }).join('');
+      document.getElementById('workingOrdersCount').innerText = `${workingOrders.filter(o => o.leavesQty > 0).length} Active`;
+    }
+
+    function renderExecBlotter() {
+      const tbody = document.getElementById('execBlotterBody');
+      tbody.innerHTML = fillReports.map(f => {
+        const sideColor = f.side === '1' ? 'text-emerald-400' : 'text-rose-400';
+        const sideText = f.side === '1' ? 'BUY' : 'SELL';
+        const isFill = f.execType === 'FILL';
+        return `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-1 text-slate-500">${f.time}</td>
+            <td class="py-1 font-bold text-slate-200">${f.clOrdId}</td>
+            <td class="py-1 text-sky-400 font-semibold">${f.symbol}</td>
+            <td class="py-1 ${sideColor} font-bold">${sideText}</td>
+            <td class="py-1">
+              <span class="px-1.5 py-0.5 rounded text-[10px] ${isFill ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'bg-sky-500/20 text-sky-300'}">
+                ${f.execType}
+              </span>
+            </td>
+            <td class="py-1 text-right font-bold text-slate-200">$${f.lastPx.toFixed(2)}</td>
+            <td class="py-1 text-right text-emerald-400 font-bold">${f.lastQty}</td>
+            <td class="py-1 text-right text-slate-400">${f.leavesQty}</td>
+          </tr>
+        `;
+      }).join('');
+      document.getElementById('fillCounterBadge').innerText = `${fillReports.filter(f => f.execType === 'FILL').length} Fills`;
+    }
+
+    function submitManualOrder() {
+      const price = parseFloat(document.getElementById('inputPrice').value) || 150.00;
+      const qty = parseInt(document.getElementById('inputQty').value) || 100;
+      const clOrdId = `ORD-${String(clOrdCounter++).padStart(3, '0')}`;
+      document.getElementById('inputClOrdID').value = `ORD-${String(clOrdCounter).padStart(3, '0')}`;
+
+      // 1. Build and send FIX NewOrderSingle (35=D)
+      const rawNos = `8=FIX.4.4\x019=138\x0135=D\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:00:00.000\x0111=${clOrdId}\x0155=${activeSymbol}\x0154=${currentSide}\x0140=2\x0144=${price.toFixed(2)}\x0138=${qty}\x0159=0\x0110=182\x01`;
+      logFixMessage('OUT', 'D (NewOrderSingle)', rawNos);
+      document.getElementById('outSeqNum').innerText = outSeq;
+
+      // Add to working orders
+      const orderObj = {
+        clOrdId,
+        origId: '',
+        symbol: activeSymbol,
+        side: currentSide,
+        price,
+        qty,
+        leavesQty: qty,
+        cumQty: 0,
+        status: 'NEW'
+      };
+      workingOrders.unshift(orderObj);
+      renderWorkingOrders();
+
+      // 2. Mock Server Ack (35=8 ExecType=New)
+      setTimeout(() => {
+        const rawAck = `8=FIX.4.4\x019=145\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq++}\x0152=20260712-12:00:00.050\x0137=MOCK-${1000 + inSeq}\x0117=EXEC-001\x0111=${clOrdId}\x01150=0\x0139=0\x0155=${activeSymbol}\x0154=${currentSide}\x01151=${qty}\x0114=0\x016=0.00\x0110=195\x01`;
+        logFixMessage('IN', '8 (Ack New)', rawAck);
+        document.getElementById('inSeqNum').innerText = inSeq;
+
+        fillReports.unshift({
+          time: getTimeStr(),
+          clOrdId,
+          symbol: activeSymbol,
+          side: currentSide,
+          execType: 'NEW',
+          lastPx: 0.0,
+          lastQty: 0,
+          leavesQty: qty
+        });
+        renderExecBlotter();
+      }, 80);
+
+      // 3. Mock Server Fill (35=8 ExecType=Fill)
+      setTimeout(() => {
+        const rawFill = `8=FIX.4.4\x019=162\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq++}\x0152=20260712-12:00:00.120\x0137=MOCK-${1000 + inSeq}\x0117=EXEC-002\x0111=${clOrdId}\x01150=2\x0139=2\x0155=${activeSymbol}\x0154=${currentSide}\x0132=${qty}\x0131=${price.toFixed(2)}\x01151=0\x0114=${qty}\x016=${price.toFixed(2)}\x0110=210\x01`;
+        logFixMessage('IN', '8 (Fill)', rawFill);
+        document.getElementById('inSeqNum').innerText = inSeq;
+
+        orderObj.leavesQty = 0;
+        orderObj.cumQty = qty;
+        orderObj.status = 'FILLED';
+        renderWorkingOrders();
+
+        fillReports.unshift({
+          time: getTimeStr(),
+          clOrdId,
+          symbol: activeSymbol,
+          side: currentSide,
+          execType: 'FILL',
+          lastPx: price,
+          lastQty: qty,
+          leavesQty: 0
+        });
+        renderExecBlotter();
+
+        // Update book depth visually
+        const book = orderBooks[activeSymbol];
+        if (currentSide === '1') {
+          book.bids.unshift({ price: price, qty: qty, orders: 1 });
+          if (book.bids.length > 5) book.bids.pop();
+        } else {
+          book.asks.push({ price: price, qty: qty, orders: 1 });
+          if (book.asks.length > 5) book.asks.shift();
+        }
+        renderBook();
+      }, 250);
+    }
+
+    function cancelOrder(clOrdId) {
+      const cxlId = `CXL-${String(clOrdCounter++).padStart(3, '0')}`;
+      const target = workingOrders.find(o => o.clOrdId === clOrdId);
+      if (!target) return;
+
+      const rawCxl = `8=FIX.4.4\x019=125\x0135=F\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:01:00.000\x0111=${cxlId}\x0141=${clOrdId}\x0155=${target.symbol}\x0154=${target.side}\x0110=190\x01`;
+      logFixMessage('OUT', 'F (OrderCancelRequest)', rawCxl);
+      document.getElementById('outSeqNum').innerText = outSeq;
+
+      setTimeout(() => {
+        const rawAck = `8=FIX.4.4\x019=155\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq++}\x0152=20260712-12:01:00.080\x0137=MOCK-CANCEL\x0117=EXEC-CXL\x0111=${cxlId}\x0141=${clOrdId}\x01150=4\x0139=4\x0155=${target.symbol}\x01151=0\x0114=${target.cumQty}\x0110=220\x01`;
+        logFixMessage('IN', '8 (Cancelled)', rawAck);
+        document.getElementById('inSeqNum').innerText = inSeq;
+
+        target.leavesQty = 0;
+        target.status = 'CANCELLED';
+        renderWorkingOrders();
+
+        fillReports.unshift({
+          time: getTimeStr(),
+          clOrdId: target.clOrdId,
+          symbol: target.symbol,
+          side: target.side,
+          execType: 'CANCELLED',
+          lastPx: 0.0,
+          lastQty: 0,
+          leavesQty: 0
+        });
+        renderExecBlotter();
+      }, 120);
+    }
+
+    function triggerSequenceGap() {
+      // Simulate receiving message with an intentional sequence jump to test gap detection
+      const gapSeq = inSeq + 3;
+      const rawGap = `8=FIX.4.4\x019=150\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${gapSeq}\x0152=20260712-12:02:00.000\x0137=GAP-MSG\x0117=EXEC-GAP\x0111=ORD-999\x01150=0\x0139=0\x0155=AAPL\x0154=1\x01151=100\x0114=0\x0110=199\x01`;
+      logFixMessage('IN', '8 (Seq Gap Detect)', rawGap);
+
+      // Session state machine automatically sends ResendRequest (35=2)
+      setTimeout(() => {
+        const resendReq = `8=FIX.4.4\x019=95\x0135=2\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:02:00.020\x017=${inSeq}\x0116=${gapSeq - 1}\x0110=178\x01`;
+        logFixMessage('OUT', '2 (ResendRequest)', resendReq);
+        document.getElementById('outSeqNum').innerText = outSeq;
+
+        // Counterparty responds with SequenceReset-GapFill (35=4)
+        setTimeout(() => {
+          const gapFill = `8=FIX.4.4\x019=108\x0135=4\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq}\x0152=20260712-12:02:00.050\x01123=Y\x0136=${gapSeq + 1}\x0143=Y\x0110=188\x01`;
+          logFixMessage('IN', '4 (SequenceReset-GapFill)', gapFill);
+          inSeq = gapSeq + 1;
+          document.getElementById('inSeqNum').innerText = inSeq;
+        }, 150);
+      }, 100);
+    }
+
+    function runAutoDemo() {
+      // 1. Initial Logon
+      logFixMessage('OUT', 'A (Logon)', '8=FIX.4.4\x019=98\x0135=A\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=1\x0152=20260712-12:00:00.000\x0198=0\x01108=10\x0110=170\x01');
+      setTimeout(() => {
+        logFixMessage('IN', 'A (Logon Ack)', '8=FIX.4.4\x019=98\x0135=A\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=1\x0152=20260712-12:00:00.010\x0198=0\x01108=10\x0110=171\x01');
+        
+        // 2. Submit 3 sample orders with slight delays
+        setTimeout(() => { selectSymbol('AAPL'); submitManualOrder(); }, 200);
+        setTimeout(() => { selectSymbol('MSFT'); submitManualOrder(); }, 700);
+        setTimeout(() => { selectSymbol('GOOGL'); setSide('2'); submitManualOrder(); }, 1200);
+      }, 100);
+    }
+
+    function clearFixLog() {
+      document.getElementById('fixStreamContainer').innerHTML = '';
+    }
+
+    function resetAll() {
+      outSeq = 1; inSeq = 1; clOrdCounter = 1; storeRecords = 0;
+      workingOrders = []; fillReports = [];
+      document.getElementById('outSeqNum').innerText = 1;
+      document.getElementById('inSeqNum').innerText = 1;
+      document.getElementById('storeRecordCount').innerText = 0;
+      clearFixLog();
+      renderWorkingOrders();
+      renderExecBlotter();
+      renderBook();
+    }
+
+    // Heartbeat ticker
+    setInterval(() => {
+      hbSeconds--;
+      if (hbSeconds <= 0) {
+        hbSeconds = 10;
+        // Send heartbeat
+        const hb = `8=FIX.4.4\x019=80\x0135=0\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:00:00.000\x0110=160\x01`;
+        logFixMessage('OUT', '0 (Heartbeat)', hb);
+        document.getElementById('outSeqNum').innerText = outSeq;
+      }
+      document.getElementById('hbTimer').innerText = `${hbSeconds}s`;
+      document.getElementById('hbBar').style.width = `${(hbSeconds / 10) * 100}%`;
+    }, 1000);
+
+    // Initial setup
+    renderBook();
+    runAutoDemo();
+  </script>
+</body>
+</html>
+
