@@ -114,6 +114,7 @@ add_library(ultralob STATIC
   src/fix_store.cpp
   src/fix_application.cpp
   src/fix_initiator.cpp
+  src/fix_gateway.cpp
 )
 
 target_include_directories(ultralob PUBLIC

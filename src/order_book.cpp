@@ -512,6 +512,7 @@ bool OrderBook::cancel(OrderId id) {
     o->cancel();
     emit({
         .order_id   = id,
+        .client_id  = o->client_id,
         .symbol     = symbol_,
         .side       = o->side,
         .order_type = o->type,
