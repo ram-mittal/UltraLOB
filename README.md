@@ -273,6 +273,16 @@ You will see real-time output demonstrating the full lifecycle:
 
 ---
 
+## 📬 Connect & Collaborate
+
+Open to discussions around quantitative trading infrastructure, low-latency C++ systems, and technical collaborations:
+
+* **LinkedIn**: [Ram Mittal](https://www.linkedin.com/in/rammittal/)
+* **Email**: [rammittal0111@gmail.com](mailto:rammittal0111@gmail.com)
+* **GitHub**: [@ram-mittal](https://github.com/ram-mittal)
+
+---
+
 ## 📜 License
 
 Distributed under the Apache 2.0 / MIT License. See [LICENSE](LICENSE) for details.
