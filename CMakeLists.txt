@@ -56,6 +56,7 @@ else()
     add_compile_options(
       -Wno-unused-parameter
       -Wno-missing-field-initializers
+      -Wno-c2y-extensions
     )
   endif()
 endif()
@@ -85,6 +86,7 @@ FetchContent_Declare(
 set(BENCHMARK_ENABLE_TESTING   OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL   OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_EXCEPTIONS ON  CACHE BOOL "" FORCE)
+set(BENCHMARK_ENABLE_WERROR     OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(benchmark)
 
 # Standalone ASIO (header only)
@@ -105,6 +107,13 @@ add_library(ultralob STATIC
   src/exchange_node.cpp
   src/journal.cpp
   src/risk_engine.cpp
+  src/fix_message.cpp
+  src/fix_builder.cpp
+  src/fix_framer.cpp
+  src/fix_session.cpp
+  src/fix_store.cpp
+  src/fix_application.cpp
+  src/fix_initiator.cpp
 )
 
 target_include_directories(ultralob PUBLIC
@@ -142,6 +151,27 @@ if(NOT MSVC)
 endif()
 if(WIN32)
   target_link_libraries(ultralob_server PRIVATE ws2_32 mswsock)
+endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mock FIX Server & Client Demo
+# ─────────────────────────────────────────────────────────────────────────────
+add_executable(mock_fix_server server/mock_fix_server.cpp)
+target_link_libraries(mock_fix_server PRIVATE ultralob)
+if(NOT MSVC)
+  target_link_libraries(mock_fix_server PRIVATE pthread)
+endif()
+if(WIN32)
+  target_link_libraries(mock_fix_server PRIVATE ws2_32 mswsock)
+endif()
+
+add_executable(fix_client_demo server/fix_client_demo.cpp)
+target_link_libraries(fix_client_demo PRIVATE ultralob)
+if(NOT MSVC)
+  target_link_libraries(fix_client_demo PRIVATE pthread)
+endif()
+if(WIN32)
+  target_link_libraries(fix_client_demo PRIVATE ws2_32 mswsock)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────

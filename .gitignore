@@ -13,6 +13,8 @@ build/
 # Logs and Journals
 *.journal
 *.log
+*.store
+*.dat
 out.txt
 
 # OS generated files

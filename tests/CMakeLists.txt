@@ -24,3 +24,17 @@ add_ultralob_test(test_risk_engine   test_risk_engine.cpp)
 if(WIN32)
   target_link_libraries(test_gateway PRIVATE ws2_32 mswsock)
 endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FIX Engine Tests
+# ─────────────────────────────────────────────────────────────────────────────
+add_ultralob_test(test_fix_message     test_fix_message.cpp)
+add_ultralob_test(test_fix_builder     test_fix_builder.cpp)
+add_ultralob_test(test_fix_framer      test_fix_framer.cpp)
+add_ultralob_test(test_fix_integration test_fix_integration.cpp)
+add_ultralob_test(test_fix_session     test_fix_session.cpp)
+add_ultralob_test(test_fix_store       test_fix_store.cpp)
+add_ultralob_test(test_fix_application test_fix_application.cpp)
+if(WIN32)
+  target_link_libraries(test_fix_integration PRIVATE ws2_32 mswsock)
+endif()

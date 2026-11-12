@@ -47,6 +47,7 @@ TEST(RiskEngineTest, BuyingPowerHold) {
 TEST(RiskEngineTest, NakedShortPrevention) {
     RiskEngine risk;
     auto* account = risk.get_or_create_account(1, from_double(1000.0));
+    account->positions[1].store(0);
     
     OrderRequest req;
     req.id = 1;
