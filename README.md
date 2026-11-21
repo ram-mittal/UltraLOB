@@ -262,6 +262,24 @@ You will see real-time output demonstrating the full lifecycle:
 
 ---
 
+## GPU Monte Carlo Option Pricing
+
+UltraLOB includes a standalone quantitative-pricing module for European vanilla calls and puts. It uses risk-neutral geometric Brownian motion, antithetic variates, standard errors and confidence intervals, a CPU reference backend, and optional NVIDIA CUDA/CURAND acceleration. The pricer is deliberately isolated from the matching engine's single-threaded sequencer.
+
+CPU-only build and run:
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --config Release
+    ./build/ultralob_pricer --backend cpu --spot 100 --strike 100 --paths 1000000
+
+CUDA build and run (requires the NVIDIA CUDA Toolkit and a supported GPU):
+
+    cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=ON
+    cmake --build build-cuda --config Release
+    ./build-cuda/ultralob_pricer --backend cuda --paths 10000000
+
+The output includes Monte Carlo and Black-Scholes reference values, standard errors, 95% confidence intervals, backend selection, and elapsed time. The current web terminal is static and has no JSON pricing API; this first increment exposes a library and CLI. A later service can bridge results to the web terminal without coupling GPU work to matching/FIX threads.
+
 ## ⚖️ Engineering Trade-Offs
 
 | Principle | Decision in UltraLOB | Why? |
