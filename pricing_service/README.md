@@ -92,6 +92,7 @@ Use [`.env.example`](.env.example) as a template for the pricing container envir
 - `ULTRALOB_PRICER_LIBRARY`: path to `libultralob_quant.so` (default `/app/build/libultralob_quant.so`).
 - `PRICING_API_KEY`: optional bearer token required for pricing requests.
 - `ULTRALOB_CUDA_ENABLED`: informational flag returned by health checks; set by the supplied Dockerfiles.
+- `PRICING_FALLBACK_MAX_PATHS`: maximum path count for the Vercel serverless CPU fallback (default `10000000`, maximum `50000000`).
 - `nvidia-ml-py`: optional hardware telemetry interface; GPU utilization is null when NVML is unavailable.
 
 For GPU execution, the CUDA image must be deployed on an instance that has an NVIDIA GPU attached and exposes the driver libraries to the container. Building the CUDA image alone does not provide a GPU.
