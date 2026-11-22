@@ -319,7 +319,9 @@ The hosted terminal sends pricing requests to the same-origin Vercel function at
 ```mermaid
 flowchart LR
   UI["Vercel trading terminal<br/>Monte Carlo workbench"] --> PROXY["/api/pricing<br/>Vercel Node function"]
-  PROXY --> API["FastAPI pricing service"]
+  PROXY -->|native service configured| API["FastAPI pricing service"]
+  PROXY -->|no service / service offline<br/>auto or cpu request| FALLBACK["Serverless JavaScript CPU fallback"]
+  FALLBACK --> RESULT["JSON price + CI + timing"]
   API --> LIB["Persistent C++ shared library"]
   LIB --> CPU["CPU reference backend"]
   LIB --> CUDA["CUDA + CURAND GPU backend"]
@@ -328,7 +330,7 @@ flowchart LR
   RESULT --> UI
 ```
 
-The browser never calls the GPU host directly and does not receive the API secret. The matching engine does not wait for pricing calculations.
+The browser never calls the GPU host directly and does not receive the API secret. When the external FastAPI service is absent or unreachable, AUTO/CPU requests use a bounded JavaScript CPU fallback on Vercel; CUDA requests still require a separately deployed NVIDIA service. The matching engine does not wait for pricing calculations.
 
 ### Deploy the pricing service
 
@@ -356,8 +358,9 @@ Copy [`.env.vercel.example`](.env.vercel.example) as a reference when configurin
 
 | Variable | Value |
 |---|---|
-| `PRICING_SERVICE_URL` | HTTPS origin of the deployed FastAPI service, with no route suffix |
-| `PRICING_API_KEY` | Same bearer token configured on the pricing service |
+| `PRICING_SERVICE_URL` | Optional HTTPS origin of the deployed FastAPI service, with no route suffix. Without it, AUTO/CPU uses the built-in Vercel CPU fallback. |
+| `PRICING_API_KEY` | Same bearer token configured on the pricing service; only needed when using that service |
+| `PRICING_FALLBACK_MAX_PATHS` | Optional path cap for Vercel CPU fallback (default 10,000,000) |
 
 Redeploy Vercel after setting the variables. Check `https://your-domain/api/pricing`; it should return a healthy service response. Then open the terminal, run a CPU simulation, and select CUDA or use **Compare CPU / GPU** when the service is running on an NVIDIA GPU host.
 
