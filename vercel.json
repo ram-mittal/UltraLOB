@@ -4,6 +4,9 @@
   "functions": {
     "api/pricing.js": {
       "maxDuration": 150
+    },
+    "api/market-data.js": {
+      "maxDuration": 300
     }
   },
   "rewrites": [
