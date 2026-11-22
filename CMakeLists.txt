@@ -10,6 +10,17 @@ cmake_minimum_required(VERSION 3.28)
 
 project(UltraLOB VERSION 1.0.0 LANGUAGES CXX C)
 
+option(ULTRALOB_ENABLE_CUDA "Build the GPU Monte Carlo pricing backend" OFF)
+if(ULTRALOB_ENABLE_CUDA)
+  include(CheckLanguage)
+  check_language(CUDA)
+  if(NOT CMAKE_CUDA_COMPILER)
+    message(FATAL_ERROR "ULTRALOB_ENABLE_CUDA=ON, but no CUDA compiler was found. Install the NVIDIA CUDA Toolkit.")
+  endif()
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # C++ Standard
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,29 +45,33 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 if(MSVC)
   add_compile_options(
-    /W4
-    /O2 /Oi /Ot
-    /arch:AVX2
-    /EHsc
-    /D_CRT_SECURE_NO_WARNINGS
-    /DNOMINMAX
-    /wd4100  # unused parameter
-    /wd4702  # unreachable code (can fire after [[fallthrough]])
+    $<$<COMPILE_LANGUAGE:CXX>:/W4>
+    $<$<COMPILE_LANGUAGE:CXX>:/O2>
+    $<$<COMPILE_LANGUAGE:CXX>:/Oi>
+    $<$<COMPILE_LANGUAGE:CXX>:/Ot>
+    $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>
+    $<$<COMPILE_LANGUAGE:CXX>:/EHsc>
+    $<$<COMPILE_LANGUAGE:CXX>:/D_CRT_SECURE_NO_WARNINGS>
+    $<$<COMPILE_LANGUAGE:CXX>:/DNOMINMAX>
+    $<$<COMPILE_LANGUAGE:CXX>:/wd4100>
+    $<$<COMPILE_LANGUAGE:CXX>:/wd4702>
   )
 else()
   # GCC / Clang / Zig-cc
   add_compile_options(
-    -Wall -Wextra
-    -O3
-    -mavx2 -mfma
-    -fno-rtti
+    $<$<COMPILE_LANGUAGE:CXX>:-Wall>
+    $<$<COMPILE_LANGUAGE:CXX>:-Wextra>
+    $<$<COMPILE_LANGUAGE:CXX>:-O3>
+    $<$<COMPILE_LANGUAGE:CXX>:-mavx2>
+    $<$<COMPILE_LANGUAGE:CXX>:-mfma>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
   )
   # Zig-cc doesn't support all gcc diagnostics — suppress unknown warnings
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(
-      -Wno-unused-parameter
-      -Wno-missing-field-initializers
-      -Wno-c2y-extensions
+      $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-parameter>
+      $<$<COMPILE_LANGUAGE:CXX>:-Wno-missing-field-initializers>
+      $<$<COMPILE_LANGUAGE:CXX>:-Wno-c2y-extensions>
     )
   endif()
 endif()
@@ -141,6 +156,33 @@ if(NOT MSVC)
   # ASIO relies heavily on exceptions.
   # target_compile_options(ultralob PRIVATE -fno-exceptions)
 endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quantitative Monte Carlo pricing library (kept off the matching hot path)
+# ─────────────────────────────────────────────────────────────────────────────
+add_library(ultralob_quant STATIC
+  src/quant/monte_carlo.cpp
+  src/quant/monte_carlo_cpu.cpp
+)
+target_include_directories(ultralob_quant PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_features(ultralob_quant PUBLIC cxx_std_20)
+
+if(ULTRALOB_ENABLE_CUDA)
+  target_sources(ultralob_quant PRIVATE src/quant/monte_carlo_cuda.cu)
+  target_compile_definitions(ultralob_quant PUBLIC ULTRALOB_HAS_CUDA=1)
+  target_link_libraries(ultralob_quant PRIVATE CUDA::cudart CUDA::curand)
+  set_target_properties(ultralob_quant PROPERTIES
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_EXTENSIONS OFF
+  )
+endif()
+
+add_executable(ultralob_pricer server/monte_carlo_demo.cpp)
+target_link_libraries(ultralob_pricer PRIVATE ultralob_quant)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Server Executable

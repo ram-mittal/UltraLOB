@@ -40,3 +40,11 @@ if(WIN32)
   target_link_libraries(test_fix_integration PRIVATE ws2_32 mswsock)
   target_link_libraries(test_fix_gateway     PRIVATE ws2_32 mswsock)
 endif()
+
+# CPU Monte Carlo pricing tests (no NVIDIA device required).
+add_executable(test_monte_carlo test_monte_carlo.cpp)
+target_link_libraries(test_monte_carlo PRIVATE ultralob_quant GTest::gtest_main)
+if(NOT MSVC)
+  target_compile_options(test_monte_carlo PRIVATE -fexceptions)
+endif()
+add_test(NAME test_monte_carlo COMMAND test_monte_carlo)
