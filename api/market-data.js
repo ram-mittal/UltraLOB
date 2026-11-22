@@ -177,7 +177,7 @@ wss.on("connection", (client, request) => {
   };
 
   // Public Binance Spot streams make BTCUSDT available without an API key.
-  if (cryptoSymbols.includes("BTCUSDT")) {
+  if (cryptoSymbols.includes("BTCUSDT") && process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS !== "true") {
     const streams = ["btcusdt@trade", "btcusdt@bookTicker"];
     // Port 443 is friendlier to hosted environments and is an official Binance
     // Spot market-stream endpoint. It carries the same public combined streams.
@@ -243,7 +243,7 @@ wss.on("connection", (client, request) => {
 
   // US equities remain on Twelve Data. Missing/denied equity access does not
   // stop the independent BTCUSDT public stream.
-  if (equitySymbols.length > 0) {
+  if (equitySymbols.length > 0 && process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS !== "true") {
     const apiKey = process.env.TWELVE_DATA_API_KEY;
     if (!apiKey) {
       console.warn("[market-data] TWELVE_DATA_API_KEY is not set; equity streaming is disabled");
