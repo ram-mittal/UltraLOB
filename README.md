@@ -6,11 +6,11 @@
 [![Build & Tests](https://img.shields.io/badge/Tests-16%2F16%20Passing%20(100%25)-brightgreen)](tests/)
 [![Latency](https://img.shields.io/badge/p50%20Latency-%3C100%20ns-blueviolet)](#benchmarks--performance)
 [![Throughput](https://img.shields.io/badge/Throughput-~3.0M%20ops%2Fsec-orange)](#benchmarks--performance)
-[![Live Demo](https://img.shields.io/badge/Web%20Terminal-Live%20on%20Vercel-success?logo=vercel)](https://ultralob.vercel.app)
+[![Live Demo](https://img.shields.io/badge/Web%20Terminal-Live%20on%20Render-success?logo=render)](https://ultralob.onrender.com)
 
 UltraLOB is a production-grade, deterministic electronic exchange and order-matching platform written in **modern C++20**. It models the complete execution architecture of modern financial exchanges (such as NASDAQ, CME, or NYSE): inbound order framing, zero-allocation FIX 4.4 and binary network gateways, real-time pre-trade risk management, single-threaded lock-free sequencing, price-time-priority matching, memory-mapped write-ahead logging (WAL), and real-time ITCH market data dissemination.
 
-The system is accompanied by an interactive **[Visual Trading Terminal](https://ultralob.vercel.app)** deployed live on Vercel.
+The system is accompanied by an interactive **[Visual Trading Terminal](https://ultralob.onrender.com)** deployed on Render. The hosted application combines a direct browser-to-Binance BTC feed, an optional server-side Twelve Data equity feed, and a Monte Carlo pricing workbench.
 
 ---
 
@@ -31,15 +31,17 @@ If you are new to quantitative finance or electronic trading systems:
 
 ## 🌐 Live Web Trading Terminal
 
-Experience the exchange visually without installing anything:
+Experience the web terminal without installing anything:
 
-👉 **[Launch UltraLOB Terminal on Vercel](https://ultralob.vercel.app)**
+👉 **[Launch UltraLOB on Render](https://ultralob.onrender.com)**
 
-* **Interactive Level 2 Depth Ladder**: Real-time visual bid/ask books with depth-percentage bars and dynamic spread tracking.
-* **Multi-Symbol Order Desk**: Seamless switching between **AAPL**, **MSFT**, **GOOGL**, **TSLA**, and **NVDA**.
-* **Pre-Trade Risk Meter**: Live capital buying-power meters, fat-finger checks, and order validation.
-* **Live FIX Wire Inspector**: Inspect real-time FIX 4.4 frames with highlighted SOH (`\x01`) delimiters and tag breakdowns (`35=MsgType`, `11=ClOrdID`, `34=SeqNum`, `10=CheckSum`).
-* **Execution & Working Orders Desk**: Track open orders, partial fills, cancellations, and cumulative execution reports.
+* **BTC/USDT live market data**: Browser-direct Binance Spot trade and best-bid/ask streams, with public endpoint fallbacks and no Binance API key.
+* **Automated Monte Carlo repricing**: Live BTC spot can update the pricing input and trigger European call/put repricing on a configurable interval.
+* **Optional US equity feed**: AAPL, MSFT and GOOGL use Twelve Data through a server-side WebSocket gateway when the key and account entitlements are configured.
+* **Pricing analytics**: Risk-neutral GBM Monte Carlo, antithetic variates, Black–Scholes reference values, standard errors and 95% confidence intervals.
+* **Trading-system interface**: Order desk, simulated Level 2 books, FIX 4.4 wire inspector, working orders and execution blotter.
+
+**Execution disclaimer:** the web terminal's FIX order ticket and sample fills are simulated. It does not route orders to a live broker or exchange. BTC shows live best bid/ask, not full market depth; the displayed equity Level 2 books are demo data.
 
 ---
 
@@ -52,7 +54,7 @@ flowchart TD
     subgraph Clients["Inbound Client Layer"]
         FIX_Client["Institutional FIX Client\n(Port 9876)"]
         BIN_Client["Proprietary Binary Client\n(Port 8080)"]
-        WEB_Client["Web Trading Terminal\n(Vercel / REST)"]
+        WEB_Client["Web Trading Terminal\n(Render / HTTP + WebSocket)"]
     end
 
     subgraph Gateways["Network & Ingestion Layer (Asynchronous Asio)"]
@@ -201,11 +203,16 @@ UltraLOB/
 ├── tests/                     # 16 Google Test suites (100% pass rate)
 ├── bench/                     # Google Benchmark performance microbenchmarks
 ├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
-├── api/pricing.js             # Same-origin Vercel API proxy
-├── pricing_service/           # FastAPI + native CPU/CUDA pricing service
-├── index.html                 # Production Web Trading Terminal (Vercel)
+├── api/pricing.js             # Monte Carlo API + bounded JavaScript CPU fallback
+├── api/market-data.js         # Twelve Data equity WebSocket gateway + HTTP health route
+├── lib/market-data.js         # Market symbol validation and provider message normalizers
+├── pricing_service/           # FastAPI + native C++ CPU/CUDA pricing service
+├── server.js                  # Persistent Node entrypoint for Render
+├── render.yaml                # Render Blueprint (Free service plan)
+├── index.html                 # Web Trading Terminal (Render / Vercel)
 ├── fix_trading_terminal.html  # Standalone local trading terminal
-├── vercel.json                # Vercel deployment configuration
+├── docs/DEPLOY_RENDER_FREE.md # Render setup, market-data and pricing notes
+├── vercel.json                # Optional Vercel deployment configuration
 ├── CMakeLists.txt             # Modern CMake build system
 └── README.md
 ```
@@ -267,11 +274,11 @@ You will see real-time output demonstrating the full lifecycle:
 
 ---
 
-## GPU Monte Carlo Option Pricing
+## Monte Carlo Option Pricing
 
-The trading terminal now includes a **Monte Carlo Option Pricing** workbench for European vanilla calls and puts. It supports editable contract inputs, an automatic/CPU/NVIDIA CUDA backend selector, pricing results, Black–Scholes comparisons, 95% confidence intervals, path throughput, and a CPU-versus-GPU comparison action.
+The trading terminal includes a **Monte Carlo Option Pricing** workbench for European vanilla calls and puts. It supports editable contract inputs, AUTO/CPU/NVIDIA CUDA backend selection, Black–Scholes reference prices, standard errors, 95% confidence intervals, path throughput, and a CPU-versus-GPU comparison action.
 
-The pricing calculation uses risk-neutral geometric Brownian motion and antithetic variates. A persistent FastAPI service loads the native C++ shared library once, so CUDA context initialization is retained between requests. The pricing workload is isolated from the matching engine's single-threaded sequencer.
+The web deployment runs a bounded JavaScript CPU fallback in the Node.js service by default, so the pricing workbench can operate without a separate GPU host. The optional FastAPI service loads the native C++ pricing library and can expose CPU or CUDA execution when deployed on suitable infrastructure. Pricing work is separate from the matching engine's single-threaded sequencer. On the Render Free deployment, CUDA is not included; selecting CUDA returns an explicit unavailable response rather than silently substituting CPU.
 
 ### Pricing inputs
 
@@ -314,36 +321,42 @@ cmake --build build-cuda --config Release
 
 ### Live market data and automatic Monte Carlo repricing
 
-The dashboard uses separate live market-data sources behind the same-origin `/api/market-data` WebSocket gateway:
+The dashboard uses two deliberately separate market-data paths:
 
-- **BTC/USDT:** public Binance Spot streams `btcusdt@trade` and `btcusdt@bookTicker` provide live BTC trades plus best bid/ask. This public market-data stream does not require a Binance API key.
-- **AAPL, MSFT, GOOGL:** Twelve Data's real-time `/quotes/price` WebSocket feed; its API key stays in the server-side `TWELVE_DATA_API_KEY` Vercel environment variable.
+- **BTC/USDT — direct browser connection:** the browser subscribes to Binance Spot's public combined streams `btcusdt@trade` and `btcusdt@bookTicker`. This bypasses Render's outbound WebSocket gateway for BTC and does not require a Binance API key. The client retries across `stream.binance.com:443`, Binance's market-data-only `data-stream.binance.vision:443` hostname, and `stream.binance.com:9443`.
+- **AAPL, MSFT, GOOGL — server-side Twelve Data connection:** the browser connects to UltraLOB's same-origin `/api/market-data` WebSocket gateway. The Node service connects to Twelve Data's real-time `/quotes/price` stream and keeps `TWELVE_DATA_API_KEY` on the server. The key is never included in browser code.
 
-The browser connects only to the UltraLOB gateway; provider secrets are not placed in frontend code.
+The landing page selects BTCUSDT by default and attempts to connect the Binance feed automatically. When the first BTC trade arrives, the dashboard updates the live spot display and, when **Sync spot to live tick** is enabled, the Monte Carlo spot input. **Auto Monte Carlo** is enabled by default and runs the European call/put simulation after a live tick, then reprices on the selected 2/5/10/30-second interval (5 seconds by default). It does not run until a live quote is available. Strike, volatility, rate, dividend yield and maturity remain editable model assumptions. On the first BTC tick, the UI sets the strike to the observed spot and applies 55% annualized volatility and zero dividend yield as starting assumptions.
 
-After connecting, incoming spot-price ticks update the active instrument and, when **Sync spot from live feed** is enabled, the Monte Carlo spot input. **Auto-reprice** reruns the current European call/put simulation using the latest spot on a throttled interval (5 seconds by default). Strike, volatility, rate, dividend yield, and maturity remain explicit user assumptions. On first BTC selection, the UI sets an at-the-money strike from the first trade, 55% annualized volatility, and zero dividend yield; users can edit these assumptions. For BTC, the dashboard shows Binance's live best bid/ask and spread, not a full Level-2 depth book. The existing equity Level-2 order books remain demo data. The FIX order ticket remains simulated and does not submit real broker or exchange orders.
+For BTC, the dashboard displays Binance's best bid/ask and spread—not a full Level-2 depth book. The equity Level 2 books are demo data. The FIX order ticket, order submissions and sample fills in the web terminal are simulated; the terminal does not submit real broker or exchange orders.
 
-For BTC/USDT, no Binance API key or Twelve Data subscription is needed; click **Connect Live Feed** and select **BTC**. Confirm the gateway reports Binance Spot connected and a BTCUSDT trade tick arrives. For AAPL/MSFT/GOOGL, set `TWELVE_DATA_API_KEY` in Vercel Project Settings → Environment Variables (Preview and Production as needed). Environment-variable changes apply to new deployments, so create a fresh Preview deployment after saving the key. The `GET /api/market-data` health response reports whether the Twelve Data key is present (this does not validate the key or symbol entitlement). Then connect and confirm the equity subscription and ticks. `MARKET_DATA_MAX_CONNECTIONS` defaults to 1 per function instance. Basic/Grow WebSocket access is restricted to permitted trial symbols; the provider may reject AAPL/MSFT/GOOGL unless your account has access. Full WebSocket symbol access is available on higher plans. Twelve Data says its real-time US equity prices come from venues representing approximately 5% of total US trading volume, so treat this as a live spot reference—not a consolidated SIP/NBBO feed or execution quote. Market ticks are not expected outside the instrument's trading session. Check the provider's data licence before public or commercial display.
+**Twelve Data configuration:** add `TWELVE_DATA_API_KEY` under the Render service's Environment settings, then save and redeploy. Vercel and Render environment variables are separate. The `GET /api/market-data` health response reports whether the key is present; it does not validate the key or confirm symbol entitlements. Basic/Grow WebSocket access is restricted to permitted trial symbols, so AAPL/MSFT/GOOGL may be rejected unless your account is entitled to them. Check the [Twelve Data WebSocket documentation](https://twelvedata.com/docs/websocket/websocket-getting-started) and [trial details](https://support.twelvedata.com/en/articles/5335783-trial).
+
+Treat third-party prices as market-data references, not executable quotes. In particular, Twelve Data states that its real-time US equity prices come from venues representing approximately 5% of total US trading volume, not a consolidated SIP/NBBO feed. Data availability also depends on the instrument's trading session and the provider's licence.
 
 ### Web terminal and API architecture
 
-The hosted terminal sends pricing requests to the same-origin Vercel function at `/api/pricing`. That function proxies requests to the separately deployed FastAPI service:
+The Render deployment runs the dashboard, the Node pricing endpoint and the Twelve Data equity WebSocket gateway in one persistent Node.js service. BTC uses a direct browser-to-Binance connection; it does not pass through Render's WebSocket proxy.
 
 ```mermaid
 flowchart LR
-  UI["Vercel trading terminal<br/>Monte Carlo workbench"] --> PROXY["/api/pricing<br/>Vercel Node function"]
-  PROXY -->|native service configured| API["FastAPI pricing service"]
-  PROXY -->|no service / service offline<br/>auto or cpu request| FALLBACK["Serverless JavaScript CPU fallback"]
-  FALLBACK --> RESULT["JSON price + CI + timing"]
-  API --> LIB["Persistent C++ shared library"]
-  LIB --> CPU["CPU reference backend"]
-  LIB --> CUDA["CUDA + CURAND GPU backend"]
-  CPU --> RESULT["JSON price + CI + timing"]
+  BROWSER["Render web terminal"] -->|HTTP /api/pricing| NODE["Node.js service"]
+  NODE -->|default / no native service| CPUJS["JavaScript Monte Carlo CPU fallback"]
+  NODE -->|optional PRICING_SERVICE_URL| FASTAPI["FastAPI pricing service"]
+  FASTAPI --> NATIVE["Native C++ pricing library"]
+  NATIVE --> CPU["Native CPU backend"]
+  NATIVE --> CUDA["Optional CUDA backend"]
+  CPUJS --> RESULT["Price + Black-Scholes + CI + timing"]
+  CPU --> RESULT
   CUDA --> RESULT
-  RESULT --> UI
+  RESULT --> BROWSER
+
+  BROWSER <-->|Direct public WebSocket| BINANCE["Binance Spot · BTCUSDT"]
+  BROWSER <-->|Same-origin WebSocket| NODE
+  NODE <-->|Private API key| TWELVE["Twelve Data · US equities"]
 ```
 
-The browser never calls the GPU host directly and does not receive the API secret. When the external FastAPI service is absent or unreachable, AUTO/CPU requests use a bounded JavaScript CPU fallback on Vercel; CUDA requests still require a separately deployed NVIDIA service. The matching engine does not wait for pricing calculations.
+The built-in JavaScript CPU fallback is enabled by default and has a configurable `PRICING_FALLBACK_MAX_PATHS` limit (10,000,000 paths by default). If `PRICING_SERVICE_URL` is configured, AUTO/CPU requests can use the separate FastAPI service; when that service is unavailable the endpoint can fall back to JavaScript CPU for non-CUDA requests. CUDA requests are never silently replaced by CPU and require a separate NVIDIA GPU host. API secrets stay server-side. Pricing calculations do not block the matching engine's sequencer.
 
 ### Deploy the pricing service
 
@@ -365,19 +378,34 @@ docker run --rm --gpus all -p 8000:8000 \
 
 The service API is documented at `http://localhost:8000/docs`; health is available at `/health`. More deployment details are in [pricing_service/README.md](pricing_service/README.md).
 
-### Connect the Vercel frontend
+### Deploy and configure the Render application
 
-Copy [`.env.vercel.example`](.env.vercel.example) as a reference when configuring Vercel. Configure these environment variables in the Vercel project:
+The repository includes a Render Blueprint in `render.yaml`. The hosted application is configured as one Free Node.js web service:
 
-| Variable | Value |
-|---|---|
-| `PRICING_SERVICE_URL` | Optional HTTPS origin of the deployed FastAPI service, with no route suffix. Without it, AUTO/CPU uses the built-in Vercel CPU fallback. |
-| `PRICING_API_KEY` | Same bearer token configured on the pricing service; only needed when using that service |
-| `PRICING_FALLBACK_MAX_PATHS` | Optional path cap for Vercel CPU fallback (default 10,000,000) |
+1. Connect `ram-mittal/UltraLOB` to [Render](https://render.com/).
+2. Create a **Blueprint** from the repository branch containing `render.yaml`.
+3. Review the `ultralob` service and deploy the Blueprint.
+4. Open [ultralob.onrender.com](https://ultralob.onrender.com/).
 
-Redeploy Vercel after setting the variables. Check `https://your-domain/api/pricing`; it should return a healthy service response. Then open the terminal, run a CPU simulation, and select CUDA or use **Compare CPU / GPU** when the service is running on an NVIDIA GPU host.
+The `server.js` entrypoint enables Render mode and serves `index.html`, `/api/pricing`, `/api/market-data`, and `/healthz). Render Free services sleep when idle; the first request after a sleep may take time to wake the instance.
 
-Vercel serves the frontend and API proxy; it does not supply the NVIDIA GPU. CUDA computation occurs on the separate GPU-enabled container host. GPU utilization is shown only when NVML hardware telemetry is available; it is not fabricated when the driver does not expose it.
+#### Render environment variables
+
+| Variable | Required? | Purpose |
+|---|---|---|
+| `TWELVE_DATA_API_KEY` | Optional | Server-side Twelve Data key for AAPL/MSFT/GOOGL, subject to account symbol entitlements |
+| `PRICING_SERVICE_URL` | Optional | HTTPS origin of a separately deployed FastAPI pricing service, without a route suffix |
+| `PRICING_API_KEY` | Optional | Bearer token shared with that FastAPI service |
+| `PRICING_FALLBACK_MAX_PATHS` | Optional | JavaScript CPU fallback cap; defaults to 10,000,000 paths |
+| `MARKET_DATA_MAX_CONNECTIONS` | Optional | Maximum simultaneous browser connections accepted by the market-data gateway |
+
+The Render Blueprint supplies the Node start command and free-service configuration. Binance BTC data is public and does not require a key. **Do not put provider keys in `index.html` or commit them to Git.** Render environment changes require a new deployment to take effect.
+
+#### Optional Vercel deployment
+
+The repository retains `vercel.json` and the Vercel-compatible API handler as an alternate deployment path. Configure the same applicable secrets in the Vercel project separately; Vercel environment variables do not transfer to Render. The primary hosted terminal documented here is the Render deployment.
+
+For a separate native pricing service, copy [`.env.vercel.example`](.env.vercel.example) as an example of the pricing variables, then configure `PRICING_SERVICE_URL` and `PRICING_API_KEY` in the host running the frontend/API proxy. The GPU host is separate from Render Free; CUDA computation requires an NVIDIA GPU-enabled container host. GPU utilization is shown only when NVML telemetry is available.
 
 ### Model scope
 
