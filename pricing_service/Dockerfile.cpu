@@ -4,6 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV ULTRALOB_PRICER_BIN=/app/ultralob_pricer
+ENV ULTRALOB_PRICER_LIBRARY=/app/build/libultralob_quant.so
+ENV LD_LIBRARY_PATH=/app/build:$LD_LIBRARY_PATH
 ENV ULTRALOB_CUDA_ENABLED=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,6 +21,8 @@ COPY include /app/include
 COPY src/quant /app/src/quant
 COPY server/monte_carlo_demo.cpp /app/server/monte_carlo_demo.cpp
 COPY pricing_service/CMakeLists.txt /app/pricing_service/CMakeLists.txt
+COPY pricing_service/native_bridge.cpp /app/pricing_service/native_bridge.cpp
+COPY pricing_service/native_bridge.hpp /app/pricing_service/native_bridge.hpp
 
 RUN cmake -S /app/pricing_service -B /app/build -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=OFF \
     && cmake --build /app/build --target ultralob_pricer --parallel 2 \
