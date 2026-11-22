@@ -391,7 +391,7 @@
         <span id="liveMarketLastTick" class="text-slate-500">No live tick received</span>
         <span id="liveAutoPricingStatus" class="text-slate-500">Automatic pricing waits for a live tick</span>
       </div>
-      <div class="text-[9px] text-slate-500 mt-2">Only the underlying spot is streamed. Strike, volatility, rates, dividend yield and maturity remain your model assumptions. The Level 2 order book below remains demo data.</div>
+      <div class="text-[9px] text-slate-500 mt-2">Live spot reference only — not consolidated SIP/NBBO or an executable quote. Strike, volatility, rates, dividend yield and maturity remain your assumptions. The Level 2 book and bid/ask depth below are demo data.</div>
     </div>
 
     <div class="grid grid-cols-12 gap-3">
@@ -1114,7 +1114,10 @@
         socket.onclose = function() {
           if (liveMarketSocket === socket) liveMarketSocket = null;
           if (liveMarketIntentionalClose) {
-            setLiveMarketState("disconnected", "Live feed stopped. Your last received quotes remain visible but may be stale.");
+            const currentStatus = pricingElement("liveMarketStatus").textContent || "";
+            if (!currentStatus.includes("ERROR") && !currentStatus.includes("API KEY REQUIRED")) {
+              setLiveMarketState("disconnected", "Live feed stopped. Your last received quotes remain visible but may be stale.");
+            }
             return;
           }
           const delay = Math.min(30000, 1000 * Math.pow(2, liveMarketReconnectAttempt));
