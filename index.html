@@ -1079,7 +1079,14 @@
             const failures = Array.isArray(message.fails) ? message.fails : [];
             if (failures.length) {
               const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
-              setLiveMarketState("error", "Provider rejected: " + failedSymbols + ". Check your Twelve Data plan and permitted trial symbols.");
+              if (successes.length) {
+                setLiveMarketState("connected", "Streaming " + successes.map(function(item) { return item.symbol || item }).join(", ") +
+                  "; provider rejected " + failedSymbols + ". Check your Twelve Data plan.");
+              } else {
+                setLiveMarketState("error", "Provider rejected: " + failedSymbols + ". Check permitted trial symbols and your Twelve Data plan.");
+                liveMarketIntentionalClose = true;
+                try { socket.close(); } catch {}
+              }
             } else {
               setLiveMarketState("waiting", "Subscribed to " + (successes.length || LIVE_MARKET_SYMBOLS.length) + " symbol(s). Waiting for the next market tick.");
             }
@@ -1093,7 +1100,7 @@
 
           if (message.event === "error") {
             setLiveMarketState("error", message.message || "Twelve Data returned an error.");
-            if (["CONFIG_MISSING", "INVALID_SYMBOLS", "ORIGIN_NOT_ALLOWED", "CONNECTION_LIMIT"].includes(message.code)) {
+            if (["CONFIG_MISSING", "INVALID_SYMBOLS", "ORIGIN_NOT_ALLOWED", "CONNECTION_LIMIT", "PROVIDER_ERROR"].includes(message.code)) {
               liveMarketIntentionalClose = true;
               try { socket.close(); } catch {}
             }
