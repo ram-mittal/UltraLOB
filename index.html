@@ -1182,7 +1182,7 @@
       const delay = Math.max(0, intervalMs - (Date.now() - liveLastAutoPricingAt));
       liveAutoPricingTimer = setTimeout(async function() {
         if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
-        if (liveAutoPricingInFlight || pricingElement("pricingRunButton").disabled) {
+        if (liveAutoPricingInFlight || pricingElement("pricingRunButton").disabled || pricingElement("pricingCompareButton").disabled) {
           liveAutoPricingPending = true;
           return;
         }
@@ -1348,7 +1348,14 @@
       if (automatic) liveAutoPricingInFlight = true;
       const payload = readPricingInputs();
       const validationError = validatePricingInputs(payload);
-      if (validationError) { pricingElement("pricingRunMessage").textContent = validationError; return; }
+      if (validationError) {
+        pricingElement("pricingRunMessage").textContent = validationError;
+        if (automatic) {
+          liveAutoPricingInFlight = false;
+          pricingElement("liveAutoPricingStatus").textContent = "Auto-pricing paused: " + validationError;
+        }
+        return;
+      }
       button.disabled = true;
       button.textContent = automatic ? "AUTO PRICING..." : "SIMULATING...";
       setPricingServiceState("running", automatic ? "LIVE MONTE CARLO RUNNING" : "MONTE CARLO RUNNING",
@@ -1467,6 +1474,10 @@
       } finally {
         button.disabled = false;
         button.textContent = "COMPARE CPU / GPU";
+        if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+          liveAutoPricingPending = false;
+          scheduleLiveAutoPricing();
+        }
       }
     }
 
