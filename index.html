@@ -988,6 +988,232 @@
     };
     function pricingElement(id) { return document.getElementById(id); }
 
+    function setLiveMarketState(state, detail) {
+      const palette = {
+        ready: ["bg-amber-400", "text-amber-300", "READY TO CONNECT"],
+        connecting: ["bg-sky-400 live-dot", "text-sky-300", "CONNECTING TO TWELVE DATA"],
+        connected: ["bg-emerald-400 live-dot", "text-emerald-300", "LIVE FEED CONNECTED"],
+        waiting: ["bg-amber-400", "text-amber-300", "CONNECTED · WAITING FOR MARKET TICK"],
+        error: ["bg-rose-400", "text-rose-300", "LIVE FEED ERROR"],
+        disconnected: ["bg-slate-500", "text-slate-400", "LIVE FEED DISCONNECTED"],
+        missing: ["bg-rose-400", "text-rose-300", "API KEY REQUIRED"],
+        reconnecting: ["bg-amber-400 live-dot", "text-amber-300", "RECONNECTING LIVE FEED"]
+      };
+      const style = palette[state] || palette.disconnected;
+      pricingElement("liveMarketDot").className = "w-2.5 h-2.5 rounded-full " + style[0];
+      pricingElement("liveMarketStatus").className = "text-[10px] uppercase tracking-wider font-bold " + style[1];
+      pricingElement("liveMarketStatus").textContent = style[2];
+      pricingElement("liveMarketDetail").textContent = detail || "";
+      const button = pricingElement("liveMarketConnectButton");
+      button.textContent = (state === "connected" || state === "waiting" || state === "connecting" || state === "reconnecting")
+        ? "DISCONNECT FEED" : "CONNECT LIVE FEED";
+      button.disabled = state === "connecting" || state === "reconnecting";
+    }
+
+    async function checkLiveMarketDataConfig() {
+      try {
+        const response = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Market-data gateway unavailable");
+        if (payload.configured) {
+          setLiveMarketState("ready", "Twelve Data API key detected · " + payload.symbols.join(", ") + " · connect to start the stream");
+        } else {
+          setLiveMarketState("missing", "Add TWELVE_DATA_API_KEY to Vercel Environment Variables, then redeploy.");
+        }
+      } catch (error) {
+        setLiveMarketState("error", error.message);
+      }
+    }
+
+    function toggleLiveMarketData() {
+      if (liveMarketSocket && (
+        liveMarketSocket.readyState === WebSocket.OPEN ||
+        liveMarketSocket.readyState === WebSocket.CONNECTING
+      )) {
+        stopLiveMarketData();
+      } else {
+        connectLiveMarketData();
+      }
+    }
+
+    async function connectLiveMarketData() {
+      if (liveMarketSocket && liveMarketSocket.readyState <= WebSocket.OPEN) return;
+      clearTimeout(liveMarketReconnectTimer);
+      liveMarketIntentionalClose = false;
+      setLiveMarketState("connecting", "Checking the server-side Twelve Data configuration...");
+      try {
+        const healthResponse = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
+        const health = await healthResponse.json();
+        if (!healthResponse.ok) throw new Error(health.error || "Market-data gateway unavailable");
+        if (!health.configured) {
+          setLiveMarketState("missing", "Set TWELVE_DATA_API_KEY in Vercel, then redeploy the Preview and Production environments.");
+          return;
+        }
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const url = protocol + "//" + window.location.host + "/api/market-data?symbols=" +
+          encodeURIComponent(LIVE_MARKET_SYMBOLS.join(","));
+        const socket = new WebSocket(url);
+        liveMarketSocket = socket;
+
+        socket.onopen = function() {
+          liveMarketReconnectAttempt = 0;
+          setLiveMarketState("connecting", "Browser connected to the secure Vercel gateway; authorizing the provider stream...");
+        };
+
+        socket.onmessage = function(event) {
+          let message;
+          try { message = JSON.parse(event.data); }
+          catch { return; }
+
+          if (message.event === "gateway") {
+            if (message.status === "connected") {
+              setLiveMarketState("waiting", message.message || ("Subscribed to " + LIVE_MARKET_SYMBOLS.join(", ") + "; waiting for first tick."));
+            } else if (message.status === "disconnected") {
+              setLiveMarketState("reconnecting", message.message || "Provider connection closed.");
+            }
+            return;
+          }
+
+          if (message.event === "subscription") {
+            const successes = Array.isArray(message.success) ? message.success : [];
+            const failures = Array.isArray(message.fails) ? message.fails : [];
+            if (failures.length) {
+              const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
+              setLiveMarketState("error", "Provider rejected: " + failedSymbols + ". Check your Twelve Data plan and permitted trial symbols.");
+            } else {
+              setLiveMarketState("waiting", "Subscribed to " + (successes.length || LIVE_MARKET_SYMBOLS.length) + " symbol(s). Waiting for the next market tick.");
+            }
+            return;
+          }
+
+          if (message.event === "price") {
+            handleLiveMarketTick(message);
+            return;
+          }
+
+          if (message.event === "error") {
+            setLiveMarketState("error", message.message || "Twelve Data returned an error.");
+            if (["CONFIG_MISSING", "INVALID_SYMBOLS", "ORIGIN_NOT_ALLOWED", "CONNECTION_LIMIT"].includes(message.code)) {
+              liveMarketIntentionalClose = true;
+              try { socket.close(); } catch {}
+            }
+          }
+        };
+
+        socket.onerror = function() {
+          setLiveMarketState("error", "Could not establish the live WebSocket. Check deployment status and provider access.");
+        };
+
+        socket.onclose = function() {
+          if (liveMarketSocket === socket) liveMarketSocket = null;
+          if (liveMarketIntentionalClose) {
+            setLiveMarketState("disconnected", "Live feed stopped. Your last received quotes remain visible but may be stale.");
+            return;
+          }
+          const delay = Math.min(30000, 1000 * Math.pow(2, liveMarketReconnectAttempt));
+          liveMarketReconnectAttempt += 1;
+          setLiveMarketState("reconnecting", "Connection closed. Retrying in " + Math.round(delay / 1000) + "s.");
+          clearTimeout(liveMarketReconnectTimer);
+          liveMarketReconnectTimer = setTimeout(connectLiveMarketData, delay);
+        };
+      } catch (error) {
+        setLiveMarketState("error", error.message);
+      }
+    }
+
+    function stopLiveMarketData() {
+      liveMarketIntentionalClose = true;
+      clearTimeout(liveMarketReconnectTimer);
+      clearTimeout(liveAutoPricingTimer);
+      liveAutoPricingPending = false;
+      if (liveMarketSocket) {
+        const socket = liveMarketSocket;
+        liveMarketSocket = null;
+        try { socket.close(1000, "User disconnected"); } catch {}
+      }
+      setLiveMarketState("disconnected", "Live feed stopped. Simulated order-book data is unchanged.");
+      pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+    }
+
+    function handleLiveMarketTick(tick) {
+      const symbol = String(tick.symbol || "").toUpperCase();
+      const price = Number(tick.price);
+      if (!LIVE_MARKET_SYMBOLS.includes(symbol) || !Number.isFinite(price) || price <= 0) return;
+
+      const quote = {
+        price: price,
+        timestamp: Number(tick.timestamp) || Date.now(),
+        currency: tick.currency || "USD",
+        exchange: tick.exchange || null,
+        day_volume: tick.day_volume == null ? null : Number(tick.day_volume)
+      };
+      liveMarketQuotes[symbol] = quote;
+
+      if (symbol === activeSymbol) {
+        pricingElement("symLastPrice").textContent = "$" + price.toFixed(2);
+        pricingElement("symLastPriceSource").textContent = "LIVE · TWELVE DATA";
+        pricingElement("symLastPriceSource").className = "text-[9px] font-mono text-emerald-400";
+        pricingElement("liveMarketLastTick").textContent =
+          symbol + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
+        if (pricingElement("autoSpotSync").checked) {
+          pricingElement("pricingSpot").value = price.toFixed(4);
+        }
+        if (pricingElement("autoPricingEnabled").checked) {
+          pricingElement("liveAutoPricingStatus").textContent = "New " + symbol + " tick received · auto-repricing queued";
+          scheduleLiveAutoPricing();
+        }
+      }
+      setLiveMarketState("connected", "Twelve Data stream active · subscribed to " + LIVE_MARKET_SYMBOLS.join(", "));
+    }
+
+    function scheduleLiveAutoPricing() {
+      if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
+      const quote = liveMarketQuotes[activeSymbol];
+      if (!quote) {
+        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + activeSymbol + " tick";
+        return;
+      }
+      if (liveAutoPricingInFlight) {
+        liveAutoPricingPending = true;
+        return;
+      }
+      clearTimeout(liveAutoPricingTimer);
+      const intervalMs = Math.max(2000, Number(pricingElement("autoPricingInterval").value || 5) * 1000);
+      const delay = Math.max(0, intervalMs - (Date.now() - liveLastAutoPricingAt));
+      liveAutoPricingTimer = setTimeout(async function() {
+        if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
+        if (liveAutoPricingInFlight || pricingElement("pricingRunButton").disabled) {
+          liveAutoPricingPending = true;
+          return;
+        }
+        const latestQuote = liveMarketQuotes[activeSymbol];
+        if (!latestQuote) return;
+        if (pricingElement("autoSpotSync").checked) {
+          pricingElement("pricingSpot").value = Number(latestQuote.price).toFixed(4);
+        }
+        liveLastAutoPricingAt = Date.now();
+        pricingElement("liveAutoPricingStatus").textContent =
+          "Pricing " + activeSymbol + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
+        await runMonteCarloPricing({ automatic: true });
+      }, delay);
+    }
+
+    pricingElement("autoPricingEnabled").addEventListener("change", function() {
+      if (this.checked) {
+        scheduleLiveAutoPricing();
+      } else {
+        clearTimeout(liveAutoPricingTimer);
+        liveAutoPricingPending = false;
+        pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+      }
+    });
+    pricingElement("autoPricingInterval").addEventListener("change", scheduleLiveAutoPricing);
+    pricingElement("autoSpotSync").addEventListener("change", function() {
+      if (this.checked && liveMarketQuotes[activeSymbol]) {
+        pricingElement("pricingSpot").value = Number(liveMarketQuotes[activeSymbol].price).toFixed(4);
+      }
+    });
+
     function setPricingServiceState(state, title, detail) {
       const palette = {
         online: ["bg-emerald-400", "text-emerald-300"],
@@ -1111,13 +1337,23 @@
       drawPricingComparison(call, put);
     }
 
-    async function runMonteCarloPricing() {
-      const button = pricingElement("pricingRunButton"), payload = readPricingInputs();
+    async function runMonteCarloPricing(options) {
+      const automatic = Boolean(options && options.automatic);
+      const button = pricingElement("pricingRunButton");
+      if (automatic && liveAutoPricingInFlight) return;
+      if (button.disabled) {
+        if (automatic) liveAutoPricingPending = true;
+        return;
+      }
+      if (automatic) liveAutoPricingInFlight = true;
+      const payload = readPricingInputs();
       const validationError = validatePricingInputs(payload);
       if (validationError) { pricingElement("pricingRunMessage").textContent = validationError; return; }
-      button.disabled = true; button.textContent = "SIMULATING...";
-      setPricingServiceState("running", "MONTE CARLO RUNNING", payload.backend.toUpperCase() + " requested · " + formatPricingNumber(payload.paths, 0) + " paths");
-      pricingElement("pricingRunMessage").textContent = "Submitting simulation to the pricing service...";
+      button.disabled = true;
+      button.textContent = automatic ? "AUTO PRICING..." : "SIMULATING...";
+      setPricingServiceState("running", automatic ? "LIVE MONTE CARLO RUNNING" : "MONTE CARLO RUNNING",
+        payload.backend.toUpperCase() + " requested · " + formatPricingNumber(payload.paths, 0) + " paths");
+      if (!automatic) pricingElement("pricingRunMessage").textContent = "Submitting simulation to the pricing service...";
       try {
         const response = await fetch("/api/pricing", {
           method: "POST",
@@ -1137,9 +1373,15 @@
           usedFallback ? "CPU FALLBACK COMPLETE" : "PRICING COMPLETE",
           (usedFallback ? "Vercel serverless CPU" : "Executed on " + result.backend) + " · " + formatPricingNumber(result.paths, 0) + " paths"
         );
-        pricingElement("pricingRunMessage").textContent = usedFallback
-          ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
-          : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.";
+        pricingElement("pricingRunMessage").textContent = automatic
+          ? "Automatically repriced " + activeSymbol + " using the latest Twelve Data spot. Strike, volatility, rates, dividend yield and maturity remain your assumptions."
+          : (usedFallback
+            ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
+            : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.");
+        if (automatic) {
+          pricingElement("liveAutoPricingStatus").textContent =
+            "Last auto-price " + activeSymbol + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
+        }
       } catch (error) {
         if (error.status === 413) {
           setPricingServiceState("online", "CPU FALLBACK READY", error.message);
@@ -1149,8 +1391,17 @@
           setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
         }
         pricingElement("pricingRunMessage").textContent = error.message;
+        if (automatic) pricingElement("liveAutoPricingStatus").textContent = "Auto-pricing failed: " + error.message;
       } finally {
-        button.disabled = false; button.textContent = "RUN MONTE CARLO SIMULATION";
+        button.disabled = false;
+        button.textContent = "RUN MONTE CARLO SIMULATION";
+        if (automatic) {
+          liveAutoPricingInFlight = false;
+          if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+            liveAutoPricingPending = false;
+            scheduleLiveAutoPricing();
+          }
+        }
       }
     }
 
@@ -1265,6 +1516,8 @@
       }
     });
     checkPricingService();
+    checkLiveMarketDataConfig();
+    window.addEventListener("beforeunload", stopLiveMarketData);
 
   </script>
 </body>
