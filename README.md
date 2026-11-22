@@ -187,17 +187,20 @@ UltraLOB/
 │   │   ├── fix_gateway.hpp    # Institutional Acceptor Server
 │   │   ├── fix_initiator.hpp  # Client transport & session runner
 │   │   └── fix_application.hpp# Application translation layer
-│   ├── quant/                 # Public Monte Carlo pricing API\n│   ├── net/                   # Networking & Risk
+│   ├── quant/                 # Public Monte Carlo pricing API
+│   ├── net/                   # Networking & Risk
 │   │   ├── gateway.hpp        # Binary TCP gateway
 │   │   ├── risk_engine.hpp    # Pre-trade risk manager (PTRM)
 │   │   └── market_data_publisher.hpp # UDP Multicast ITCH publisher
 │   └── util/                  # Lock-free MPSC queues, spinlocks, profiler
 ├── src/                       # Implementation files
 ├── server/                    # Server executables
-│   ├── main.cpp               # Production unified UltraLOB exchange server\n│   ├── monte_carlo_demo.cpp   # Standalone option pricer CLI
+│   ├── main.cpp               # Production unified UltraLOB exchange server
+│   ├── monte_carlo_demo.cpp   # Standalone option pricer CLI
 │   └── fix_client_demo.cpp    # Standalone FIX 4.4 trading client demo
 ├── tests/                     # 16 Google Test suites (100% pass rate)
-├── bench/                     # Google Benchmark performance microbenchmarks\n├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
+├── bench/                     # Google Benchmark performance microbenchmarks
+├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
 ├── api/pricing.js             # Same-origin Vercel API proxy
 ├── pricing_service/           # FastAPI + native CPU/CUDA pricing service
 ├── index.html                 # Production Web Trading Terminal (Vercel)
