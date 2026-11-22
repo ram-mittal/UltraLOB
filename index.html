@@ -1069,7 +1069,11 @@
           body: JSON.stringify(payload), cache: "no-store"
         });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || result.hint || result.error || "Pricing request failed");
+        if (!response.ok) {
+          const requestError = new Error(result.detail || result.hint || result.error || "Pricing request failed");
+          requestError.status = response.status;
+          throw requestError;
+        }
         renderPricingResults(result);
         const usedFallback = result.execution_engine === "javascript-fallback";
         setPricingServiceState(
@@ -1081,8 +1085,14 @@
           ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
           : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.";
       } catch (error) {
-        setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
-        pricingElement("pricingRunMessage").textContent = error.message + " · Confirm the pricing container is running and Vercel environment variables are configured.";
+        if (error.status === 413) {
+          setPricingServiceState("online", "CPU FALLBACK READY", error.message);
+        } else if (payload.backend === "cuda" && error.status === 503) {
+          setPricingServiceState("online", "CPU READY · CUDA UNAVAILABLE", error.message);
+        } else {
+          setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
+        }
+        pricingElement("pricingRunMessage").textContent = error.message;
       } finally {
         button.disabled = false; button.textContent = "RUN MONTE CARLO SIMULATION";
       }
@@ -1102,7 +1112,11 @@
           cache: "no-store"
         });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || result.error || (backend + " pricing failed"));
+        if (!response.ok) {
+          const requestError = new Error(result.detail || result.hint || result.error || (backend + " pricing failed"));
+          requestError.status = response.status;
+          throw requestError;
+        }
         return result;
       };
 
@@ -1140,7 +1154,8 @@
         }
       } catch (error) {
         pricingElement("pricingCpuCompare").textContent = "Failed · " + error.message;
-        setPricingServiceState("offline", "PRICING COMPARISON FAILED", error.message);
+        setPricingServiceState(error.status === 413 ? "online" : "offline",
+          error.status === 413 ? "CPU FALLBACK READY" : "PRICING COMPARISON FAILED", error.message);
         pricingElement("pricingRunMessage").textContent = error.message;
       } finally {
         button.disabled = false;
