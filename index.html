@@ -130,26 +130,28 @@
           <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Instrument</label>
           <span class="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">TRADING</span>
         </div>
-        <div class="grid grid-cols-3 gap-1.5 mb-3">
+        <div class="grid grid-cols-4 gap-1.5 mb-3">
           <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">AAPL</button>
           <button onclick="selectSymbol('MSFT')" id="tab-MSFT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">MSFT</button>
           <button onclick="selectSymbol('GOOGL')" id="tab-GOOGL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">GOOGL</button>
+          <button onclick="selectSymbol('BTCUSDT')" id="tab-BTCUSDT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">BTC</button>
         </div>
         <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
           <div>
-            <div class="text-[10px] text-slate-500">LAST TRADED</div>
+            <div class="text-[10px] text-slate-500">LAST PRICE</div>
             <div class="text-base font-bold text-sky-400" id="symLastPrice">$150.25</div>
+            <div id="symLastPriceSource" class="text-[9px] font-mono text-amber-400">SIMULATED</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">24H SPREAD</div>
+            <div id="symSpreadLabel" class="text-[10px] text-slate-500">DEMO SPREAD</div>
             <div class="text-base font-bold text-slate-300" id="symSpread">$0.05</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">BEST BID</div>
+            <div id="symBestBidLabel" class="text-[10px] text-slate-500">BEST BID (DEMO)</div>
             <div class="text-emerald-400 font-semibold" id="symBestBid">$150.20</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">BEST ASK</div>
+            <div id="symBestAskLabel" class="text-[10px] text-slate-500">BEST ASK (DEMO)</div>
             <div class="text-rose-400 font-semibold" id="symBestAsk">$150.25</div>
           </div>
         </div>
@@ -163,7 +165,7 @@
               <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
               Order Entry Ticket
             </span>
-            <span class="text-[10px] font-mono text-slate-500">Tag 35=D (NOS)</span>
+            <span class="text-[10px] font-mono text-amber-400">SIMULATED · NO BROKER ROUTING</span>
           </div>
 
           <!-- Side Toggle (Buy / Sell) -->
@@ -238,7 +240,7 @@
       <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex-1 flex flex-col">
         <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
           <div class="flex items-center gap-2">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Level 2 Order Book</span>
+            <span id="bookModeLabel" class="text-xs font-bold uppercase tracking-wider text-slate-300">Simulated Level 2 Order Book</span>
             <span id="bookSymbolBadge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/30">AAPL</span>
           </div>
           <span class="text-[11px] font-mono text-slate-400">Fixed-Point Scale: 10<sup>8</sup></span>
@@ -358,6 +360,39 @@
         </div>
         <button type="button" onclick="checkPricingService()" class="ml-auto text-[10px] text-sky-400 hover:text-sky-300 font-semibold">RECHECK</button>
       </div>
+    </div>
+
+    <div id="liveMarketPanel" class="rounded-lg border border-slate-800 bg-slate-950/55 p-3 mb-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="liveMarketDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+        <div class="min-w-[210px] flex-1">
+          <div id="liveMarketStatus" class="text-[10px] uppercase tracking-wider font-bold text-slate-300">LIVE FEED NOT CONNECTED</div>
+          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Binance Spot · BTCUSDT trades and top-of-book · Twelve Data equities</div>
+        </div>
+        <button id="liveMarketConnectButton" type="button" onclick="toggleLiveMarketData()" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold">CONNECT LIVE FEED</button>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-3 pt-3 border-t border-slate-800 text-[10px]">
+        <label class="inline-flex items-center gap-2 text-slate-300">
+          <input id="autoSpotSync" type="checkbox" checked class="accent-sky-500">
+          Sync spot to live tick
+        </label>
+        <label class="inline-flex items-center gap-2 text-slate-300">
+          <input id="autoPricingEnabled" type="checkbox" checked class="accent-emerald-500">
+          Auto-reprice
+        </label>
+        <label class="inline-flex items-center gap-2 text-slate-400">
+          Reprice interval
+          <select id="autoPricingInterval" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200">
+            <option value="2">2 seconds</option>
+            <option value="5" selected>5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+          </select>
+        </label>
+        <span id="liveMarketLastTick" class="text-slate-500">No live tick received</span>
+        <span id="liveAutoPricingStatus" class="text-slate-500">Automatic pricing waits for a live tick</span>
+      </div>
+      <div class="text-[9px] text-slate-500 mt-2">Live spot reference only — not consolidated SIP/NBBO or an executable quote. Strike, volatility, rates, dividend yield and maturity remain your assumptions. The Level 2 book and bid/ask depth below are demo data.</div>
     </div>
 
     <div class="grid grid-cols-12 gap-3">
@@ -511,6 +546,19 @@
     let workingOrders = [];
     let fillReports = [];
 
+    // Live market data state. The browser never receives the Twelve Data API key.
+    const LIVE_MARKET_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "BTCUSDT"];
+    const liveMarketQuotes = Object.create(null);
+    let liveMarketSocket = null;
+    let liveMarketReconnectTimer = null;
+    let liveMarketReconnectAttempt = 0;
+    let liveMarketIntentionalClose = false;
+    let liveAutoPricingTimer = null;
+    let liveLastAutoPricingAt = 0;
+    let liveAutoPricingInFlight = false;
+    let liveAutoPricingPending = false;
+    let btcModelDefaultsApplied = false;
+
     // Order books per symbol
     const orderBooks = {
       'AAPL': {
@@ -557,21 +605,52 @@
     }
 
     function selectSymbol(sym) {
+      if (!LIVE_MARKET_SYMBOLS.includes(sym)) return;
       activeSymbol = sym;
       document.querySelectorAll('.symbol-tab').forEach(b => {
         b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
       });
       document.getElementById('tab-' + sym).className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
       document.getElementById('bookSymbolBadge').innerText = sym;
+      document.getElementById('bookModeLabel').textContent =
+        sym === 'BTCUSDT' ? 'Live BTC Top of Book · Depth Not Loaded' : 'Simulated Level 2 Order Book';
+      document.getElementById('symSpreadLabel').textContent = sym === 'BTCUSDT' ? 'LIVE SPREAD' : 'DEMO SPREAD';
+      document.getElementById('symBestBidLabel').textContent = sym === 'BTCUSDT' ? 'BEST BID (LIVE)' : 'BEST BID (DEMO)';
+      document.getElementById('symBestAskLabel').textContent = sym === 'BTCUSDT' ? 'BEST ASK (LIVE)' : 'BEST ASK (DEMO)';
 
-      if (sym === 'AAPL') {
-        document.getElementById('inputPrice').value = '150.25';
-      } else if (sym === 'MSFT') {
-        document.getElementById('inputPrice').value = '310.50';
-      } else if (sym === 'GOOGL') {
-        document.getElementById('inputPrice').value = '2800.00';
+      const liveQuote = liveMarketQuotes[sym];
+      if (sym === 'BTCUSDT' && !btcModelDefaultsApplied) {
+        pricingElement('pricingVol').value = '0.55';
+        pricingElement('pricingDividend').value = '0';
       }
+      if (liveQuote && Number.isFinite(Number(liveQuote.price))) {
+        document.getElementById('symLastPrice').textContent = '$' + Number(liveQuote.price).toFixed(2);
+        document.getElementById('symLastPriceSource').textContent = 'LIVE · ' + (liveQuote.provider || 'MARKET DATA').toUpperCase();
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-emerald-400';
+        document.getElementById('inputPrice').value = Number(liveQuote.price).toFixed(4);
+        if (pricingElement('autoSpotSync')?.checked) {
+          pricingElement('pricingSpot').value = Number(liveQuote.price).toFixed(4);
+        }
+      } else if (sym === 'BTCUSDT') {
+        document.getElementById('symLastPrice').textContent = '$—';
+        document.getElementById('symLastPriceSource').textContent = 'WAITING FOR BINANCE';
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-amber-400';
+        document.getElementById('symBestBid').textContent = '$—';
+        document.getElementById('symBestAsk').textContent = '$—';
+        document.getElementById('symSpread').textContent = '—';
+        document.getElementById('inputPrice').value = '';
+      } else {
+        const demoPrices = { AAPL: '150.25', MSFT: '310.50', GOOGL: '2800.00' };
+        document.getElementById('symLastPrice').textContent = '$' + Number(demoPrices[sym]).toFixed(2);
+        document.getElementById('symLastPriceSource').textContent = 'SIMULATED';
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-amber-400';
+        document.getElementById('inputPrice').value = demoPrices[sym];
+      }
+
       renderBook();
+      if (liveQuote && Number.isFinite(Number(liveQuote.price)) && pricingElement('autoPricingEnabled')?.checked) {
+        scheduleLiveAutoPricing();
+      }
     }
 
     function setSide(side) {
@@ -628,63 +707,78 @@
 
     function renderBook() {
       const book = orderBooks[activeSymbol];
-      if (!book) return;
-
       const asksDiv = document.getElementById('asksContainer');
       const bidsDiv = document.getElementById('bidsContainer');
 
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
+      if (!book) {
+        if (activeSymbol !== 'BTCUSDT') return;
+        const quote = liveMarketQuotes.BTCUSDT || {};
+        const bid = Number(quote.bid) || 0;
+        const ask = Number(quote.ask) || 0;
+        const spread = bid > 0 && ask > 0 ? ask - bid : 0;
+        const mid = bid > 0 && ask > 0 ? (ask + bid) / 2 : 0;
 
+        asksDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best ask appears above when received.</div>';
+        bidsDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best bid appears above when received.</div>';
+        document.getElementById('symBestBid').textContent = bid > 0 ? '$' + bid.toFixed(2) : '$—';
+        document.getElementById('symBestAsk').textContent = ask > 0 ? '$' + ask.toFixed(2) : '$—';
+        document.getElementById('symSpread').textContent = spread > 0 ? '$' + spread.toFixed(2) : '—';
+        document.getElementById('spreadDisplay').textContent = spread > 0 ? '$' + spread.toFixed(2) : '—';
+        document.getElementById('midDisplay').textContent = mid > 0 ? '$' + mid.toFixed(2) : '—';
+        document.getElementById('bidDepthSum').textContent = '—';
+        document.getElementById('askDepthSum').textContent = '—';
+        document.getElementById('bidDepthBar').style.width = '0%';
+        document.getElementById('askDepthBar').style.width = '0%';
+        if (Number.isFinite(Number(quote.price)) && Number(quote.price) > 0) {
+          document.getElementById('symLastPrice').textContent = '$' + Number(quote.price).toFixed(2);
+        }
+        return;
+      }
+
+      // Sort asks high-to-low so lowest ask is at bottom.
+      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
+      // Sort bids high-to-low so highest bid is at top.
+      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
       const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
       const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
 
       asksDiv.innerHTML = sortedAsks.map(a => {
         const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
+        return '<div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">' +
+          '<div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ' + pct + '%"></div>' +
+          '<div class="text-rose-400 font-bold z-10">$' + a.price.toFixed(2) + '</div>' +
+          '<div class="text-right text-slate-200 z-10">' + a.qty + '</div>' +
+          '<div class="text-right text-slate-400 z-10">' + a.orders + '</div></div>';
       }).join('');
 
       bidsDiv.innerHTML = sortedBids.map(b => {
         const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
+        return '<div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">' +
+          '<div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ' + pct + '%"></div>' +
+          '<div class="text-emerald-400 font-bold z-10">$' + b.price.toFixed(2) + '</div>' +
+          '<div class="text-right text-slate-200 z-10">' + b.qty + '</div>' +
+          '<div class="text-right text-slate-400 z-10">' + b.orders + '</div></div>';
       }).join('');
 
       const bestBid = sortedBids[0]?.price || 0;
       const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
+      const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
+      const mid = bestAsk > 0 && bestBid > 0 ? (bestAsk + bestBid) / 2 : 0;
 
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
+      document.getElementById('symBestBid').innerText = '$' + bestBid.toFixed(2);
+      document.getElementById('symBestAsk').innerText = '$' + bestAsk.toFixed(2);
+      document.getElementById('symLastPrice').innerText = '$' + bestAsk.toFixed(2);
+      document.getElementById('symSpread').innerText = '$' + spread.toFixed(2);
+      document.getElementById('spreadDisplay').innerText = '$' + spread.toFixed(2);
+      document.getElementById('midDisplay').innerText = '$' + mid.toFixed(3);
 
       const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
       const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
       const totalDepth = totalBidQty + totalAskQty || 1;
-
       document.getElementById('bidDepthSum').innerText = totalBidQty;
       document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
+      document.getElementById('bidDepthBar').style.width = Math.round((totalBidQty / totalDepth) * 100) + '%';
+      document.getElementById('askDepthBar').style.width = Math.round((totalAskQty / totalDepth) * 100) + '%';
     }
 
     function renderWorkingOrders() {
@@ -932,6 +1026,287 @@
     };
     function pricingElement(id) { return document.getElementById(id); }
 
+    function setLiveMarketState(state, detail) {
+      const palette = {
+        ready: ["bg-amber-400", "text-amber-300", "READY TO CONNECT"],
+        connecting: ["bg-sky-400 live-dot", "text-sky-300", "CONNECTING TO TWELVE DATA"],
+        connected: ["bg-emerald-400 live-dot", "text-emerald-300", "LIVE FEED CONNECTED"],
+        waiting: ["bg-amber-400", "text-amber-300", "CONNECTED · WAITING FOR MARKET TICK"],
+        error: ["bg-rose-400", "text-rose-300", "LIVE FEED ERROR"],
+        disconnected: ["bg-slate-500", "text-slate-400", "LIVE FEED DISCONNECTED"],
+        missing: ["bg-rose-400", "text-rose-300", "API KEY REQUIRED"],
+        reconnecting: ["bg-amber-400 live-dot", "text-amber-300", "RECONNECTING LIVE FEED"]
+      };
+      const style = palette[state] || palette.disconnected;
+      pricingElement("liveMarketDot").className = "w-2.5 h-2.5 rounded-full " + style[0];
+      pricingElement("liveMarketStatus").className = "text-[10px] uppercase tracking-wider font-bold " + style[1];
+      pricingElement("liveMarketStatus").textContent = style[2];
+      pricingElement("liveMarketDetail").textContent = detail || "";
+      const button = pricingElement("liveMarketConnectButton");
+      button.textContent = (state === "connected" || state === "waiting" || state === "connecting" || state === "reconnecting")
+        ? "DISCONNECT FEED" : "CONNECT LIVE FEED";
+      button.disabled = state === "connecting";
+    }
+
+    async function checkLiveMarketDataConfig() {
+      try {
+        const response = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Market-data gateway unavailable");
+        const equityReady = Boolean(payload.providers?.equities?.configured);
+        setLiveMarketState(
+          "ready",
+          "Binance Spot public feed ready for BTCUSDT · " +
+            (equityReady ? "Twelve Data equities also configured" : "Twelve Data key missing; equities unavailable")
+        );
+      } catch (error) {
+        setLiveMarketState("error", error.message);
+      }
+    }
+
+    function toggleLiveMarketData() {
+      if (liveMarketSocket && (
+        liveMarketSocket.readyState === WebSocket.OPEN ||
+        liveMarketSocket.readyState === WebSocket.CONNECTING
+      )) {
+        stopLiveMarketData();
+      } else {
+        connectLiveMarketData();
+      }
+    }
+
+    async function connectLiveMarketData() {
+      if (liveMarketSocket && liveMarketSocket.readyState <= WebSocket.OPEN) return;
+      clearTimeout(liveMarketReconnectTimer);
+      liveMarketIntentionalClose = false;
+      setLiveMarketState("connecting", "Opening Binance Spot for BTCUSDT and Twelve Data for US equities...");
+      try {
+        const healthResponse = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
+        const health = await healthResponse.json();
+        if (!healthResponse.ok) throw new Error(health.error || "Market-data gateway unavailable");
+        if (!health.configured || !health.providers?.crypto?.configured) {
+          setLiveMarketState("error", "The Binance Spot BTC market feed is not available from the market-data gateway.");
+          return;
+        }
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const url = protocol + "//" + window.location.host + "/api/market-data?symbols=" +
+          encodeURIComponent(LIVE_MARKET_SYMBOLS.join(","));
+        const socket = new WebSocket(url);
+        liveMarketSocket = socket;
+
+        socket.onopen = function() {
+          liveMarketReconnectAttempt = 0;
+          setLiveMarketState("connecting", "Browser connected to the secure Vercel gateway; authorizing the provider stream...");
+        };
+
+        socket.onmessage = function(event) {
+          let message;
+          try { message = JSON.parse(event.data); }
+          catch { return; }
+
+          if (message.event === "gateway") {
+            if (message.status === "connected") {
+              setLiveMarketState("waiting", (message.provider || "Market provider") + " · " +
+                (message.message || "Waiting for first market tick."));
+            } else if (message.status === "disconnected") {
+              setLiveMarketState("reconnecting", message.message || "Provider connection closed.");
+            }
+            return;
+          }
+
+          if (message.event === "subscription") {
+            const successes = Array.isArray(message.success) ? message.success : [];
+            const failures = Array.isArray(message.fails) ? message.fails : [];
+            if (failures.length) {
+              const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
+              setLiveMarketState(
+                "connected",
+                "Binance Spot remains active for BTCUSDT · Twelve Data rejected " + failedSymbols + ". Check equity symbol entitlements."
+              );
+            } else {
+              setLiveMarketState("waiting", "Subscribed to " + (successes.length || LIVE_MARKET_SYMBOLS.length) + " symbol(s). Waiting for the next market tick.");
+            }
+            return;
+          }
+
+          if (message.event === "price") {
+            handleLiveMarketTick(message);
+            return;
+          }
+
+          if (message.event === "book") {
+            handleLiveMarketBookTick(message);
+            return;
+          }
+
+          if (message.event === "notice") {
+            setLiveMarketState("connected", message.message || "Crypto feed is available; equity provider is not configured.");
+            return;
+          }
+
+          if (message.event === "provider-status") {
+            if (message.status === "disconnected" && message.provider === "Twelve Data") {
+              setLiveMarketState("connected", "Binance Spot remains active · Twelve Data equity feed disconnected.");
+            }
+            return;
+          }
+
+          if (message.event === "error") {
+            setLiveMarketState("error", message.message || "A market-data provider returned an error.");
+            if (["CRYPTO_UPSTREAM_ERROR", "INVALID_SYMBOLS", "ORIGIN_NOT_ALLOWED", "CONNECTION_LIMIT"].includes(message.code)) {
+              liveMarketIntentionalClose = false;
+              try { socket.close(); } catch {}
+            }
+          }
+        };
+
+        socket.onerror = function() {
+          setLiveMarketState("error", "Could not establish the live WebSocket. Check deployment status and provider access.");
+        };
+
+        socket.onclose = function() {
+          if (liveMarketSocket === socket) liveMarketSocket = null;
+          if (liveMarketIntentionalClose) {
+            const currentStatus = pricingElement("liveMarketStatus").textContent || "";
+            if (!currentStatus.includes("ERROR") && !currentStatus.includes("API KEY REQUIRED")) {
+              setLiveMarketState("disconnected", "Live feed stopped. Your last received quotes remain visible but may be stale.");
+            }
+            return;
+          }
+          const delay = Math.min(30000, 1000 * Math.pow(2, liveMarketReconnectAttempt));
+          liveMarketReconnectAttempt += 1;
+          setLiveMarketState("reconnecting", "Connection closed. Retrying in " + Math.round(delay / 1000) + "s.");
+          clearTimeout(liveMarketReconnectTimer);
+          liveMarketReconnectTimer = setTimeout(connectLiveMarketData, delay);
+        };
+      } catch (error) {
+        setLiveMarketState("error", error.message);
+      }
+    }
+
+    function stopLiveMarketData() {
+      liveMarketIntentionalClose = true;
+      clearTimeout(liveMarketReconnectTimer);
+      clearTimeout(liveAutoPricingTimer);
+      liveAutoPricingPending = false;
+      if (liveMarketSocket) {
+        const socket = liveMarketSocket;
+        liveMarketSocket = null;
+        try { socket.close(1000, "User disconnected"); } catch {}
+      }
+      setLiveMarketState("disconnected", "Live feed stopped. Simulated order-book data is unchanged.");
+      pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+    }
+
+    function handleLiveMarketTick(tick) {
+      const symbol = String(tick.symbol || "").toUpperCase();
+      const price = Number(tick.price);
+      if (!LIVE_MARKET_SYMBOLS.includes(symbol) || !Number.isFinite(price) || price <= 0) return;
+
+      const previous = liveMarketQuotes[symbol] || {};
+      const quote = {
+        ...previous,
+        price: price,
+        provider: tick.provider || previous.provider || "Market Data",
+        timestamp: Number(tick.timestamp) || Date.now(),
+        currency: tick.currency || "USD",
+        exchange: tick.exchange || null,
+        day_volume: tick.day_volume == null ? previous.day_volume ?? null : Number(tick.day_volume),
+        trade_id: tick.trade_id ?? previous.trade_id ?? null,
+        trade_quantity: tick.trade_quantity ?? previous.trade_quantity ?? null,
+        buyer_is_maker: tick.buyer_is_maker ?? previous.buyer_is_maker ?? null
+      };
+      liveMarketQuotes[symbol] = quote;
+      if (symbol === "BTCUSDT" && !btcModelDefaultsApplied) {
+        pricingElement("pricingStrike").value = price.toFixed(2);
+        btcModelDefaultsApplied = true;
+      }
+
+      if (symbol === activeSymbol) {
+        pricingElement("symLastPrice").textContent = "$" + price.toFixed(2);
+        pricingElement("symLastPriceSource").textContent = "LIVE · " + quote.provider.toUpperCase();
+        pricingElement("symLastPriceSource").className = "text-[9px] font-mono text-emerald-400";
+        pricingElement("liveMarketLastTick").textContent =
+          symbol + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
+        pricingElement("inputPrice").value = price.toFixed(4);
+        if (pricingElement("autoSpotSync").checked) {
+          pricingElement("pricingSpot").value = price.toFixed(4);
+        }
+        if (pricingElement("autoPricingEnabled").checked) {
+          pricingElement("liveAutoPricingStatus").textContent = "New " + symbol + " tick received · auto-repricing queued";
+          scheduleLiveAutoPricing();
+        }
+      }
+      setLiveMarketState("connected", quote.provider + " live · " + symbol + " tick received");
+    }
+
+    function handleLiveMarketBookTick(tick) {
+      if (tick.symbol !== "BTCUSDT") return;
+      const bid = Number(tick.bid);
+      const ask = Number(tick.ask);
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return;
+      const previous = liveMarketQuotes.BTCUSDT || { provider: "Binance Spot", currency: "USDT" };
+      liveMarketQuotes.BTCUSDT = {
+        ...previous,
+        bid,
+        ask,
+        bid_quantity: Number(tick.bid_quantity) || 0,
+        ask_quantity: Number(tick.ask_quantity) || 0,
+        book_timestamp: Number(tick.timestamp) || Date.now(),
+        provider: "Binance Spot"
+      };
+      if (activeSymbol === "BTCUSDT") renderBook();
+      setLiveMarketState("connected", "Binance Spot live · BTCUSDT trade and best-bid/ask streams active");
+    }
+
+    function scheduleLiveAutoPricing() {
+      if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
+      const quote = liveMarketQuotes[activeSymbol];
+      if (!quote) {
+        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + activeSymbol + " tick";
+        return;
+      }
+      if (liveAutoPricingInFlight) {
+        liveAutoPricingPending = true;
+        return;
+      }
+      clearTimeout(liveAutoPricingTimer);
+      const intervalMs = Math.max(2000, Number(pricingElement("autoPricingInterval").value || 5) * 1000);
+      const delay = Math.max(0, intervalMs - (Date.now() - liveLastAutoPricingAt));
+      liveAutoPricingTimer = setTimeout(async function() {
+        if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
+        if (liveAutoPricingInFlight || pricingElement("pricingRunButton").disabled || pricingElement("pricingCompareButton").disabled) {
+          liveAutoPricingPending = true;
+          return;
+        }
+        const latestQuote = liveMarketQuotes[activeSymbol];
+        if (!latestQuote) return;
+        if (pricingElement("autoSpotSync").checked) {
+          pricingElement("pricingSpot").value = Number(latestQuote.price).toFixed(4);
+        }
+        liveLastAutoPricingAt = Date.now();
+        pricingElement("liveAutoPricingStatus").textContent =
+          "Pricing " + activeSymbol + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
+        await runMonteCarloPricing({ automatic: true });
+      }, delay);
+    }
+
+    pricingElement("autoPricingEnabled").addEventListener("change", function() {
+      if (this.checked) {
+        scheduleLiveAutoPricing();
+      } else {
+        clearTimeout(liveAutoPricingTimer);
+        liveAutoPricingPending = false;
+        pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+      }
+    });
+    pricingElement("autoPricingInterval").addEventListener("change", scheduleLiveAutoPricing);
+    pricingElement("autoSpotSync").addEventListener("change", function() {
+      if (this.checked && liveMarketQuotes[activeSymbol]) {
+        pricingElement("pricingSpot").value = Number(liveMarketQuotes[activeSymbol].price).toFixed(4);
+      }
+    });
+
     function setPricingServiceState(state, title, detail) {
       const palette = {
         online: ["bg-emerald-400", "text-emerald-300"],
@@ -1055,13 +1430,30 @@
       drawPricingComparison(call, put);
     }
 
-    async function runMonteCarloPricing() {
-      const button = pricingElement("pricingRunButton"), payload = readPricingInputs();
+    async function runMonteCarloPricing(options) {
+      const automatic = Boolean(options && options.automatic);
+      const button = pricingElement("pricingRunButton");
+      if (automatic && liveAutoPricingInFlight) return;
+      if (button.disabled) {
+        if (automatic) liveAutoPricingPending = true;
+        return;
+      }
+      if (automatic) liveAutoPricingInFlight = true;
+      const payload = readPricingInputs();
       const validationError = validatePricingInputs(payload);
-      if (validationError) { pricingElement("pricingRunMessage").textContent = validationError; return; }
-      button.disabled = true; button.textContent = "SIMULATING...";
-      setPricingServiceState("running", "MONTE CARLO RUNNING", payload.backend.toUpperCase() + " requested · " + formatPricingNumber(payload.paths, 0) + " paths");
-      pricingElement("pricingRunMessage").textContent = "Submitting simulation to the pricing service...";
+      if (validationError) {
+        pricingElement("pricingRunMessage").textContent = validationError;
+        if (automatic) {
+          liveAutoPricingInFlight = false;
+          pricingElement("liveAutoPricingStatus").textContent = "Auto-pricing paused: " + validationError;
+        }
+        return;
+      }
+      button.disabled = true;
+      button.textContent = automatic ? "AUTO PRICING..." : "SIMULATING...";
+      setPricingServiceState("running", automatic ? "LIVE MONTE CARLO RUNNING" : "MONTE CARLO RUNNING",
+        payload.backend.toUpperCase() + " requested · " + formatPricingNumber(payload.paths, 0) + " paths");
+      if (!automatic) pricingElement("pricingRunMessage").textContent = "Submitting simulation to the pricing service...";
       try {
         const response = await fetch("/api/pricing", {
           method: "POST",
@@ -1081,9 +1473,15 @@
           usedFallback ? "CPU FALLBACK COMPLETE" : "PRICING COMPLETE",
           (usedFallback ? "Vercel serverless CPU" : "Executed on " + result.backend) + " · " + formatPricingNumber(result.paths, 0) + " paths"
         );
-        pricingElement("pricingRunMessage").textContent = usedFallback
-          ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
-          : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.";
+        pricingElement("pricingRunMessage").textContent = automatic
+          ? "Automatically repriced " + activeSymbol + " using the latest Twelve Data spot. Strike, volatility, rates, dividend yield and maturity remain your assumptions."
+          : (usedFallback
+            ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
+            : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.");
+        if (automatic) {
+          pricingElement("liveAutoPricingStatus").textContent =
+            "Last auto-price " + activeSymbol + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
+        }
       } catch (error) {
         if (error.status === 413) {
           setPricingServiceState("online", "CPU FALLBACK READY", error.message);
@@ -1093,8 +1491,15 @@
           setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
         }
         pricingElement("pricingRunMessage").textContent = error.message;
+        if (automatic) pricingElement("liveAutoPricingStatus").textContent = "Auto-pricing failed: " + error.message;
       } finally {
-        button.disabled = false; button.textContent = "RUN MONTE CARLO SIMULATION";
+        button.disabled = false;
+        button.textContent = "RUN MONTE CARLO SIMULATION";
+        if (automatic) liveAutoPricingInFlight = false;
+        if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+          liveAutoPricingPending = false;
+          scheduleLiveAutoPricing();
+        }
       }
     }
 
@@ -1160,6 +1565,10 @@
       } finally {
         button.disabled = false;
         button.textContent = "COMPARE CPU / GPU";
+        if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+          liveAutoPricingPending = false;
+          scheduleLiveAutoPricing();
+        }
       }
     }
 
@@ -1174,15 +1583,26 @@
     }
 
     function useActiveSymbolSpot() {
+      const liveQuote = liveMarketQuotes[activeSymbol];
+      if (liveQuote && Number.isFinite(Number(liveQuote.price)) && Number(liveQuote.price) > 0) {
+        pricingElement("pricingSpot").value = Number(liveQuote.price).toFixed(4);
+        pricingElement("pricingRunMessage").textContent =
+          "Loaded the latest " + activeSymbol + " spot from " + (liveQuote.provider || "the live feed") +
+          " at " + new Date(liveQuote.timestamp).toLocaleTimeString() + ".";
+        return;
+      }
+      if (activeSymbol === "BTCUSDT") {
+        pricingElement("pricingRunMessage").textContent = "Waiting for the first Binance BTCUSDT trade tick. No simulated BTC spot is substituted.";
+        return;
+      }
       const book = orderBooks[activeSymbol];
       if (!book || !book.bids.length || !book.asks.length) return;
       const bestBid = Math.max.apply(null, book.bids.map(function(x) { return x.price; }));
       const bestAsk = Math.min.apply(null, book.asks.map(function(x) { return x.price; }));
       const mid = (bestBid + bestAsk) / 2;
       pricingElement("pricingSpot").value = mid.toFixed(4);
-      pricingElement("pricingStrike").value = mid.toFixed(4);
       pricingElement("pricingRunMessage").textContent =
-        "Loaded the simulated " + activeSymbol + " order-book mid price. This is demo book data, not an external live market quote.";
+        "No live tick is available. Loaded the simulated " + activeSymbol + " order-book mid price instead.";
     }
 
     function resetPricingInputs() {
@@ -1203,6 +1623,8 @@
       }
     });
     checkPricingService();
+    checkLiveMarketDataConfig();
+    window.addEventListener("beforeunload", stopLiveMarketData);
 
   </script>
 </body>

@@ -1,0 +1,15 @@
+{
+  "name": "ultralob",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test:market-data": "node --test api/market-data.test.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  }
+}
