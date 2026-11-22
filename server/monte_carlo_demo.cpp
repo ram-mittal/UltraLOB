@@ -5,19 +5,111 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+
 using namespace ultralob::quant;
+
 namespace {
-void help(){std::cout<<"UltraLOB Monte Carlo option pricer\nUsage: ultralob_pricer [--spot P] [--strike K] [--rate R] [--dividend Q] [--vol SIGMA] [--maturity YEARS] [--paths EVEN_N] [--seed N] [--backend auto|cpu|cuda]\n";}
-double pd(const std::string& s){std::size_t n=0;double x=std::stod(s,&n);if(n!=s.size())throw std::invalid_argument("invalid numeric argument");return x;}
-std::uint64_t pu(const std::string& s){std::size_t n=0;auto x=std::stoull(s,&n);if(n!=s.size())throw std::invalid_argument("invalid integer argument");return x;}
-void print(const char* label,const PriceEstimate& e,double ref){std::cout<<std::left<<std::setw(5)<<label<<" MC=$"<<std::setw(11)<<e.price<<" Black-Scholes=$"<<std::setw(11)<<ref<<" SE=$"<<e.standard_error<<" 95% CI=[$"<<e.confidence_low_95<<", $"<<e.confidence_high_95<<"]\n";}
+void help() {
+    std::cout
+        << "UltraLOB Monte Carlo option pricer\n\n"
+        << "Usage: ultralob_pricer [options]\n\n"
+        << "Pricing inputs:\n"
+        << "  --spot <price>          Underlying spot price S0 (default: 100)\n"
+        << "  --strike <price>        Option strike K (default: 100)\n"
+        << "  --rate <decimal>        Annual risk-free rate r (default: 0.05)\n"
+        << "  --dividend <decimal>    Annual continuous dividend yield q (default: 0.00)\n"
+        << "  --vol <decimal>         Annualized volatility (default: 0.20; 0.20 = 20%)\n"
+        << "  --maturity <years>      Time to expiry in years (default: 1.0)\n\n"
+        << "Simulation inputs:\n"
+        << "  --paths <count>         Total paths; even integer >= 4 (default: 1000000)\n"
+        << "  --seed <integer>        Random-number seed (default: 42)\n"
+        << "  --backend <mode>        auto, cpu, or cuda (default: auto)\n"
+        << "  --help                  Show this help\n";
 }
-int main(int argc,char** argv){try{
- MonteCarloConfig c;
- for(int i=1;i<argc;++i){std::string a=argv[i];if(a=="--help"||a=="-h"){help();return 0;}if(i+1>=argc)throw std::invalid_argument("missing value after "+a);std::string v=argv[++i];
- if(a=="--spot")c.spot=pd(v);else if(a=="--strike")c.strike=pd(v);else if(a=="--rate")c.risk_free_rate=pd(v);else if(a=="--dividend")c.dividend_yield=pd(v);else if(a=="--vol")c.volatility=pd(v);else if(a=="--maturity")c.maturity_years=pd(v);else if(a=="--paths")c.paths=pu(v);else if(a=="--seed")c.seed=pu(v);else if(a=="--backend"){if(v=="auto")c.backend=PricingBackend::Auto;else if(v=="cpu")c.backend=PricingBackend::CPU;else if(v=="cuda")c.backend=PricingBackend::CUDA;else throw std::invalid_argument("backend must be auto, cpu, cuda");}else throw std::invalid_argument("unknown option: "+a);
- }
- MonteCarloPricer p;auto result=p.price(c);auto ref=MonteCarloPricer::black_scholes(c);
- std::cout<<std::fixed<<std::setprecision(6)<<"UltraLOB Monte Carlo Pricing Engine\nBackend: "<<backend_name(result.backend)<<" | paths: "<<result.paths<<" | elapsed: "<<result.elapsed_milliseconds<<" ms\n";
- print("CALL",result.call,ref.call);print("PUT",result.put,ref.put);return 0;
- }catch(const std::exception& e){std::cerr<<"Pricing error: "<<e.what()<<'\n';return 1;}}
+
+double parse_double(const std::string& value, const char* name) {
+    std::size_t consumed = 0;
+    const double parsed = std::stod(value, &consumed);
+    if (consumed != value.size())
+        throw std::invalid_argument(std::string("invalid value for ") + name);
+    return parsed;
+}
+
+std::uint64_t parse_u64(const std::string& value, const char* name) {
+    if (value.empty() || value.front() == '-')
+        throw std::invalid_argument(std::string("invalid unsigned value for ") + name);
+    std::size_t consumed = 0;
+    const auto parsed = std::stoull(value, &consumed);
+    if (consumed != value.size())
+        throw std::invalid_argument(std::string("invalid value for ") + name);
+    return static_cast<std::uint64_t>(parsed);
+}
+
+void print_estimate(const char* label, const PriceEstimate& estimate,
+                    double reference_price) {
+    std::cout << std::left << std::setw(5) << label
+              << " MC=$" << std::setw(11) << estimate.price
+              << " Black-Scholes=$" << std::setw(11) << reference_price
+              << " SE=$" << estimate.standard_error
+              << " 95% CI=[$" << estimate.confidence_low_95
+              << ", $" << estimate.confidence_high_95 << "]\n";
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    try {
+        MonteCarloConfig config;
+
+        for (int i = 1; i < argc; ++i) {
+            const std::string argument = argv[i];
+            if (argument == "--help" || argument == "-h") {
+                help();
+                return 0;
+            }
+            if (i + 1 >= argc)
+                throw std::invalid_argument("missing value after " + argument);
+
+            const std::string value = argv[++i];
+            if (argument == "--spot") config.spot = parse_double(value, "spot");
+            else if (argument == "--strike") config.strike = parse_double(value, "strike");
+            else if (argument == "--rate") config.risk_free_rate = parse_double(value, "rate");
+            else if (argument == "--dividend") config.dividend_yield = parse_double(value, "dividend");
+            else if (argument == "--vol") config.volatility = parse_double(value, "volatility");
+            else if (argument == "--maturity") config.maturity_years = parse_double(value, "maturity");
+            else if (argument == "--paths") config.paths = parse_u64(value, "paths");
+            else if (argument == "--seed") config.seed = parse_u64(value, "seed");
+            else if (argument == "--backend") {
+                if (value == "auto") config.backend = PricingBackend::Auto;
+                else if (value == "cpu") config.backend = PricingBackend::CPU;
+                else if (value == "cuda") config.backend = PricingBackend::CUDA;
+                else throw std::invalid_argument("backend must be auto, cpu, or cuda");
+            } else {
+                throw std::invalid_argument("unknown option: " + argument);
+            }
+        }
+
+        const MonteCarloPricer pricer;
+        const auto result = pricer.price(config);
+        const auto black_scholes = MonteCarloPricer::black_scholes(config);
+
+        std::cout << std::fixed << std::setprecision(6)
+                  << "UltraLOB Monte Carlo Pricing Engine\n"
+                  << "Backend: " << backend_name(result.backend)
+                  << " | Paths: " << result.paths
+                  << " | Seed: " << config.seed
+                  << " | Elapsed: " << result.elapsed_milliseconds << " ms\n"
+                  << "Spot: $" << config.spot
+                  << " | Strike: $" << config.strike
+                  << " | Rate: " << config.risk_free_rate
+                  << " | Dividend: " << config.dividend_yield
+                  << " | Volatility: " << config.volatility
+                  << " | Maturity: " << config.maturity_years << " years\n\n";
+
+        print_estimate("CALL", result.call, black_scholes.call);
+        print_estimate("PUT", result.put, black_scholes.put);
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "Pricing error: " << error.what() << '\n';
+        return 1;
+    }
+}

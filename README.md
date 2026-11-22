@@ -187,17 +187,17 @@ UltraLOB/
 │   │   ├── fix_gateway.hpp    # Institutional Acceptor Server
 │   │   ├── fix_initiator.hpp  # Client transport & session runner
 │   │   └── fix_application.hpp# Application translation layer
-│   ├── net/                   # Networking & Risk
+│   ├── quant/                 # Public Monte Carlo pricing API\n│   ├── net/                   # Networking & Risk
 │   │   ├── gateway.hpp        # Binary TCP gateway
 │   │   ├── risk_engine.hpp    # Pre-trade risk manager (PTRM)
 │   │   └── market_data_publisher.hpp # UDP Multicast ITCH publisher
 │   └── util/                  # Lock-free MPSC queues, spinlocks, profiler
 ├── src/                       # Implementation files
 ├── server/                    # Server executables
-│   ├── main.cpp               # Production unified UltraLOB exchange server
+│   ├── main.cpp               # Production unified UltraLOB exchange server\n│   ├── monte_carlo_demo.cpp   # Standalone option pricer CLI
 │   └── fix_client_demo.cpp    # Standalone FIX 4.4 trading client demo
 ├── tests/                     # 16 Google Test suites (100% pass rate)
-├── bench/                     # Google Benchmark performance microbenchmarks
+├── bench/                     # Google Benchmark performance microbenchmarks\n├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
 ├── index.html                 # Production Web Trading Terminal (Vercel)
 ├── fix_trading_terminal.html  # Standalone local trading terminal
 ├── vercel.json                # Vercel deployment configuration
@@ -264,21 +264,94 @@ You will see real-time output demonstrating the full lifecycle:
 
 ## GPU Monte Carlo Option Pricing
 
-UltraLOB includes a standalone quantitative-pricing module for European vanilla calls and puts. It uses risk-neutral geometric Brownian motion, antithetic variates, standard errors and confidence intervals, a CPU reference backend, and optional NVIDIA CUDA/CURAND acceleration. The pricer is deliberately isolated from the matching engine's single-threaded sequencer.
+UltraLOB includes a standalone quantitative-pricing module for **European vanilla call and put options**. The module uses risk-neutral geometric Brownian motion, antithetic variates, standard-error estimation, and 95% confidence intervals. It provides a CPU reference backend and an optional NVIDIA CUDA/CURAND backend.
 
-CPU-only build and run:
+The pricing workload runs in the separate `ultralob_quant` library and `ultralob_pricer` executable. It is intentionally kept outside the matching engine's single-threaded sequencer so Monte Carlo calculations cannot block order matching.
 
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-    cmake --build build --config Release
-    ./build/ultralob_pricer --backend cpu --spot 100 --strike 100 --paths 1000000
+### Model and outputs
 
-CUDA build and run (requires the NVIDIA CUDA Toolkit and a supported GPU):
+The first version samples the exact terminal-price distribution under risk-neutral GBM. Each random draw is paired with its negative (`+Z` and `-Z`) to use antithetic variates. It calculates both call and put payoffs from the same simulated paths.
 
-    cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=ON
-    cmake --build build-cuda --config Release
-    ./build-cuda/ultralob_pricer --backend cuda --paths 10000000
+For each option, the CLI reports:
+- Monte Carlo price estimate.
+- Black–Scholes analytical reference price.
+- Standard error of the Monte Carlo estimate.
+- 95% confidence interval.
+- Selected execution backend, total path count, and elapsed time.
 
-The output includes Monte Carlo and Black-Scholes reference values, standard errors, 95% confidence intervals, backend selection, and elapsed time. The current web terminal is static and has no JSON pricing API; this first increment exposes a library and CLI. A later service can bridge results to the web terminal without coupling GPU work to matching/FIX threads.
+Black–Scholes is included as an independent reference for validating the Monte Carlo estimate. CPU and CUDA use different random-number generators, so their individual seeded path sequences are not expected to match bit-for-bit.
+
+### Pricing inputs
+
+All inputs can be supplied to `ultralob_pricer` as command-line arguments.
+
+| Argument | Meaning | Default | Validation / format |
+|---|---|---:|---|
+| `--spot` | Current underlying asset price, (S_0) | `100` | Finite and greater than zero |
+| `--strike` | Option strike price, (K) | `100` | Finite and greater than zero |
+| `--rate` | Continuously compounded annual risk-free rate, (r) | `0.05` | Decimal rate; may be negative |
+| `--dividend` | Continuous annual dividend yield, (q) | `0.00` | Decimal rate |
+| `--vol` | Annualized volatility, (sigma) | `0.20` | Decimal; non-negative (e.g. `0.20` = 20%) |
+| `--maturity` | Time to expiry, (T) | `1.0` | Years; finite and greater than zero |
+| `--paths` | Total Monte Carlo terminal-price paths | `1000000` | Even integer, at least 4; paths are simulated in antithetic pairs |
+| `--seed` | Random-number generator seed | `42` | Unsigned integer |
+| `--backend` | Execution backend: `auto`, `cpu`, or `cuda` | `auto` | CUDA requires a CUDA-enabled build and an available NVIDIA GPU |
+| `--help` | Print the command-line usage | — | No value required |
+
+The number of independent observations used for standard-error calculation is `paths / 2`, because each observation is the average payoff of one antithetic pair.
+
+### CPU-only build and run
+
+CUDA is disabled by default, so the CPU pricing engine can be built on machines without the NVIDIA CUDA Toolkit:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+ctest --test-dir build --output-on-failure
+
+./build/ultralob_pricer \
+  --backend cpu \
+  --spot 100 \
+  --strike 100 \
+  --rate 0.05 \
+  --dividend 0.00 \
+  --vol 0.20 \
+  --maturity 1.0 \
+  --paths 1000000 \
+  --seed 42
+```
+
+### NVIDIA CUDA build and run
+
+Install a compatible NVIDIA driver and CUDA Toolkit (including `nvcc` and CURAND), then configure a separate build directory:
+
+```bash
+cmake -S . -B build-cuda -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DULTRALOB_ENABLE_CUDA=ON
+
+cmake --build build-cuda --config Release
+ctest --test-dir build-cuda --output-on-failure
+
+./build-cuda/ultralob_pricer \
+  --backend cuda \
+  --spot 100 \
+  --strike 100 \
+  --rate 0.05 \
+  --dividend 0.00 \
+  --vol 0.20 \
+  --maturity 1.0 \
+  --paths 10000000 \
+  --seed 42
+```
+
+Use `--backend auto` to select CUDA when a device is available and otherwise run the CPU backend. An explicit `--backend cuda` request returns an error if CUDA was not enabled at build time or no CUDA device is available.
+
+### Current scope and integration status
+
+This increment prices European vanilla calls and puts using the terminal price (S_T). Asian, barrier, lookback, and other path-dependent options require a time-stepped path simulation and are not included yet.
+
+The existing Vercel trading terminal remains a static frontend. It does **not** currently send these pricing inputs to the C++ engine; the new inputs are passed to the standalone `ultralob_pricer` CLI. A future HTTP/WebSocket pricing service can expose the library to the web terminal without moving GPU work into the matching or FIX session threads.
 
 ## ⚖️ Engineering Trade-Offs
 
