@@ -11,6 +11,6 @@ services:
       - key: ULTRALOB_RENDER_MODE
         value: "true"
       - key: MARKET_DATA_MAX_CONNECTIONS
-        value: "1"
+        value: "3"
       - key: PRICING_FALLBACK_MAX_PATHS
         value: "10000000"
