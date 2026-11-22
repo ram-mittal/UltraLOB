@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
+import pricingHandler from "./pricing.js";
 import WebSocket, { WebSocketServer } from "ws";
 import {
   LIVE_SYMBOLS,
@@ -37,9 +40,9 @@ function requestOriginAllowed(request) {
   }
 }
 
-app.use((request, response) => {
+function sendMarketDataHealth(response) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
-  response.status(200).json({
+  return response.status(200).json({
     status: "ok",
     configured: true,
     symbols: LIVE_SYMBOLS,
@@ -60,7 +63,27 @@ app.use((request, response) => {
     },
     note: "BTCUSDT uses Binance Spot public streams. US equities use Twelve Data when configured."
   });
-});
+}
+
+if (process.env.ULTRALOB_RENDER_MODE === "true") {
+  // This single persistent Node process serves the dashboard and both APIs.
+  app.use(express.json({ limit: "64kb" }));
+  app.all("/api/pricing", (request, response) => pricingHandler(request, response));
+
+  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const dashboardFile = path.join(projectRoot, "index.html");
+  app.get(["/", "/terminal", "/fix_trading_terminal.html"], (_request, response) => {
+    response.sendFile(dashboardFile);
+  });
+  app.get("/healthz", (_request, response) => {
+    response.status(200).json({ status: "ok", service: "ultralob" });
+  });
+  app.get("/api/market-data", (_request, response) => sendMarketDataHealth(response));
+  app.use((_request, response) => response.status(404).json({ error: "Not found" }));
+} else {
+  // Vercel routes this module as the /api/market-data function.
+  app.use((_request, response) => sendMarketDataHealth(response));
+}
 
 wss.on("connection", (client, request) => {
   if (!requestOriginAllowed(request)) {
@@ -293,6 +316,16 @@ wss.on("connection", (client, request) => {
       });
     }
   }
+
+  // Render Free keeps an active WebSocket awake when it receives client messages.
+  // The browser sends a lightweight ping every 60 seconds while the feed is connected.
+  client.on("message", (raw) => {
+    let message;
+    try { message = JSON.parse(raw.toString()); } catch { return; }
+    if (message && message.event === "ping") {
+      send(client, { event: "heartbeat", timestamp: Date.now() });
+    }
+  });
 
   client.on("close", cleanup);
   client.on("error", cleanup);

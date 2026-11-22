@@ -108,7 +108,7 @@ function estimate(sum, squareSum, observations, discount) {
 function runFallbackPricing(input) {
   if (input.paths > MAX_FALLBACK_PATHS) {
     const error = new Error(
-      "The built-in Vercel CPU fallback is capped at " + MAX_FALLBACK_PATHS.toLocaleString() +
+      "The built-in JavaScript CPU fallback is capped at " + MAX_FALLBACK_PATHS.toLocaleString() +
       " paths. Connect a dedicated pricing service for larger simulations or CUDA execution."
     );
     error.statusCode = 413;
@@ -165,7 +165,7 @@ function runFallbackPricing(input) {
   return {
     backend: "CPU",
     execution_engine: "javascript-fallback",
-    execution_location: "vercel-serverless",
+    execution_location: "node-api",
     paths: input.paths,
     seed: input.seed,
     elapsed_ms: elapsedMs,
@@ -190,12 +190,12 @@ function runFallbackPricing(input) {
 function fallbackHealth(res, reason) {
   return res.status(200).json({
     status: "ok",
-    service: "ultralob-vercel-cpu-fallback",
+    service: "ultralob-javascript-cpu-fallback",
     native_library_available: false,
     cuda_build_enabled: false,
     fallback_enabled: true,
     fallback_max_paths: MAX_FALLBACK_PATHS,
-    execution_location: "vercel-serverless",
+    execution_location: "node-api",
     upstream_service_available: false,
     upstream_service_detail: reason || "No external pricing service is configured."
   });
@@ -247,7 +247,7 @@ export default async function handler(req, res) {
     if (input.backend === "cuda") {
       return res.status(503).json({
         error: "CUDA pricing is not connected",
-        hint: "Deploy pricing_service/Dockerfile.cuda on a GPU host, then set PRICING_SERVICE_URL and PRICING_API_KEY in Vercel."
+        hint: "Deploy pricing_service/Dockerfile.cuda on a GPU host, then set PRICING_SERVICE_URL and PRICING_API_KEY in your hosting environment variables."
       });
     }
     try {
@@ -283,7 +283,7 @@ export default async function handler(req, res) {
           ? "External pricing service returned an invalid pricing payload."
           : "External pricing service returned HTTP " + upstream.status + ".";
         const fallback = runFallbackPricing(input);
-        fallback.fallback_reason = reason + " Executed on Vercel CPU fallback.";
+        fallback.fallback_reason = reason + " Executed on the built-in CPU fallback.";
         return res.status(200).json(fallback);
       } catch (error) {
         return res.status(error.statusCode || 502).json({ error: error.message || payload?.error || "Pricing service failed" });
@@ -294,7 +294,7 @@ export default async function handler(req, res) {
     if (input.backend !== "cuda") {
       try {
         const fallback = runFallbackPricing(input);
-        fallback.fallback_reason = "External pricing service is unreachable; executed on Vercel CPU fallback.";
+        fallback.fallback_reason = "External pricing service is unreachable; executed on the built-in CPU fallback.";
         return res.status(200).json(fallback);
       } catch (fallbackError) {
         return res.status(fallbackError.statusCode || 502).json({ error: fallbackError.message || "Pricing service and CPU fallback failed" });
