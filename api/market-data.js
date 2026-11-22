@@ -29,12 +29,31 @@ function send(client, payload) {
   }
 }
 
+function normalizeHost(value) {
+  if (!value) return "";
+  const candidate = String(value).split(",")[0].trim();
+  try {
+    return new URL(candidate.includes("://") ? candidate : "https://" + candidate).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 function requestOriginAllowed(request) {
   const origin = request.headers.origin;
-  const host = request.headers["x-forwarded-host"] || request.headers.host;
-  if (!origin || !host) return false;
+  if (!origin) return false;
   try {
-    return new URL(origin).host.toLowerCase() === String(host).toLowerCase();
+    const parsedOrigin = new URL(origin);
+    if (!["https:", "http:"].includes(parsedOrigin.protocol)) return false;
+    const allowedHosts = new Set([
+      normalizeHost(request.headers["x-forwarded-host"]),
+      normalizeHost(request.headers.host),
+      normalizeHost(process.env.RENDER_EXTERNAL_HOSTNAME)
+    ].filter(Boolean));
+    const explicitOrigins = String(process.env.ALLOWED_WS_ORIGINS || "")
+      .split(",").map((item) => item.trim()).filter(Boolean);
+    if (explicitOrigins.includes(parsedOrigin.origin)) return true;
+    return allowedHosts.has(parsedOrigin.host.toLowerCase());
   } catch {
     return false;
   }
@@ -120,6 +139,7 @@ wss.on("connection", (client, request) => {
   let providerFailureClosing = false;
 
   activeClients.add(client);
+  console.info("[market-data] browser client connected:", symbols.join(","));
   send(client, {
     event: "gateway",
     status: "connecting",
@@ -159,11 +179,15 @@ wss.on("connection", (client, request) => {
   // Public Binance Spot streams make BTCUSDT available without an API key.
   if (cryptoSymbols.includes("BTCUSDT")) {
     const streams = ["btcusdt@trade", "btcusdt@bookTicker"];
-    const binanceUrl = "wss://stream.binance.com:9443/stream?streams=" + streams.join("/");
-    const binance = new WebSocket(binanceUrl, { handshakeTimeout: 12000 });
+    // Port 443 is friendlier to hosted environments and is an official Binance
+    // Spot market-stream endpoint. It carries the same public combined streams.
+    const binanceUrl = "wss://stream.binance.com:443/stream?streams=" + streams.join("/");
+    console.info("[market-data] opening Binance Spot public stream");
+    const binance = new WebSocket(binanceUrl, { handshakeTimeout: 15000 });
     upstreams.add(binance);
 
     binance.on("open", () => {
+      console.info("[market-data] Binance Spot stream connected");
       send(client, {
         event: "gateway",
         status: "connected",
@@ -197,6 +221,7 @@ wss.on("connection", (client, request) => {
     });
 
     binance.on("error", (error) => {
+      console.error("[market-data] Binance Spot upstream error:", error.message || error);
       send(client, {
         event: "error",
         code: "CRYPTO_UPSTREAM_ERROR",
@@ -221,6 +246,7 @@ wss.on("connection", (client, request) => {
   if (equitySymbols.length > 0) {
     const apiKey = process.env.TWELVE_DATA_API_KEY;
     if (!apiKey) {
+      console.warn("[market-data] TWELVE_DATA_API_KEY is not set; equity streaming is disabled");
       send(client, {
         event: "notice",
         code: "EQUITIES_KEY_MISSING",
@@ -233,6 +259,7 @@ wss.on("connection", (client, request) => {
       upstreams.add(upstream);
 
       upstream.on("open", () => {
+        console.info("[market-data] Twelve Data WebSocket connected; subscribing to", equitySymbols.join(","));
         send(client, {
           event: "gateway",
           status: "connected",
@@ -269,6 +296,7 @@ wss.on("connection", (client, request) => {
             send(client, tick);
           } else if (message && typeof message === "object") {
             if (message.event === "error") {
+              console.error("[market-data] Twelve Data provider error:", message.message || message.detail || message.code || "unknown provider error");
               send(client, {
                 event: "error",
                 code: "EQUITY_PROVIDER_ERROR",
@@ -293,6 +321,7 @@ wss.on("connection", (client, request) => {
       });
 
       upstream.on("error", (error) => {
+        console.error("[market-data] Twelve Data upstream error:", error.message || error);
         send(client, {
           event: "error",
           code: "EQUITY_UPSTREAM_ERROR",
