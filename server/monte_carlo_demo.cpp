@@ -24,6 +24,7 @@ void help() {
         << "  --paths <count>         Total paths; even integer >= 4 (default: 1000000)\n"
         << "  --seed <integer>        Random-number seed (default: 42)\n"
         << "  --backend <mode>        auto, cpu, or cuda (default: auto)\n"
+        << "  --json                  Emit machine-readable JSON for the pricing API\n"
         << "  --help                  Show this help\n";
 }
 
@@ -59,12 +60,17 @@ void print_estimate(const char* label, const PriceEstimate& estimate,
 int main(int argc, char** argv) {
     try {
         MonteCarloConfig config;
+        bool json_output = false;
 
         for (int i = 1; i < argc; ++i) {
             const std::string argument = argv[i];
             if (argument == "--help" || argument == "-h") {
                 help();
                 return 0;
+            }
+            if (argument == "--json") {
+                json_output = true;
+                continue;
             }
             if (i + 1 >= argc)
                 throw std::invalid_argument("missing value after " + argument);
@@ -92,21 +98,56 @@ int main(int argc, char** argv) {
         const auto result = pricer.price(config);
         const auto black_scholes = MonteCarloPricer::black_scholes(config);
 
-        std::cout << std::fixed << std::setprecision(6)
-                  << "UltraLOB Monte Carlo Pricing Engine\n"
-                  << "Backend: " << backend_name(result.backend)
-                  << " | Paths: " << result.paths
-                  << " | Seed: " << config.seed
-                  << " | Elapsed: " << result.elapsed_milliseconds << " ms\n"
-                  << "Spot: $" << config.spot
-                  << " | Strike: $" << config.strike
-                  << " | Rate: " << config.risk_free_rate
-                  << " | Dividend: " << config.dividend_yield
-                  << " | Volatility: " << config.volatility
-                  << " | Maturity: " << config.maturity_years << " years\n\n";
+        if (json_output) {
+            const double paths_per_second = result.elapsed_milliseconds > 0.0
+                ? static_cast<double>(result.paths) / (result.elapsed_milliseconds / 1000.0)
+                : 0.0;
+            std::cout << std::setprecision(17)
+                      << "{"
+                      << "\\"backend\\":\\"" << backend_name(result.backend) << "\\","
+                      << "\\"paths\\":" << result.paths << ","
+                      << "\\"seed\\":" << config.seed << ","
+                      << "\\"elapsed_ms\\":" << result.elapsed_milliseconds << ","
+                      << "\\"paths_per_second\\":" << paths_per_second << ","
+                      << "\\"inputs\\":{"
+                      << "\\"spot\\":" << config.spot << ","
+                      << "\\"strike\\":" << config.strike << ","
+                      << "\\"risk_free_rate\\":" << config.risk_free_rate << ","
+                      << "\\"dividend_yield\\":" << config.dividend_yield << ","
+                      << "\\"volatility\\":" << config.volatility << ","
+                      << "\\"maturity_years\\":" << config.maturity_years
+                      << "},"
+                      << "\\"call\\":{"
+                      << "\\"price\\":" << result.call.price << ","
+                      << "\\"black_scholes\\":" << black_scholes.call << ","
+                      << "\\"standard_error\\":" << result.call.standard_error << ","
+                      << "\\"confidence_low_95\\":" << result.call.confidence_low_95 << ","
+                      << "\\"confidence_high_95\\":" << result.call.confidence_high_95
+                      << "},"
+                      << "\\"put\\":{"
+                      << "\\"price\\":" << result.put.price << ","
+                      << "\\"black_scholes\\":" << black_scholes.put << ","
+                      << "\\"standard_error\\":" << result.put.standard_error << ","
+                      << "\\"confidence_low_95\\":" << result.put.confidence_low_95 << ","
+                      << "\\"confidence_high_95\\":" << result.put.confidence_high_95
+                      << "}}\\n";
+        } else {
+            std::cout << std::fixed << std::setprecision(6)
+                      << "UltraLOB Monte Carlo Pricing Engine\\n"
+                      << "Backend: " << backend_name(result.backend)
+                      << " | Paths: " << result.paths
+                      << " | Seed: " << config.seed
+                      << " | Elapsed: " << result.elapsed_milliseconds << " ms\\n"
+                      << "Spot: $" << config.spot
+                      << " | Strike: $" << config.strike
+                      << " | Rate: " << config.risk_free_rate
+                      << " | Dividend: " << config.dividend_yield
+                      << " | Volatility: " << config.volatility
+                      << " | Maturity: " << config.maturity_years << " years\\n\\n";
 
-        print_estimate("CALL", result.call, black_scholes.call);
-        print_estimate("PUT", result.put, black_scholes.put);
+            print_estimate("CALL", result.call, black_scholes.call);
+            print_estimate("PUT", result.put, black_scholes.put);
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Pricing error: " << error.what() << '\n';
