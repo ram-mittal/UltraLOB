@@ -137,19 +137,20 @@
         </div>
         <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
           <div>
-            <div class="text-[10px] text-slate-500">LAST TRADED</div>
+            <div class="text-[10px] text-slate-500">LAST PRICE</div>
             <div class="text-base font-bold text-sky-400" id="symLastPrice">$150.25</div>
+            <div id="symLastPriceSource" class="text-[9px] font-mono text-amber-400">SIMULATED</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">24H SPREAD</div>
+            <div class="text-[10px] text-slate-500">DEMO SPREAD</div>
             <div class="text-base font-bold text-slate-300" id="symSpread">$0.05</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">BEST BID</div>
+            <div class="text-[10px] text-slate-500">BEST BID (DEMO)</div>
             <div class="text-emerald-400 font-semibold" id="symBestBid">$150.20</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">BEST ASK</div>
+            <div class="text-[10px] text-slate-500">BEST ASK (DEMO)</div>
             <div class="text-rose-400 font-semibold" id="symBestAsk">$150.25</div>
           </div>
         </div>
@@ -238,7 +239,7 @@
       <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex-1 flex flex-col">
         <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
           <div class="flex items-center gap-2">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Level 2 Order Book</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Simulated Level 2 Order Book</span>
             <span id="bookSymbolBadge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/30">AAPL</span>
           </div>
           <span class="text-[11px] font-mono text-slate-400">Fixed-Point Scale: 10<sup>8</sup></span>
@@ -358,6 +359,39 @@
         </div>
         <button type="button" onclick="checkPricingService()" class="ml-auto text-[10px] text-sky-400 hover:text-sky-300 font-semibold">RECHECK</button>
       </div>
+    </div>
+
+    <div id="liveMarketPanel" class="rounded-lg border border-slate-800 bg-slate-950/55 p-3 mb-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="liveMarketDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+        <div class="min-w-[210px] flex-1">
+          <div id="liveMarketStatus" class="text-[10px] uppercase tracking-wider font-bold text-slate-300">LIVE FEED NOT CONNECTED</div>
+          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Twelve Data · AAPL, MSFT, GOOGL · live spot ticks only</div>
+        </div>
+        <button id="liveMarketConnectButton" type="button" onclick="toggleLiveMarketData()" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold">CONNECT LIVE FEED</button>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-3 pt-3 border-t border-slate-800 text-[10px]">
+        <label class="inline-flex items-center gap-2 text-slate-300">
+          <input id="autoSpotSync" type="checkbox" checked class="accent-sky-500">
+          Sync spot to live tick
+        </label>
+        <label class="inline-flex items-center gap-2 text-slate-300">
+          <input id="autoPricingEnabled" type="checkbox" checked class="accent-emerald-500">
+          Auto-reprice
+        </label>
+        <label class="inline-flex items-center gap-2 text-slate-400">
+          Reprice interval
+          <select id="autoPricingInterval" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200">
+            <option value="2">2 seconds</option>
+            <option value="5" selected>5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+          </select>
+        </label>
+        <span id="liveMarketLastTick" class="text-slate-500">No live tick received</span>
+        <span id="liveAutoPricingStatus" class="text-slate-500">Automatic pricing waits for a live tick</span>
+      </div>
+      <div class="text-[9px] text-slate-500 mt-2">Only the underlying spot is streamed. Strike, volatility, rates, dividend yield and maturity remain your model assumptions. The Level 2 order book below remains demo data.</div>
     </div>
 
     <div class="grid grid-cols-12 gap-3">
@@ -511,6 +545,18 @@
     let workingOrders = [];
     let fillReports = [];
 
+    // Live market data state. The browser never receives the Twelve Data API key.
+    const LIVE_MARKET_SYMBOLS = ["AAPL", "MSFT", "GOOGL"];
+    const liveMarketQuotes = Object.create(null);
+    let liveMarketSocket = null;
+    let liveMarketReconnectTimer = null;
+    let liveMarketReconnectAttempt = 0;
+    let liveMarketIntentionalClose = false;
+    let liveAutoPricingTimer = null;
+    let liveLastAutoPricingAt = 0;
+    let liveAutoPricingInFlight = false;
+    let liveAutoPricingPending = false;
+
     // Order books per symbol
     const orderBooks = {
       'AAPL': {
@@ -557,6 +603,7 @@
     }
 
     function selectSymbol(sym) {
+      if (!LIVE_MARKET_SYMBOLS.includes(sym)) return;
       activeSymbol = sym;
       document.querySelectorAll('.symbol-tab').forEach(b => {
         b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
@@ -564,14 +611,23 @@
       document.getElementById('tab-' + sym).className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
       document.getElementById('bookSymbolBadge').innerText = sym;
 
-      if (sym === 'AAPL') {
-        document.getElementById('inputPrice').value = '150.25';
-      } else if (sym === 'MSFT') {
-        document.getElementById('inputPrice').value = '310.50';
-      } else if (sym === 'GOOGL') {
-        document.getElementById('inputPrice').value = '2800.00';
+      const liveQuote = liveMarketQuotes[sym];
+      if (liveQuote) {
+        document.getElementById('symLastPrice').textContent = '$' + Number(liveQuote.price).toFixed(2);
+        document.getElementById('symLastPriceSource').textContent = 'LIVE · TWELVE DATA';
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-emerald-400';
+        if (pricingElement('autoSpotSync')?.checked) {
+          pricingElement('pricingSpot').value = Number(liveQuote.price).toFixed(4);
+        }
+      } else {
+        const demoPrices = { AAPL: '150.25', MSFT: '310.50', GOOGL: '2800.00' };
+        document.getElementById('symLastPrice').textContent = '$' + Number(demoPrices[sym]).toFixed(2);
+        document.getElementById('symLastPriceSource').textContent = 'SIMULATED';
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-amber-400';
       }
+
       renderBook();
+      if (liveQuote && pricingElement('autoPricingEnabled')?.checked) scheduleLiveAutoPricing();
     }
 
     function setSide(side) {
@@ -1174,15 +1230,21 @@
     }
 
     function useActiveSymbolSpot() {
+      const liveQuote = liveMarketQuotes[activeSymbol];
+      if (liveQuote) {
+        pricingElement("pricingSpot").value = Number(liveQuote.price).toFixed(4);
+        pricingElement("pricingRunMessage").textContent =
+          "Loaded the latest " + activeSymbol + " spot from Twelve Data at " + new Date(liveQuote.timestamp).toLocaleTimeString() + ".";
+        return;
+      }
       const book = orderBooks[activeSymbol];
       if (!book || !book.bids.length || !book.asks.length) return;
       const bestBid = Math.max.apply(null, book.bids.map(function(x) { return x.price; }));
       const bestAsk = Math.min.apply(null, book.asks.map(function(x) { return x.price; }));
       const mid = (bestBid + bestAsk) / 2;
       pricingElement("pricingSpot").value = mid.toFixed(4);
-      pricingElement("pricingStrike").value = mid.toFixed(4);
       pricingElement("pricingRunMessage").textContent =
-        "Loaded the simulated " + activeSymbol + " order-book mid price. This is demo book data, not an external live market quote.";
+        "No live tick is available. Loaded the simulated " + activeSymbol + " order-book mid price instead.";
     }
 
     function resetPricingInputs() {
