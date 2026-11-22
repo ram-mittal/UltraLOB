@@ -706,413 +706,76 @@
       const book = orderBooks[activeSymbol];
       const asksDiv = document.getElementById('asksContainer');
       const bidsDiv = document.getElementById('bidsContainer');
+
       if (!book) {
-        if (activeSymbol === 'BTCUSDT') {
-          const quote = liveMarketQuotes.BTCUSDT || {};
-          const bid = Number(quote.bid) || 0;
-          const ask = Number(quote.ask) || 0;
-          const spread = bid > 0 && ask > 0 ? ask - bid : 0;
-          const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : 0;
-          asksDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best ask appears above when received.</div>';
-          bidsDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best bid appears above when received.</div>';
-          document.getElementById('symBestBid').textContent = bid > 0 ? '
+        if (activeSymbol !== 'BTCUSDT') return;
+        const quote = liveMarketQuotes.BTCUSDT || {};
+        const bid = Number(quote.bid) || 0;
+        const ask = Number(quote.ask) || 0;
+        const spread = bid > 0 && ask > 0 ? ask - bid : 0;
+        const mid = bid > 0 && ask > 0 ? (ask + bid) / 2 : 0;
 
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
-      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
-      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
-
-      asksDiv.innerHTML = sortedAsks.map(a => {
-        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      bidsDiv.innerHTML = sortedBids.map(b => {
-        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      const bestBid = sortedBids[0]?.price || 0;
-      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
-
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
-
-      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
-      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
-      const totalDepth = totalBidQty + totalAskQty || 1;
-
-      document.getElementById('bidDepthSum').innerText = totalBidQty;
-      document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
-    }
- + bid.toFixed(2) : '$—';
-          document.getElementById('symBestAsk').textContent = ask > 0 ? '
-
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
-      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
-      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
-
-      asksDiv.innerHTML = sortedAsks.map(a => {
-        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      bidsDiv.innerHTML = sortedBids.map(b => {
-        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      const bestBid = sortedBids[0]?.price || 0;
-      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
-
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
-
-      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
-      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
-      const totalDepth = totalBidQty + totalAskQty || 1;
-
-      document.getElementById('bidDepthSum').innerText = totalBidQty;
-      document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
-    }
- + ask.toFixed(2) : '$—';
-          document.getElementById('symSpread').textContent = spread > 0 ? '
-
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
-      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
-      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
-
-      asksDiv.innerHTML = sortedAsks.map(a => {
-        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      bidsDiv.innerHTML = sortedBids.map(b => {
-        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      const bestBid = sortedBids[0]?.price || 0;
-      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
-
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
-
-      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
-      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
-      const totalDepth = totalBidQty + totalAskQty || 1;
-
-      document.getElementById('bidDepthSum').innerText = totalBidQty;
-      document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
-    }
- + spread.toFixed(2) : '—';
-          document.getElementById('spreadDisplay').textContent = spread > 0 ? '
-
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
-      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
-      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
-
-      asksDiv.innerHTML = sortedAsks.map(a => {
-        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      bidsDiv.innerHTML = sortedBids.map(b => {
-        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      const bestBid = sortedBids[0]?.price || 0;
-      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
-
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
-
-      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
-      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
-      const totalDepth = totalBidQty + totalAskQty || 1;
-
-      document.getElementById('bidDepthSum').innerText = totalBidQty;
-      document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
-    }
- + spread.toFixed(2) : '—';
-          document.getElementById('midDisplay').textContent = mid > 0 ? '
-
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
-      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
-      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
-
-      asksDiv.innerHTML = sortedAsks.map(a => {
-        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      bidsDiv.innerHTML = sortedBids.map(b => {
-        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      const bestBid = sortedBids[0]?.price || 0;
-      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
-
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
-
-      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
-      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
-      const totalDepth = totalBidQty + totalAskQty || 1;
-
-      document.getElementById('bidDepthSum').innerText = totalBidQty;
-      document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
-    }
- + mid.toFixed(2) : '—';
-          document.getElementById('bidDepthSum').textContent = '—';
-          document.getElementById('askDepthSum').textContent = '—';
-          document.getElementById('bidDepthBar').style.width = '0%';
-          document.getElementById('askDepthBar').style.width = '0%';
-          if (Number.isFinite(Number(quote.price)) && Number(quote.price) > 0) {
-            document.getElementById('symLastPrice').textContent = '
-
-      // Sort asks high-to-low so lowest ask is at bottom
-      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
-      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
-      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
-      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
-
-      asksDiv.innerHTML = sortedAsks.map(a => {
-        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      bidsDiv.innerHTML = sortedBids.map(b => {
-        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
-      }).join('');
-
-      const bestBid = sortedBids[0]?.price || 0;
-      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
-
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
-
-      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
-      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
-      const totalDepth = totalBidQty + totalAskQty || 1;
-
-      document.getElementById('bidDepthSum').innerText = totalBidQty;
-      document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
-    }
- + Number(quote.price).toFixed(2);
-          }
+        asksDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best ask appears above when received.</div>';
+        bidsDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best bid appears above when received.</div>';
+        document.getElementById('symBestBid').textContent = bid > 0 ? '$' + bid.toFixed(2) : '$—';
+        document.getElementById('symBestAsk').textContent = ask > 0 ? '$' + ask.toFixed(2) : '$—';
+        document.getElementById('symSpread').textContent = spread > 0 ? '$' + spread.toFixed(2) : '—';
+        document.getElementById('spreadDisplay').textContent = spread > 0 ? '$' + spread.toFixed(2) : '—';
+        document.getElementById('midDisplay').textContent = mid > 0 ? '$' + mid.toFixed(2) : '—';
+        document.getElementById('bidDepthSum').textContent = '—';
+        document.getElementById('askDepthSum').textContent = '—';
+        document.getElementById('bidDepthBar').style.width = '0%';
+        document.getElementById('askDepthBar').style.width = '0%';
+        if (Number.isFinite(Number(quote.price)) && Number(quote.price) > 0) {
+          document.getElementById('symLastPrice').textContent = '$' + Number(quote.price).toFixed(2);
         }
         return;
       }
 
-      // Sort asks high-to-low so lowest ask is at bottom
+      // Sort asks high-to-low so lowest ask is at bottom.
       const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
-      // Sort bids high-to-low so highest bid is at top
+      // Sort bids high-to-low so highest bid is at top.
       const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
-
       const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
       const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
 
       asksDiv.innerHTML = sortedAsks.map(a => {
         const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-rose-400 font-bold z-10">$${a.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${a.qty}</div>
-            <div class="text-right text-slate-400 z-10">${a.orders}</div>
-          </div>
-        `;
+        return '<div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">' +
+          '<div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ' + pct + '%"></div>' +
+          '<div class="text-rose-400 font-bold z-10">$' + a.price.toFixed(2) + '</div>' +
+          '<div class="text-right text-slate-200 z-10">' + a.qty + '</div>' +
+          '<div class="text-right text-slate-400 z-10">' + a.orders + '</div></div>';
       }).join('');
 
       bidsDiv.innerHTML = sortedBids.map(b => {
         const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
-        return `
-          <div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">
-            <div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ${pct}%"></div>
-            <div class="text-emerald-400 font-bold z-10">$${b.price.toFixed(2)}</div>
-            <div class="text-right text-slate-200 z-10">${b.qty}</div>
-            <div class="text-right text-slate-400 z-10">${b.orders}</div>
-          </div>
-        `;
+        return '<div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">' +
+          '<div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ' + pct + '%"></div>' +
+          '<div class="text-emerald-400 font-bold z-10">$' + b.price.toFixed(2) + '</div>' +
+          '<div class="text-right text-slate-200 z-10">' + b.qty + '</div>' +
+          '<div class="text-right text-slate-400 z-10">' + b.orders + '</div></div>';
       }).join('');
 
       const bestBid = sortedBids[0]?.price || 0;
       const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
-      const spread = (bestAsk > 0 && bestBid > 0) ? (bestAsk - bestBid) : 0;
-      const mid = (bestAsk > 0 && bestBid > 0) ? ((bestAsk + bestBid) / 2) : 0;
+      const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
+      const mid = bestAsk > 0 && bestBid > 0 ? (bestAsk + bestBid) / 2 : 0;
 
-      document.getElementById('symBestBid').innerText = `$${bestBid.toFixed(2)}`;
-      document.getElementById('symBestAsk').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symLastPrice').innerText = `$${bestAsk.toFixed(2)}`;
-      document.getElementById('symSpread').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('spreadDisplay').innerText = `$${spread.toFixed(2)}`;
-      document.getElementById('midDisplay').innerText = `$${mid.toFixed(3)}`;
+      document.getElementById('symBestBid').innerText = '$' + bestBid.toFixed(2);
+      document.getElementById('symBestAsk').innerText = '$' + bestAsk.toFixed(2);
+      document.getElementById('symLastPrice').innerText = '$' + bestAsk.toFixed(2);
+      document.getElementById('symSpread').innerText = '$' + spread.toFixed(2);
+      document.getElementById('spreadDisplay').innerText = '$' + spread.toFixed(2);
+      document.getElementById('midDisplay').innerText = '$' + mid.toFixed(3);
 
       const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
       const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
       const totalDepth = totalBidQty + totalAskQty || 1;
-
       document.getElementById('bidDepthSum').innerText = totalBidQty;
       document.getElementById('askDepthSum').innerText = totalAskQty;
-      document.getElementById('bidDepthBar').style.width = `${Math.round((totalBidQty / totalDepth) * 100)}%`;
-      document.getElementById('askDepthBar').style.width = `${Math.round((totalAskQty / totalDepth) * 100)}%`;
+      document.getElementById('bidDepthBar').style.width = Math.round((totalBidQty / totalDepth) * 100) + '%';
+      document.getElementById('askDepthBar').style.width = Math.round((totalAskQty / totalDepth) * 100) + '%';
     }
 
     function renderWorkingOrders() {
