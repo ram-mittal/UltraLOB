@@ -106,7 +106,13 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
 
 wss.on("connection", (client, request) => {
   if (!requestOriginAllowed(request)) {
-    send(client, { event: "error", code: "ORIGIN_NOT_ALLOWED", message: "Connect from the UltraLOB website origin." });
+    console.warn("[market-data] rejected WebSocket origin", {
+      origin: request.headers.origin || null,
+      host: request.headers.host || null,
+      forwardedHost: request.headers["x-forwarded-host"] || null,
+      renderExternalHostname: process.env.RENDER_EXTERNAL_HOSTNAME || null
+    });
+    send(client, { event: "error", code: "ORIGIN_NOT_ALLOWED", message: "Connect from the UltraLOB website origin. Check Render hostname/origin configuration." });
     client.close(1008, "Origin not allowed");
     return;
   }
