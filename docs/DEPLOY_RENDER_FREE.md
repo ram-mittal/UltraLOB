@@ -14,7 +14,7 @@ The Render service is configured on the Free instance plan. It sleeps after a pe
 
 ## Market data
 
-- **BTC/USDT:** connects automatically on page load through Binance Spot's public WebSocket stream. No API key is required.
+- **BTC/USDT:** connects automatically from the browser directly to Binance Spot's public WebSocket stream. This bypasses Render's outbound WebSocket gateway for BTC and requires no API key. If the primary hostname cannot be reached, the browser rotates through Binance's official market-data-only hostname and port 9443 fallback.
 - **AAPL, MSFT, GOOGL:** add `TWELVE_DATA_API_KEY` under the Render service's Environment settings. Vercel environment variables are not shared with Render. Save with **Save, rebuild, and deploy** (or **Save and deploy**) to apply the key; never paste the secret into `index.html`.
 - **Twelve Data plan limits:** Basic and Grow accounts are limited to trial symbols for WebSocket use; they do not unlock arbitrary AAPL/MSFT/GOOGL subscriptions. Check your account's permitted trial-symbol list or an eligible higher-tier plan before expecting those three equities to stream. See the [Twelve Data WebSocket documentation](https://twelvedata.com/docs/websocket/websocket-getting-started) and [trial details](https://support.twelvedata.com/en/articles/5335783-trial).
 
