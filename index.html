@@ -143,15 +143,15 @@
             <div id="symLastPriceSource" class="text-[9px] font-mono text-amber-400">SIMULATED</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">DEMO SPREAD</div>
+            <div id="symSpreadLabel" class="text-[10px] text-slate-500">DEMO SPREAD</div>
             <div class="text-base font-bold text-slate-300" id="symSpread">$0.05</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">BEST BID (DEMO)</div>
+            <div id="symBestBidLabel" class="text-[10px] text-slate-500">BEST BID (DEMO)</div>
             <div class="text-emerald-400 font-semibold" id="symBestBid">$150.20</div>
           </div>
           <div>
-            <div class="text-[10px] text-slate-500">BEST ASK (DEMO)</div>
+            <div id="symBestAskLabel" class="text-[10px] text-slate-500">BEST ASK (DEMO)</div>
             <div class="text-rose-400 font-semibold" id="symBestAsk">$150.25</div>
           </div>
         </div>
@@ -367,7 +367,7 @@
         <span id="liveMarketDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
         <div class="min-w-[210px] flex-1">
           <div id="liveMarketStatus" class="text-[10px] uppercase tracking-wider font-bold text-slate-300">LIVE FEED NOT CONNECTED</div>
-          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Twelve Data · AAPL, MSFT, GOOGL · live spot ticks only</div>
+          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Binance Spot · BTCUSDT trades and top-of-book · Twelve Data equities</div>
         </div>
         <button id="liveMarketConnectButton" type="button" onclick="toggleLiveMarketData()" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold">CONNECT LIVE FEED</button>
       </div>
@@ -614,6 +614,9 @@
       document.getElementById('bookSymbolBadge').innerText = sym;
       document.getElementById('bookModeLabel').textContent =
         sym === 'BTCUSDT' ? 'Live BTC Top of Book · Depth Not Loaded' : 'Simulated Level 2 Order Book';
+      document.getElementById('symSpreadLabel').textContent = sym === 'BTCUSDT' ? 'LIVE SPREAD' : 'DEMO SPREAD';
+      document.getElementById('symBestBidLabel').textContent = sym === 'BTCUSDT' ? 'BEST BID (LIVE)' : 'BEST BID (DEMO)';
+      document.getElementById('symBestAskLabel').textContent = sym === 'BTCUSDT' ? 'BEST ASK (LIVE)' : 'BEST ASK (DEMO)';
 
       const liveQuote = liveMarketQuotes[sym];
       if (sym === 'BTCUSDT' && !btcModelDefaultsApplied) {
