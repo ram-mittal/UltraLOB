@@ -275,7 +275,9 @@ export default async function handler(req, res) {
     const validPricingPayload = payload && typeof payload === "object" && payload.call && payload.put;
     if (upstream.ok && validPricingPayload) return res.status(upstream.status).json(payload);
 
-    if ((upstream.status >= 500 || upstream.ok) && input.backend !== "cuda") {
+    if (input.backend !== "cuda" && (
+      upstream.status >= 500 || upstream.ok || [401, 403, 408, 429].includes(upstream.status)
+    )) {
       try {
         const reason = upstream.ok
           ? "External pricing service returned an invalid pricing payload."
