@@ -22,7 +22,12 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
   try {
     const dashboard = await fetch(baseUrl + "/");
     assert.equal(dashboard.status, 200);
-    assert.match(await dashboard.text(), /UltraLOB/);
+    const dashboardHtml = await dashboard.text();
+    assert.match(dashboardHtml, /UltraLOB/);
+    assert.match(dashboardHtml, /wss:\/\/stream\.binance\.com:443/);
+    assert.match(dashboardHtml, /wss:\/\/data-stream\.binance\.vision:443/);
+    assert.match(dashboardHtml, /let activeSymbol = 'BTCUSDT'/);
+    assert.match(dashboardHtml, /scheduleLiveAutoPricing\(\)/);
 
     const alias = await fetch(baseUrl + "/terminal");
     assert.equal(alias.status, 200);
