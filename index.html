@@ -384,6 +384,7 @@
           </div>
           <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-3">
             <button id="pricingRunButton" type="submit" class="flex-1 px-4 py-2.5 rounded bg-sky-600 hover:bg-sky-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-sky-950/40">Run Monte Carlo Simulation</button>
+            <button id="pricingCompareButton" type="button" onclick="runPricingComparison()" class="px-3 py-2.5 rounded bg-indigo-600/80 hover:bg-indigo-500 disabled:bg-slate-700 text-white text-xs font-bold">COMPARE CPU / GPU</button>
             <button type="button" onclick="resetPricingInputs()" class="px-3 py-2.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold">RESET INPUTS</button>
           </div>
           <p class="text-[10px] text-slate-500 mt-2">Rates and volatility use annualized decimals (0.20 = 20%). Paths must be even because simulations use antithetic pairs.</p>
@@ -398,6 +399,11 @@
           <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">GPU Utilization</div><div id="pricingMetricGpu" class="text-sm font-bold text-slate-300 font-mono mt-1">Not reported</div><div class="text-[9px] text-slate-500 mt-1">Hardware telemetry unavailable</div></div>
         </div>
 
+        <div id="pricingComparePanel" class="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-lg border border-indigo-500/20 bg-indigo-500/[0.04] p-3">
+          <div><div class="text-[9px] uppercase tracking-wider text-slate-500">CPU benchmark</div><div id="pricingCpuCompare" class="text-xs font-mono font-semibold text-slate-200 mt-1">Not run</div></div>
+          <div><div class="text-[9px] uppercase tracking-wider text-slate-500">CUDA benchmark</div><div id="pricingCudaCompare" class="text-xs font-mono font-semibold text-slate-200 mt-1">Not run</div></div>
+          <div><div class="text-[9px] uppercase tracking-wider text-slate-500">GPU speed-up</div><div id="pricingSpeedupCompare" class="text-xs font-mono font-semibold text-indigo-300 mt-1">—</div></div>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
           <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.045] p-3">
             <div class="flex items-center justify-between"><span class="text-[10px] uppercase tracking-wider font-bold text-emerald-300">European Call</span><span class="text-[9px] text-slate-500">CALL OPTION</span></div>
@@ -1061,6 +1067,63 @@
         pricingElement("pricingRunMessage").textContent = error.message + " · Confirm the pricing container is running and Vercel environment variables are configured.";
       } finally {
         button.disabled = false; button.textContent = "RUN MONTE CARLO SIMULATION";
+      }
+    }
+
+    async function runPricingComparison() {
+      const button = pricingElement("pricingCompareButton");
+      const payload = readPricingInputs();
+      const validationError = validatePricingInputs(payload);
+      if (validationError) { pricingElement("pricingRunMessage").textContent = validationError; return; }
+
+      const runBackend = async function(backend) {
+        const response = await fetch("/api/pricing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify(Object.assign({}, payload, { backend: backend })),
+          cache: "no-store"
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || result.error || (backend + " pricing failed"));
+        return result;
+      };
+
+      button.disabled = true;
+      button.textContent = "COMPARING...";
+      pricingElement("pricingCpuCompare").textContent = "Running...";
+      pricingElement("pricingCudaCompare").textContent = "Waiting...";
+      pricingElement("pricingSpeedupCompare").textContent = "—";
+      setPricingServiceState("running", "CPU / GPU COMPARISON", formatPricingNumber(payload.paths, 0) + " paths per backend");
+      try {
+        const cpuResult = await runBackend("cpu");
+        pricingElement("pricingCpuCompare").textContent =
+          formatPricingNumber(cpuResult.elapsed_ms, 2) + " ms · " + formatPricingNumber(cpuResult.paths_per_second, 0) + " paths/s";
+        renderPricingResults(cpuResult);
+        try {
+          const cudaResult = await runBackend("cuda");
+          pricingElement("pricingCudaCompare").textContent =
+            formatPricingNumber(cudaResult.elapsed_ms, 2) + " ms · " + formatPricingNumber(cudaResult.paths_per_second, 0) + " paths/s";
+          const speedup = cpuResult.elapsed_ms / cudaResult.elapsed_ms;
+          pricingElement("pricingSpeedupCompare").textContent =
+            (Number.isFinite(speedup) ? speedup.toFixed(2) + "×" : "—") + (speedup >= 1 ? " faster" : " relative");
+          renderPricingResults(cudaResult);
+          setPricingServiceState("online", "CPU / GPU COMPARISON COMPLETE", "Both backends completed " + formatPricingNumber(payload.paths, 0) + " paths");
+          pricingElement("pricingRunMessage").textContent =
+            "Comparison complete. Times are native pricing-call times from the same persistent service process; GPU utilization is reported only when NVML is available.";
+        } catch (gpuError) {
+          pricingElement("pricingCudaCompare").textContent = "Unavailable · " + gpuError.message;
+          pricingElement("pricingSpeedupCompare").textContent = "Not measured";
+          setPricingServiceState("online", "CPU COMPLETE · CUDA UNAVAILABLE", "Check that this service is built with CUDA and running on an NVIDIA GPU host");
+          pricingElement("pricingRunMessage").textContent =
+            "CPU benchmark completed. CUDA comparison could not run: " + gpuError.message;
+        }
+      } catch (error) {
+        pricingElement("pricingCpuCompare").textContent = "Failed · " + error.message;
+        setPricingServiceState("offline", "PRICING COMPARISON FAILED", error.message);
+        pricingElement("pricingRunMessage").textContent = error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = "COMPARE CPU / GPU";
       }
     }
 
