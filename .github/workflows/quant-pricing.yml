@@ -1,0 +1,41 @@
+name: Quant Pricing CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feat/gpu-monte-carlo-pricing]
+
+jobs:
+  cpu-pricing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure CPU pricing service
+        run: cmake -S pricing_service -B build -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=OFF
+
+      - name: Build native pricing library and CLI
+        run: cmake --build build --parallel 2
+
+      - name: Run native bridge smoke test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install API dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r pricing_service/requirements.txt pytest httpx
+
+      - name: Test FastAPI integration
+        env:
+          ULTRALOB_TEST_BUILD_DIR: build
+        run: python -m pytest -q pricing_service/test_api.py
+
+      - name: Validate JavaScript syntax
+        run: node --check api/pricing.js
