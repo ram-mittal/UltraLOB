@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import WebSocket from "ws";
+import { once } from "node:events";
 
 process.env.ULTRALOB_RENDER_MODE = "true";
+process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS = "true";
 delete process.env.PRICING_SERVICE_URL;
 
 const { default: server } = await import("./market-data.js");
@@ -59,6 +62,23 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     assert.equal(pricing.status, 200);
     assert.equal(pricingPayload.backend, "CPU");
     assert.equal(pricingPayload.paths, 10000);
+
+    const socketUrl = baseUrl.replace(/^http/, "ws") + "/api/market-data?symbols=BTCUSDT";
+    const socket = new WebSocket(socketUrl, { origin: baseUrl });
+    const messages = [];
+    socket.on("message", (raw) => {
+      try { messages.push(JSON.parse(raw.toString())); } catch {}
+    });
+    await once(socket, "open");
+    socket.send(JSON.stringify({ event: "ping", timestamp: Date.now() }));
+    for (let attempt = 0; attempt < 20 && !messages.some((item) => item.event === "heartbeat"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(messages.some((item) => item.event === "gateway" && item.status === "connecting"));
+    assert.ok(messages.some((item) => item.event === "heartbeat"));
+    const socketClosed = once(socket, "close");
+    socket.close(1000, "test complete");
+    await socketClosed;
 
     const notFound = await fetch(baseUrl + "/unknown-route");
     assert.equal(notFound.status, 404);
