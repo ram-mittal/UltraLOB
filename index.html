@@ -551,6 +551,7 @@
     const liveMarketQuotes = Object.create(null);
     let liveMarketSocket = null;
     let liveMarketReconnectTimer = null;
+    let liveMarketHeartbeatTimer = null;
     let liveMarketReconnectAttempt = 0;
     let liveMarketIntentionalClose = false;
     let liveAutoPricingTimer = null;
@@ -1096,7 +1097,13 @@
 
         socket.onopen = function() {
           liveMarketReconnectAttempt = 0;
-          setLiveMarketState("connecting", "Browser connected to the secure Vercel gateway; authorizing the provider stream...");
+          clearInterval(liveMarketHeartbeatTimer);
+          liveMarketHeartbeatTimer = setInterval(function() {
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ event: "ping", timestamp: Date.now() }));
+            }
+          }, 60000);
+          setLiveMarketState("connecting", "Browser connected to the secure UltraLOB gateway; authorizing the provider stream...");
         };
 
         socket.onmessage = function(event) {
@@ -1165,6 +1172,8 @@
         };
 
         socket.onclose = function() {
+          clearInterval(liveMarketHeartbeatTimer);
+          liveMarketHeartbeatTimer = null;
           if (liveMarketSocket === socket) liveMarketSocket = null;
           if (liveMarketIntentionalClose) {
             const currentStatus = pricingElement("liveMarketStatus").textContent || "";
@@ -1187,6 +1196,8 @@
     function stopLiveMarketData() {
       liveMarketIntentionalClose = true;
       clearTimeout(liveMarketReconnectTimer);
+      clearInterval(liveMarketHeartbeatTimer);
+      liveMarketHeartbeatTimer = null;
       clearTimeout(liveAutoPricingTimer);
       liveAutoPricingPending = false;
       if (liveMarketSocket) {
@@ -1347,7 +1358,7 @@
         pricingElement("pricingBackendBadge").textContent = "CPU FALLBACK · CUDA OPTIONAL";
         setPricingServiceState("offline", "PRICING API UNAVAILABLE", error.message);
         pricingElement("pricingRunMessage").textContent =
-          "The CPU fallback could not be reached. Check the Vercel deployment and /api/pricing function logs.";
+          "The CPU fallback could not be reached. Check the hosting logs and the /api/pricing endpoint.";
       }
     }
 
