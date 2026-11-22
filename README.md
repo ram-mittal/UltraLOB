@@ -387,7 +387,17 @@ The repository includes a Render Blueprint in `render.yaml`. The hosted applicat
 3. Review the `ultralob` service and deploy the Blueprint.
 4. Open [ultralob.onrender.com](https://ultralob.onrender.com/).
 
-The `server.js` entrypoint enables Render mode and serves `index.html`, `/api/pricing`, `/api/market-data`, and `/healthz). Render Free services sleep when idle; the first request after a sleep may take time to wake the instance.
+The `server.js` entrypoint enables Render mode and serves `index.html`, `/api/pricing`, `/api/market-data`, and `/healthz`. Render Free services sleep when idle; the first request after a sleep may take time to wake the instance.
+
+To run the same Node.js web application locally (Node.js 22 or newer):
+
+```bash
+npm install
+npm start
+# Open http://localhost:10000
+```
+
+Run the Node API and web-server integration tests with `npm test`. The native C++ and FastAPI tests are also run in the repository's GitHub Actions workflow.
 
 #### Render environment variables
 
