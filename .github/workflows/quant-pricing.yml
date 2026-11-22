@@ -42,7 +42,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Validate API JavaScript and run fallback tests
+      - name: Install Node dependencies
+        run: npm install --ignore-scripts
+
+      - name: Validate API JavaScript and run pricing tests
         run: |
           node --check api/pricing.js
-          node --experimental-default-type=module --test api/pricing.test.mjs
+          node --check api/market-data.js
+          node --test api/pricing.test.mjs api/market-data.test.mjs
