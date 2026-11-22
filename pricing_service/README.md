@@ -78,6 +78,9 @@ The Vercel proxy is same-origin, so browser requests do not need direct CORS acc
 
 ## Configuration
 
+Use [`.env.example`](.env.example) as a template for the pricing container environment. Replace the placeholder API key with a long random secret; do not commit real credentials.
+
+
 - `ULTRALOB_PRICER_LIBRARY`: path to `libultralob_quant.so` (default `/app/build/libultralob_quant.so`).
 - `PRICING_API_KEY`: optional bearer token required for pricing requests.
 - `ULTRALOB_CUDA_ENABLED`: informational flag returned by health checks; set by the supplied Dockerfiles.
