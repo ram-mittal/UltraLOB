@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <exception>
+#include <stdexcept>
 
 extern "C" int ultralob_monte_carlo_price(
     const UltraLOBMonteCarloRequest* request,
