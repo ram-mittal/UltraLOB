@@ -131,10 +131,10 @@
           <span class="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">TRADING</span>
         </div>
         <div class="grid grid-cols-4 gap-1.5 mb-3">
-          <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">AAPL</button>
+          <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">AAPL</button>
           <button onclick="selectSymbol('MSFT')" id="tab-MSFT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">MSFT</button>
           <button onclick="selectSymbol('GOOGL')" id="tab-GOOGL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">GOOGL</button>
-          <button onclick="selectSymbol('BTCUSDT')" id="tab-BTCUSDT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">BTC</button>
+          <button onclick="selectSymbol('BTCUSDT')" id="tab-BTCUSDT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">BTC</button>
         </div>
         <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
           <div>
@@ -378,7 +378,7 @@
         </label>
         <label class="inline-flex items-center gap-2 text-slate-300">
           <input id="autoPricingEnabled" type="checkbox" checked class="accent-emerald-500">
-          Auto-reprice
+          Auto Monte Carlo
         </label>
         <label class="inline-flex items-center gap-2 text-slate-400">
           Reprice interval
@@ -536,7 +536,7 @@
   <!-- JAVASCRIPT ENGINE & SIMULATOR -->
   <script>
     // State
-    let activeSymbol = 'AAPL';
+    let activeSymbol = 'BTCUSDT';
     let currentSide = '1'; // 1=Buy, 2=Sell
     let outSeq = 1;
     let inSeq = 1;
@@ -983,6 +983,9 @@
         setTimeout(() => { selectSymbol('AAPL'); submitManualOrder(); }, 200);
         setTimeout(() => { selectSymbol('MSFT'); submitManualOrder(); }, 700);
         setTimeout(() => { selectSymbol('GOOGL'); setSide('2'); submitManualOrder(); }, 1200);
+        // The FIX demo changes the selected symbol for its sample orders.
+        // Restore BTC so the live market feed and automatic Monte Carlo are visible.
+        setTimeout(() => selectSymbol('BTCUSDT'), 1600);
       }, 100);
     }
 
@@ -1080,7 +1083,7 @@
       if (liveMarketSocket && liveMarketSocket.readyState <= WebSocket.OPEN) return;
       clearTimeout(liveMarketReconnectTimer);
       liveMarketIntentionalClose = false;
-      setLiveMarketState("connecting", "Opening Binance Spot for BTCUSDT and Twelve Data for US equities...");
+      setLiveMarketState("connecting", "Opening Binance Spot for BTCUSDT. Twelve Data equities connect separately when their key and symbol entitlements are configured...");
       try {
         const healthResponse = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
         const health = await healthResponse.json();
@@ -1190,6 +1193,14 @@
         };
       } catch (error) {
         setLiveMarketState("error", error.message);
+        // Render Free can briefly return a wake-up page on cold start. Retry
+        // health/connection failures with the same bounded exponential backoff.
+        if (!liveMarketIntentionalClose) {
+          const delay = Math.min(30000, 1000 * Math.pow(2, liveMarketReconnectAttempt));
+          liveMarketReconnectAttempt += 1;
+          clearTimeout(liveMarketReconnectTimer);
+          liveMarketReconnectTimer = setTimeout(connectLiveMarketData, delay);
+        }
       }
     }
 
@@ -1343,7 +1354,7 @@
         if (payload.fallback_enabled) {
           const limit = formatPricingNumber(payload.fallback_max_paths, 0);
           pricingElement("pricingBackendBadge").textContent = "CPU READY · CUDA OPTIONAL";
-          setPricingServiceState("online", "CPU FALLBACK READY", "Vercel serverless CPU · " + limit + " path limit · CUDA host not connected");
+          setPricingServiceState("online", "CPU FALLBACK READY", "Node.js CPU · " + limit + " path limit · CUDA host not connected");
           pricingElement("pricingRunMessage").textContent =
             "The built-in CPU Monte Carlo engine is ready. Choose AUTO SELECT or CPU to calculate now. CUDA requires a separate NVIDIA GPU service.";
           return;
@@ -1435,7 +1446,7 @@
       pricingElement("pricingMetricTime").textContent = formatPricingNumber(data.elapsed_ms, 2) + " ms";
       pricingElement("pricingMetricThroughput").textContent = formatPricingNumber(data.paths_per_second, 0) + " /s";
       pricingElement("pricingMetricGpu").textContent = data.gpu_utilization == null ? "Not reported" : formatPricingNumber(data.gpu_utilization, 1) + "%";
-      const executionLabel = data.execution_engine === "javascript-fallback" ? "Vercel serverless CPU" : "native pricing service";
+      const executionLabel = data.execution_engine === "javascript-fallback" ? "Node.js CPU" : "native pricing service";
       pricingElement("pricingResultMeta").textContent =
         formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed + " · " + executionLabel + " · " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
       drawPricingComparison(call, put);
@@ -1482,12 +1493,12 @@
         setPricingServiceState(
           "online",
           usedFallback ? "CPU FALLBACK COMPLETE" : "PRICING COMPLETE",
-          (usedFallback ? "Vercel serverless CPU" : "Executed on " + result.backend) + " · " + formatPricingNumber(result.paths, 0) + " paths"
+          (usedFallback ? "Node.js CPU" : "Executed on " + result.backend) + " · " + formatPricingNumber(result.paths, 0) + " paths"
         );
         pricingElement("pricingRunMessage").textContent = automatic
-          ? "Automatically repriced " + activeSymbol + " using the latest Twelve Data spot. Strike, volatility, rates, dividend yield and maturity remain your assumptions."
+          ? "Automatically repriced " + activeSymbol + " using the latest live market spot. Strike, volatility, rates, dividend yield and maturity remain your assumptions."
           : (usedFallback
-            ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
+            ? "Pricing completed on the built-in built-in CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
             : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.");
         if (automatic) {
           pricingElement("liveAutoPricingStatus").textContent =
@@ -1635,6 +1646,12 @@
     });
     checkPricingService();
     checkLiveMarketDataConfig();
+    // Start with the public BTC feed so the page demonstrates live data and
+    // automatic Monte Carlo immediately, without requiring a manual connect click.
+    setTimeout(function() {
+      selectSymbol("BTCUSDT");
+      connectLiveMarketData();
+    }, 1800);
     window.addEventListener("beforeunload", stopLiveMarketData);
 
   </script>
