@@ -101,6 +101,25 @@ class PricingRequest(BaseModel):
         return value
 
 
+def read_gpu_utilization():
+    if not CUDA_BUILD_ENABLED:
+        return None
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        try:
+            if pynvml.nvmlDeviceGetCount() < 1:
+                return None
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            return float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        # Missing NVML, an inaccessible driver, or a non-GPU host is not a
+        # pricing failure; the utilization field remains explicitly unknown.
+        return None
+
+
 def verify_api_key(authorization: str | None) -> None:
     if not PRICING_API_KEY:
         return
@@ -194,5 +213,5 @@ def price_monte_carlo(
         "model": "risk-neutral-gbm-european-vanilla",
         "variance_reduction": "antithetic-variates",
         # CUDA utilization requires an additional NVML/nvidia-smi telemetry integration.
-        "gpu_utilization": None,
+        "gpu_utilization": read_gpu_utilization(),
     }
