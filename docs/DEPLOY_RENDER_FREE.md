@@ -14,8 +14,11 @@ The Render service is configured on the Free instance plan. It sleeps after a pe
 
 ## Market data
 
-- **BTC/USDT:** works without a provider API key through Binance Spot public WebSocket streams.
-- **AAPL, MSFT, GOOGL:** add `TWELVE_DATA_API_KEY` under the Render service's Environment settings if your Twelve Data plan has access to those symbols. Keep the key server-side; do not put it in `index.html`.
+- **BTC/USDT:** connects automatically on page load through Binance Spot's public WebSocket stream. No API key is required.
+- **AAPL, MSFT, GOOGL:** add `TWELVE_DATA_API_KEY` under the Render service's Environment settings. Vercel environment variables are not shared with Render. Save with **Save, rebuild, and deploy** (or **Save and deploy**) to apply the key; never paste the secret into `index.html`.
+- **Twelve Data plan limits:** Basic and Grow accounts are limited to trial symbols for WebSocket use; they do not unlock arbitrary AAPL/MSFT/GOOGL subscriptions. Check your account's permitted trial-symbol list or an eligible higher-tier plan before expecting those three equities to stream. See the [Twelve Data WebSocket documentation](https://twelvedata.com/docs/websocket/websocket-getting-started) and [trial details](https://support.twelvedata.com/en/articles/5335783-trial).
+
+The landing view selects BTC by default, starts the live gateway automatically, and starts Auto Monte Carlo after the first BTC trade tick. The Auto Monte Carlo checkbox is enabled by default and can be paused by unchecking it.
 
 ## Pricing and compute
 
