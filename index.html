@@ -338,6 +338,92 @@
 
   </main>
 
+
+  <!-- MONTE CARLO PRICING WORKBENCH -->
+  <section id="monteCarloLab" class="bg-[#0f172a] border border-slate-800 rounded-xl p-4 lg:p-5 shadow-xl">
+    <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3 mb-4">
+      <div>
+        <div class="flex flex-wrap items-center gap-2 mb-1">
+          <span class="text-[10px] font-mono uppercase tracking-[0.22em] text-sky-400">Quantitative Analytics</span>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">CUDA-ACCELERATED</span>
+        </div>
+        <h2 class="text-lg font-bold text-slate-100">Monte Carlo Option Pricing</h2>
+        <p class="text-xs text-slate-400 mt-1 max-w-3xl">European call and put valuation using risk-neutral geometric Brownian motion, antithetic variates, and an optional NVIDIA CUDA backend. This workload runs separately from the order-matching sequencer.</p>
+      </div>
+      <div class="flex items-center gap-2 rounded-lg bg-slate-950/70 border border-slate-800 px-3 py-2 min-w-[250px]">
+        <span id="pricingServiceDot" class="w-2 h-2 rounded-full bg-amber-400"></span>
+        <div class="min-w-0">
+          <div id="pricingServiceStatus" class="text-[10px] uppercase font-bold tracking-wider text-amber-300">CHECKING PRICING SERVICE</div>
+          <div id="pricingServiceDetail" class="text-[10px] text-slate-500 truncate">Connecting to /api/pricing</div>
+        </div>
+        <button type="button" onclick="checkPricingService()" class="ml-auto text-[10px] text-sky-400 hover:text-sky-300 font-semibold">RECHECK</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-3">
+      <div class="col-span-12 xl:col-span-5 rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-slate-300">Simulation Parameters</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" onclick="setPricingPreset('atm')" class="px-2 py-1 text-[10px] rounded bg-slate-800 border border-slate-700 text-slate-300 hover:border-sky-500/60">ATM BASE</button>
+            <button type="button" onclick="setPricingPreset('stress')" class="px-2 py-1 text-[10px] rounded bg-slate-800 border border-slate-700 text-slate-300 hover:border-rose-500/60">HIGH VOL</button>
+            <button type="button" onclick="useActiveSymbolSpot()" class="px-2 py-1 text-[10px] rounded bg-sky-500/10 border border-sky-500/30 text-sky-300 hover:bg-sky-500/20">USE BOOK MID</button>
+          </div>
+        </div>
+        <form id="pricingForm" onsubmit="event.preventDefault(); runMonteCarloPricing();">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">SPOT PRICE (S₀)</span><input id="pricingSpot" type="number" min="0.000001" step="0.01" value="150.25" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">STRIKE (K)</span><input id="pricingStrike" type="number" min="0.000001" step="0.01" value="155" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">RISK-FREE RATE (r)</span><input id="pricingRate" type="number" min="-1" max="1" step="0.001" value="0.045" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">DIVIDEND YIELD (q)</span><input id="pricingDividend" type="number" min="-1" max="1" step="0.001" value="0.005" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">VOLATILITY (σ)</span><input id="pricingVol" type="number" min="0" max="5" step="0.01" value="0.28" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">MATURITY (YEARS)</span><input id="pricingMaturity" type="number" min="0.0001" max="100" step="0.01" value="0.5" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">TOTAL PATHS</span><input id="pricingPaths" type="number" min="4" max="50000000" step="2" value="2000000" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">RANDOM SEED</span><input id="pricingSeed" type="number" min="0" max="9007199254740991" step="1" value="42" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">COMPUTE BACKEND</span><select id="pricingBackend" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"><option value="auto">AUTO SELECT</option><option value="cpu">CPU</option><option value="cuda">NVIDIA CUDA</option></select></label>
+          </div>
+          <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-3">
+            <button id="pricingRunButton" type="submit" class="flex-1 px-4 py-2.5 rounded bg-sky-600 hover:bg-sky-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-sky-950/40">Run Monte Carlo Simulation</button>
+            <button type="button" onclick="resetPricingInputs()" class="px-3 py-2.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold">RESET INPUTS</button>
+          </div>
+          <p class="text-[10px] text-slate-500 mt-2">Rates and volatility use annualized decimals (0.20 = 20%). Paths must be even because simulations use antithetic pairs.</p>
+        </form>
+      </div>
+
+      <div class="col-span-12 xl:col-span-7 flex flex-col gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">Execution Backend</div><div id="pricingMetricBackend" class="text-sm font-bold text-sky-300 font-mono mt-1">—</div><div class="text-[9px] text-slate-500 mt-1">Actual selected engine</div></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">Elapsed Time</div><div id="pricingMetricTime" class="text-sm font-bold text-slate-100 font-mono mt-1">—</div><div class="text-[9px] text-slate-500 mt-1">Native pricer runtime</div></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">Path Throughput</div><div id="pricingMetricThroughput" class="text-sm font-bold text-emerald-300 font-mono mt-1">—</div><div class="text-[9px] text-slate-500 mt-1">Paths per second</div></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">GPU Utilization</div><div id="pricingMetricGpu" class="text-sm font-bold text-slate-300 font-mono mt-1">Not reported</div><div class="text-[9px] text-slate-500 mt-1">Hardware telemetry unavailable</div></div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.045] p-3">
+            <div class="flex items-center justify-between"><span class="text-[10px] uppercase tracking-wider font-bold text-emerald-300">European Call</span><span class="text-[9px] text-slate-500">CALL OPTION</span></div>
+            <div id="pricingCallPrice" class="text-2xl font-bold font-mono text-slate-100 mt-2">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Black–Scholes: <span id="pricingCallBS" class="text-slate-300 font-mono">—</span></div>
+            <div class="text-[10px] text-slate-500 mt-2">95% confidence interval</div><div id="pricingCallCI" class="text-[10px] font-mono text-emerald-300 mt-0.5">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Standard error: <span id="pricingCallSE" class="font-mono text-slate-300">—</span></div>
+          </div>
+          <div class="rounded-lg border border-rose-500/20 bg-rose-500/[0.045] p-3">
+            <div class="flex items-center justify-between"><span class="text-[10px] uppercase tracking-wider font-bold text-rose-300">European Put</span><span class="text-[9px] text-slate-500">PUT OPTION</span></div>
+            <div id="pricingPutPrice" class="text-2xl font-bold font-mono text-slate-100 mt-2">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Black–Scholes: <span id="pricingPutBS" class="text-slate-300 font-mono">—</span></div>
+            <div class="text-[10px] text-slate-500 mt-2">95% confidence interval</div><div id="pricingPutCI" class="text-[10px] font-mono text-rose-300 mt-0.5">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Standard error: <span id="pricingPutSE" class="font-mono text-slate-300">—</span></div>
+          </div>
+        </div>
+        <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-300">Monte Carlo vs Analytical Reference</div><div id="pricingResultMeta" class="text-[9px] font-mono text-slate-500">Awaiting first simulation</div></div>
+          <canvas id="pricingComparisonChart" height="160" class="w-full h-40"></canvas>
+          <div class="flex flex-wrap gap-4 text-[9px] text-slate-500 mt-1"><span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-sm bg-sky-400"></i>Monte Carlo</span><span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-sm bg-slate-500"></i>Black–Scholes</span></div>
+        </div>
+        <div id="pricingRunMessage" role="status" aria-live="polite" class="text-[10px] text-slate-500 min-h-4">Pricing API has not been checked yet.</div>
+      </div>
+    </div>
+  </section>
+
   <!-- BOTTOM BAR: PERSISTENCE STORE & ACTIVE ORDERS BLOTTER -->
   <section class="grid grid-cols-12 gap-3">
     <!-- Active Orders Table -->
@@ -832,6 +918,193 @@
     // Initial setup
     renderBook();
     runAutoDemo();
+
+    // ── Monte Carlo pricing workbench ────────────────────────────────────────
+    const PRICING_DEFAULTS = {
+      spot: 150.25, strike: 155, rate: 0.045, dividend: 0.005,
+      vol: 0.28, maturity: 0.5, paths: 2000000, seed: 42, backend: "auto"
+    };
+    function pricingElement(id) { return document.getElementById(id); }
+
+    function setPricingServiceState(state, title, detail) {
+      const palette = {
+        online: ["bg-emerald-400", "text-emerald-300"],
+        offline: ["bg-rose-400", "text-rose-300"],
+        checking: ["bg-amber-400", "text-amber-300"],
+        running: ["bg-sky-400", "text-sky-300"]
+      };
+      const colors = palette[state] || palette.offline;
+      pricingElement("pricingServiceDot").className = "w-2 h-2 rounded-full " + colors[0] + (state === "running" ? " live-dot" : "");
+      pricingElement("pricingServiceStatus").className = "text-[10px] uppercase font-bold tracking-wider " + colors[1];
+      pricingElement("pricingServiceStatus").textContent = title;
+      pricingElement("pricingServiceDetail").textContent = detail;
+    }
+
+    async function checkPricingService() {
+      setPricingServiceState("checking", "CHECKING PRICING SERVICE", "Requesting service health...");
+      try {
+        const response = await fetch("/api/pricing", { method: "GET", cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || payload.status !== "ok") {
+          throw new Error(payload.hint || payload.detail || payload.error || "Pricing service is not ready");
+        }
+        const buildLabel = payload.cuda_build_enabled ? "CUDA build enabled" : "CPU build";
+        setPricingServiceState("online", "PRICING SERVICE READY", buildLabel + " · native pricing binary available");
+        pricingElement("pricingRunMessage").textContent = payload.cuda_build_enabled
+          ? "CUDA is compiled into this service. A successful CUDA pricing request will verify device availability."
+          : "This service uses its CPU build. Deploy the CUDA container on an NVIDIA GPU host to enable GPU pricing.";
+      } catch (error) {
+        setPricingServiceState("offline", "PRICING SERVICE OFFLINE", error.message);
+        pricingElement("pricingRunMessage").textContent =
+          "Set PRICING_SERVICE_URL in Vercel and deploy pricing_service/Dockerfile.cuda on a GPU-enabled host. See pricing_service/README.md.";
+      }
+    }
+
+    function readPricingInputs() {
+      return {
+        spot: Number(pricingElement("pricingSpot").value),
+        strike: Number(pricingElement("pricingStrike").value),
+        risk_free_rate: Number(pricingElement("pricingRate").value),
+        dividend_yield: Number(pricingElement("pricingDividend").value),
+        volatility: Number(pricingElement("pricingVol").value),
+        maturity_years: Number(pricingElement("pricingMaturity").value),
+        paths: Number(pricingElement("pricingPaths").value),
+        seed: Number(pricingElement("pricingSeed").value),
+        backend: pricingElement("pricingBackend").value
+      };
+    }
+
+    function validatePricingInputs(p) {
+      if (!Number.isFinite(p.spot) || p.spot <= 0) return "Spot price must be greater than zero.";
+      if (!Number.isFinite(p.strike) || p.strike <= 0) return "Strike must be greater than zero.";
+      if (!Number.isFinite(p.risk_free_rate) || p.risk_free_rate < -1 || p.risk_free_rate > 1) return "Risk-free rate must be between -1 and 1.";
+      if (!Number.isFinite(p.dividend_yield) || p.dividend_yield < -1 || p.dividend_yield > 1) return "Dividend yield must be between -1 and 1.";
+      if (!Number.isFinite(p.volatility) || p.volatility < 0 || p.volatility > 5) return "Volatility must be between 0 and 5.";
+      if (!Number.isFinite(p.maturity_years) || p.maturity_years <= 0 || p.maturity_years > 100) return "Maturity must be greater than zero and at most 100 years.";
+      if (!Number.isSafeInteger(p.paths) || p.paths < 4 || p.paths > 50000000 || p.paths % 2 !== 0) return "Paths must be an even integer between 4 and 50,000,000.";
+      if (!Number.isSafeInteger(p.seed) || p.seed < 0) return "Seed must be a non-negative safe integer.";
+      return null;
+    }
+
+    function formatPricingNumber(value, digits) {
+      if (!Number.isFinite(Number(value))) return "—";
+      const precision = digits === undefined ? 4 : digits;
+      return Number(value).toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+    }
+
+    function drawPricingComparison(call, put) {
+      const canvas = pricingElement("pricingComparisonChart");
+      if (!canvas || !canvas.getContext) return;
+      const width = Math.max(canvas.clientWidth, 320), height = 160, ratio = window.devicePixelRatio || 1;
+      canvas.width = width * ratio; canvas.height = height * ratio;
+      const ctx = canvas.getContext("2d"); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, width, height);
+      const items = [
+        { label: "CALL · MC", value: call.price, color: "#38bdf8", y: 24 },
+        { label: "CALL · BS", value: call.black_scholes, color: "#64748b", y: 48 },
+        { label: "PUT · MC", value: put.price, color: "#38bdf8", y: 88 },
+        { label: "PUT · BS", value: put.black_scholes, color: "#64748b", y: 112 }
+      ];
+      const max = Math.max.apply(null, items.map(function(x) { return Math.max(x.value, 0); }).concat([1])) * 1.12;
+      const labelWidth = 78, valueWidth = 66, barSpace = Math.max(80, width - labelWidth - valueWidth - 18);
+      ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      items.forEach(function(item) {
+        ctx.fillStyle = "#94a3b8"; ctx.fillText(item.label, 2, item.y + 10);
+        ctx.fillStyle = "#1e293b"; ctx.fillRect(labelWidth, item.y, barSpace, 12);
+        ctx.fillStyle = item.color; ctx.fillRect(labelWidth, item.y, Math.max(1, Math.max(item.value, 0) / max * barSpace), 12);
+        ctx.fillStyle = "#e2e8f0"; ctx.textAlign = "right";
+        ctx.fillText("$" + formatPricingNumber(item.value, 3), width - 2, item.y + 10);
+        ctx.textAlign = "left";
+      });
+    }
+
+    function renderPricingResults(data) {
+      window.lastMonteCarloResult = data;
+      const call = data.call, put = data.put;
+      pricingElement("pricingCallPrice").textContent = "$" + formatPricingNumber(call.price, 5);
+      pricingElement("pricingCallBS").textContent = "$" + formatPricingNumber(call.black_scholes, 5);
+      pricingElement("pricingCallCI").textContent = "[$" + formatPricingNumber(call.confidence_low_95, 5) + ", $" + formatPricingNumber(call.confidence_high_95, 5) + "]";
+      pricingElement("pricingCallSE").textContent = "$" + formatPricingNumber(call.standard_error, 6);
+      pricingElement("pricingPutPrice").textContent = "$" + formatPricingNumber(put.price, 5);
+      pricingElement("pricingPutBS").textContent = "$" + formatPricingNumber(put.black_scholes, 5);
+      pricingElement("pricingPutCI").textContent = "[$" + formatPricingNumber(put.confidence_low_95, 5) + ", $" + formatPricingNumber(put.confidence_high_95, 5) + "]";
+      pricingElement("pricingPutSE").textContent = "$" + formatPricingNumber(put.standard_error, 6);
+      pricingElement("pricingMetricBackend").textContent = data.backend || "—";
+      pricingElement("pricingMetricTime").textContent = formatPricingNumber(data.elapsed_ms, 2) + " ms";
+      pricingElement("pricingMetricThroughput").textContent = formatPricingNumber(data.paths_per_second, 0) + " /s";
+      pricingElement("pricingMetricGpu").textContent = data.gpu_utilization == null ? "Not reported" : formatPricingNumber(data.gpu_utilization, 1) + "%";
+      pricingElement("pricingResultMeta").textContent =
+        formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed + " · service " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
+      drawPricingComparison(call, put);
+    }
+
+    async function runMonteCarloPricing() {
+      const button = pricingElement("pricingRunButton"), payload = readPricingInputs();
+      const validationError = validatePricingInputs(payload);
+      if (validationError) { pricingElement("pricingRunMessage").textContent = validationError; return; }
+      button.disabled = true; button.textContent = "SIMULATING...";
+      setPricingServiceState("running", "MONTE CARLO RUNNING", payload.backend.toUpperCase() + " requested · " + formatPricingNumber(payload.paths, 0) + " paths");
+      pricingElement("pricingRunMessage").textContent = "Submitting simulation to the pricing service...";
+      try {
+        const response = await fetch("/api/pricing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify(payload), cache: "no-store"
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || result.hint || result.error || "Pricing request failed");
+        renderPricingResults(result);
+        setPricingServiceState("online", "PRICING COMPLETE", "Executed on " + result.backend + " · " + formatPricingNumber(result.paths, 0) + " paths");
+        pricingElement("pricingRunMessage").textContent =
+          "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.";
+      } catch (error) {
+        setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
+        pricingElement("pricingRunMessage").textContent = error.message + " · Confirm the pricing container is running and Vercel environment variables are configured.";
+      } finally {
+        button.disabled = false; button.textContent = "RUN MONTE CARLO SIMULATION";
+      }
+    }
+
+    function setPricingPreset(name) {
+      const p = name === "stress"
+        ? { spot: 150.25, strike: 150.25, rate: 0.045, dividend: 0.005, vol: 0.65, maturity: 1.0, paths: 4000000 }
+        : { spot: 150.25, strike: 150.25, rate: 0.045, dividend: 0.005, vol: 0.28, maturity: 0.5, paths: 2000000 };
+      pricingElement("pricingSpot").value = p.spot; pricingElement("pricingStrike").value = p.strike;
+      pricingElement("pricingRate").value = p.rate; pricingElement("pricingDividend").value = p.dividend;
+      pricingElement("pricingVol").value = p.vol; pricingElement("pricingMaturity").value = p.maturity;
+      pricingElement("pricingPaths").value = p.paths; pricingElement("pricingSeed").value = PRICING_DEFAULTS.seed;
+    }
+
+    function useActiveSymbolSpot() {
+      const book = orderBooks[activeSymbol];
+      if (!book || !book.bids.length || !book.asks.length) return;
+      const bestBid = Math.max.apply(null, book.bids.map(function(x) { return x.price; }));
+      const bestAsk = Math.min.apply(null, book.asks.map(function(x) { return x.price; }));
+      const mid = (bestBid + bestAsk) / 2;
+      pricingElement("pricingSpot").value = mid.toFixed(4);
+      pricingElement("pricingStrike").value = mid.toFixed(4);
+      pricingElement("pricingRunMessage").textContent =
+        "Loaded the simulated " + activeSymbol + " order-book mid price. This is demo book data, not an external live market quote.";
+    }
+
+    function resetPricingInputs() {
+      pricingElement("pricingSpot").value = PRICING_DEFAULTS.spot;
+      pricingElement("pricingStrike").value = PRICING_DEFAULTS.strike;
+      pricingElement("pricingRate").value = PRICING_DEFAULTS.rate;
+      pricingElement("pricingDividend").value = PRICING_DEFAULTS.dividend;
+      pricingElement("pricingVol").value = PRICING_DEFAULTS.vol;
+      pricingElement("pricingMaturity").value = PRICING_DEFAULTS.maturity;
+      pricingElement("pricingPaths").value = PRICING_DEFAULTS.paths;
+      pricingElement("pricingSeed").value = PRICING_DEFAULTS.seed;
+      pricingElement("pricingBackend").value = PRICING_DEFAULTS.backend;
+    }
+
+    window.addEventListener("resize", function() {
+      if (window.lastMonteCarloResult) {
+        drawPricingComparison(window.lastMonteCarloResult.call, window.lastMonteCarloResult.put);
+      }
+    });
+    checkPricingService();
+
   </script>
 </body>
 </html>
