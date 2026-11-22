@@ -28,6 +28,9 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     assert.match(dashboardHtml, /wss:\/\/data-stream\.binance\.vision:443/);
     assert.match(dashboardHtml, /let activeSymbol = 'BTCUSDT'/);
     assert.match(dashboardHtml, /scheduleLiveAutoPricing\(\)/);
+    const inlineScript = dashboardHtml.match(/<script>([\\s\\S]*?)<\\/script>/);
+    assert.ok(inlineScript, "dashboard inline script should be present");
+    assert.doesNotThrow(() => new Function(inlineScript[1]), "dashboard inline JavaScript should parse");
 
     const alias = await fetch(baseUrl + "/terminal");
     assert.equal(alias.status, 200);
