@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m pip install --no-cache-dir cmake==3.30.5
 
-ARG CUDA_ARCHITECTURES=75;80;86;89;90
+ARG CUDA_ARCHITECTURES="75;80;86;89;90"
 
 WORKDIR /app
 COPY pricing_service/requirements.txt /app/requirements.txt
@@ -26,7 +26,7 @@ COPY pricing_service/CMakeLists.txt /app/pricing_service/CMakeLists.txt
 COPY pricing_service/native_bridge.cpp /app/pricing_service/native_bridge.cpp
 COPY pricing_service/native_bridge.hpp /app/pricing_service/native_bridge.hpp
 
-RUN cmake -S /app/pricing_service -B /app/build -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} \
+RUN cmake -S /app/pricing_service -B /app/build -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
     && cmake --build /app/build --target ultralob_pricer --parallel 2 \
     && cp /app/build/ultralob_pricer /app/ultralob_pricer
 

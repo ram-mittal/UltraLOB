@@ -64,6 +64,14 @@ docker build -f pricing_service/Dockerfile.cuda \
   -t ultralob-pricing:cuda .
 ```
 
+## Built-in Vercel CPU fallback
+
+The web dashboard can run CPU Monte Carlo simulations without a separately hosted pricing container. When `PRICING_SERVICE_URL` is not configured, or the upstream service is unreachable, `/api/pricing` runs a seeded JavaScript CPU implementation for `auto` and `cpu` requests. It uses risk-neutral GBM, antithetic pairs, Black–Scholes references, standard errors, and 95% confidence intervals.
+
+The fallback is capped at 10,000,000 paths by default to protect the serverless function. Set `PRICING_FALLBACK_MAX_PATHS` in Vercel to choose a different cap (maximum 50,000,000). The output is marked `execution_engine: "javascript-fallback"` and `execution_location: "vercel-serverless"`; it is not the native C++ engine.
+
+A `cuda` request is never silently changed to CPU. It returns a clear error until the CUDA container is deployed on an NVIDIA GPU host and connected with `PRICING_SERVICE_URL` and `PRICING_API_KEY`. CPU/GPU speed-up is only calculated when the CPU and CUDA timings come from the same native pricing service; a Vercel CPU fallback and an external GPU host are not a controlled benchmark.
+
 ## Connect Vercel to the pricing service
 
 After deploying the container to a host that exposes an HTTPS URL:
@@ -78,9 +86,13 @@ The Vercel proxy is same-origin, so browser requests do not need direct CORS acc
 
 ## Configuration
 
+Use [`.env.example`](.env.example) as a template for the pricing container environment. Replace the placeholder API key with a long random secret; do not commit real credentials.
+
+
 - `ULTRALOB_PRICER_LIBRARY`: path to `libultralob_quant.so` (default `/app/build/libultralob_quant.so`).
 - `PRICING_API_KEY`: optional bearer token required for pricing requests.
 - `ULTRALOB_CUDA_ENABLED`: informational flag returned by health checks; set by the supplied Dockerfiles.
+- `PRICING_FALLBACK_MAX_PATHS`: maximum path count for the Vercel serverless CPU fallback (default `10000000`, maximum `50000000`).
 - `nvidia-ml-py`: optional hardware telemetry interface; GPU utilization is null when NVML is unavailable.
 
 For GPU execution, the CUDA image must be deployed on an instance that has an NVIDIA GPU attached and exposes the driver libraries to the container. Building the CUDA image alone does not provide a GPU.

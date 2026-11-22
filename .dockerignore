@@ -1,0 +1,13 @@
+/.git
+/.github
+/build
+/build-cuda
+/.vs
+/.vscode
+__pycache__/
+*.pyc
+*.pyo
+*.log
+ultralob_events.journal
+*.store
+trace.json
