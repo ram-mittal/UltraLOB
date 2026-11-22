@@ -62,6 +62,30 @@ test("CPU fallback returns seeded prices and confidence intervals", async () => 
   assert.equal(first.payload.gpu_utilization, null);
 });
 
+test("AUTO falls back to CPU when native-service authentication fails", async () => {
+  const previousUrl = process.env.PRICING_SERVICE_URL;
+  const previousKey = process.env.PRICING_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.PRICING_SERVICE_URL = "https://pricing.test.invalid";
+  process.env.PRICING_API_KEY = "incorrect-test-token";
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ detail: "Invalid or missing pricing API token" }),
+    { status: 401, headers: { "Content-Type": "application/json" } }
+  );
+  try {
+    const response = await invoke("POST", baseRequest);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.execution_engine, "javascript-fallback");
+    assert.match(response.payload.fallback_reason, /HTTP 401/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousUrl === undefined) delete process.env.PRICING_SERVICE_URL;
+    else process.env.PRICING_SERVICE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.PRICING_API_KEY;
+    else process.env.PRICING_API_KEY = previousKey;
+  }
+});
+
 test("CUDA is never silently replaced with CPU", async () => {
   const response = await invoke("POST", { ...baseRequest, backend: "cuda" });
   assert.equal(response.statusCode, 503);
