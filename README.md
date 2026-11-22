@@ -312,6 +312,14 @@ cmake --build build-cuda --config Release
 ./build-cuda/ultralob_pricer --backend cuda --paths 10000000
 ```
 
+### Live market data and automatic Monte Carlo repricing
+
+The dashboard can connect to Twelve Data's real-time `/quotes/price` WebSocket feed for AAPL, MSFT, and GOOGL. The feed key stays in the server-side `TWELVE_DATA_API_KEY` Vercel environment variable; the browser connects to the same-origin `/api/market-data` WebSocket gateway.
+
+After connecting, incoming spot-price ticks update the active instrument and, when **Sync spot from live feed** is enabled, the Monte Carlo spot input. **Auto-reprice** reruns the current European call/put simulation using the latest spot on a throttled interval (5 seconds by default). Strike, volatility, rate, dividend yield, and maturity remain explicit user assumptions. The existing simulated Level-2 book and bid/ask depth are not replaced by the price-only feed.
+
+Set `TWELVE_DATA_API_KEY` in Vercel Project Settings → Environment Variables (Preview and Production as needed), then redeploy. `MARKET_DATA_MAX_CONNECTIONS` defaults to 1 to match Twelve Data's Basic trial connection allowance. The Basic plan is restricted to its permitted trial symbols; the provider may reject AAPL/MSFT/GOOGL unless the account has access to them. Full WebSocket symbol access is a paid-plan feature. Market ticks are not expected outside the instrument's trading session. Check the provider's data licence before public or commercial display.
+
 ### Web terminal and API architecture
 
 The hosted terminal sends pricing requests to the same-origin Vercel function at `/api/pricing`. That function proxies requests to the separately deployed FastAPI service:
