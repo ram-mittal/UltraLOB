@@ -345,7 +345,7 @@
       <div>
         <div class="flex flex-wrap items-center gap-2 mb-1">
           <span class="text-[10px] font-mono uppercase tracking-[0.22em] text-sky-400">Quantitative Analytics</span>
-          <span class="text-[10px] font-mono px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">CUDA-ACCELERATED</span>
+          <span id="pricingBackendBadge" class="text-[10px] font-mono px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">CPU FALLBACK · CUDA OPTIONAL</span>
         </div>
         <h2 class="text-lg font-bold text-slate-100">Monte Carlo Option Pricing</h2>
         <p class="text-xs text-slate-400 mt-1 max-w-3xl">European call and put valuation using risk-neutral geometric Brownian motion, antithetic variates, and an optional NVIDIA CUDA backend. This workload runs separately from the order-matching sequencer.</p>
@@ -947,22 +947,32 @@
     }
 
     async function checkPricingService() {
-      setPricingServiceState("checking", "CHECKING PRICING SERVICE", "Requesting service health...");
+      setPricingServiceState("checking", "CHECKING PRICING SERVICE", "Requesting pricing health...");
       try {
         const response = await fetch("/api/pricing", { method: "GET", cache: "no-store" });
         const payload = await response.json();
         if (!response.ok || payload.status !== "ok") {
-          throw new Error(payload.hint || payload.detail || payload.error || "Pricing service is not ready");
+          throw new Error(payload.hint || payload.detail || payload.error || "No pricing engine is available");
+        }
+        if (payload.fallback_enabled) {
+          const limit = formatPricingNumber(payload.fallback_max_paths, 0);
+          pricingElement("pricingBackendBadge").textContent = "CPU READY · CUDA OPTIONAL";
+          setPricingServiceState("online", "CPU FALLBACK READY", "Vercel serverless CPU · " + limit + " path limit · CUDA host not connected");
+          pricingElement("pricingRunMessage").textContent =
+            "The built-in CPU Monte Carlo engine is ready. Choose AUTO SELECT or CPU to calculate now. CUDA requires a separate NVIDIA GPU service.";
+          return;
         }
         const buildLabel = payload.cuda_build_enabled ? "CUDA build enabled" : "CPU build";
-        setPricingServiceState("online", "PRICING SERVICE READY", buildLabel + " · native pricing binary available");
+        pricingElement("pricingBackendBadge").textContent = payload.cuda_build_enabled ? "CUDA SERVICE AVAILABLE" : "REMOTE CPU SERVICE";
+        setPricingServiceState("online", "PRICING SERVICE READY", buildLabel + " · native pricing library available");
         pricingElement("pricingRunMessage").textContent = payload.cuda_build_enabled
           ? "CUDA is compiled into this service. A successful CUDA pricing request will verify device availability."
-          : "This service uses its CPU build. Deploy the CUDA container on an NVIDIA GPU host to enable GPU pricing.";
+          : "The native CPU pricing service is ready. Deploy its CUDA build on an NVIDIA GPU host to enable GPU pricing.";
       } catch (error) {
-        setPricingServiceState("offline", "PRICING SERVICE OFFLINE", error.message);
+        pricingElement("pricingBackendBadge").textContent = "CPU FALLBACK · CUDA OPTIONAL";
+        setPricingServiceState("offline", "PRICING API UNAVAILABLE", error.message);
         pricingElement("pricingRunMessage").textContent =
-          "Set PRICING_SERVICE_URL in Vercel and deploy pricing_service/Dockerfile.cuda on a GPU-enabled host. See pricing_service/README.md.";
+          "The CPU fallback could not be reached. Check the Vercel deployment and /api/pricing function logs.";
       }
     }
 
@@ -1034,12 +1044,14 @@
       pricingElement("pricingPutBS").textContent = "$" + formatPricingNumber(put.black_scholes, 5);
       pricingElement("pricingPutCI").textContent = "[$" + formatPricingNumber(put.confidence_low_95, 5) + ", $" + formatPricingNumber(put.confidence_high_95, 5) + "]";
       pricingElement("pricingPutSE").textContent = "$" + formatPricingNumber(put.standard_error, 6);
-      pricingElement("pricingMetricBackend").textContent = data.backend || "—";
+      pricingElement("pricingMetricBackend").textContent =
+        data.execution_engine === "javascript-fallback" ? "CPU · Vercel" : (data.backend || "—");
       pricingElement("pricingMetricTime").textContent = formatPricingNumber(data.elapsed_ms, 2) + " ms";
       pricingElement("pricingMetricThroughput").textContent = formatPricingNumber(data.paths_per_second, 0) + " /s";
       pricingElement("pricingMetricGpu").textContent = data.gpu_utilization == null ? "Not reported" : formatPricingNumber(data.gpu_utilization, 1) + "%";
+      const executionLabel = data.execution_engine === "javascript-fallback" ? "Vercel serverless CPU" : "native pricing service";
       pricingElement("pricingResultMeta").textContent =
-        formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed + " · service " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
+        formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed + " · " + executionLabel + " · " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
       drawPricingComparison(call, put);
     }
 
@@ -1059,9 +1071,15 @@
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || result.hint || result.error || "Pricing request failed");
         renderPricingResults(result);
-        setPricingServiceState("online", "PRICING COMPLETE", "Executed on " + result.backend + " · " + formatPricingNumber(result.paths, 0) + " paths");
-        pricingElement("pricingRunMessage").textContent =
-          "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.";
+        const usedFallback = result.execution_engine === "javascript-fallback";
+        setPricingServiceState(
+          "online",
+          usedFallback ? "CPU FALLBACK COMPLETE" : "PRICING COMPLETE",
+          (usedFallback ? "Vercel serverless CPU" : "Executed on " + result.backend) + " · " + formatPricingNumber(result.paths, 0) + " paths"
+        );
+        pricingElement("pricingRunMessage").textContent = usedFallback
+          ? "Pricing completed on the built-in Vercel CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
+          : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.";
       } catch (error) {
         setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
         pricingElement("pricingRunMessage").textContent = error.message + " · Confirm the pricing container is running and Vercel environment variables are configured.";
@@ -1103,19 +1121,22 @@
           const cudaResult = await runBackend("cuda");
           pricingElement("pricingCudaCompare").textContent =
             formatPricingNumber(cudaResult.elapsed_ms, 2) + " ms · " + formatPricingNumber(cudaResult.paths_per_second, 0) + " paths/s";
+          const comparable = cpuResult.execution_engine !== "javascript-fallback";
           const speedup = cpuResult.elapsed_ms / cudaResult.elapsed_ms;
-          pricingElement("pricingSpeedupCompare").textContent =
-            (Number.isFinite(speedup) ? speedup.toFixed(2) + "×" : "—") + (speedup >= 1 ? " faster" : " relative");
+          pricingElement("pricingSpeedupCompare").textContent = comparable
+            ? (Number.isFinite(speedup) ? speedup.toFixed(2) + "×" : "—") + (speedup >= 1 ? " faster" : " relative")
+            : "Not comparable";
           renderPricingResults(cudaResult);
           setPricingServiceState("online", "CPU / GPU COMPARISON COMPLETE", "Both backends completed " + formatPricingNumber(payload.paths, 0) + " paths");
-          pricingElement("pricingRunMessage").textContent =
-            "Comparison complete. Times are native pricing-call times from the same persistent service process; GPU utilization is reported only when NVML is available.";
+          pricingElement("pricingRunMessage").textContent = comparable
+            ? "Comparison complete. Both timings came from the same native pricing service process."
+            : "Both calculations completed, but the CPU used Vercel serverless while CUDA used a separate host. A speed-up ratio would not be a controlled comparison. GPU utilization is shown only when NVML is available.";
         } catch (gpuError) {
           pricingElement("pricingCudaCompare").textContent = "Unavailable · " + gpuError.message;
           pricingElement("pricingSpeedupCompare").textContent = "Not measured";
-          setPricingServiceState("online", "CPU COMPLETE · CUDA UNAVAILABLE", "Check that this service is built with CUDA and running on an NVIDIA GPU host");
+          setPricingServiceState("online", "CPU COMPLETE · CUDA UNAVAILABLE", "CPU results are ready; connect an NVIDIA GPU pricing service to enable CUDA");
           pricingElement("pricingRunMessage").textContent =
-            "CPU benchmark completed. CUDA comparison could not run: " + gpuError.message;
+            "CPU benchmark completed successfully. CUDA comparison could not run: " + gpuError.message;
         }
       } catch (error) {
         pricingElement("pricingCpuCompare").textContent = "Failed · " + error.message;
