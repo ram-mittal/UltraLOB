@@ -64,6 +64,14 @@ docker build -f pricing_service/Dockerfile.cuda \
   -t ultralob-pricing:cuda .
 ```
 
+## Built-in Vercel CPU fallback
+
+The web dashboard can run CPU Monte Carlo simulations without a separately hosted pricing container. When `PRICING_SERVICE_URL` is not configured, or the upstream service is unreachable, `/api/pricing` runs a seeded JavaScript CPU implementation for `auto` and `cpu` requests. It uses risk-neutral GBM, antithetic pairs, Black–Scholes references, standard errors, and 95% confidence intervals.
+
+The fallback is capped at 10,000,000 paths by default to protect the serverless function. Set `PRICING_FALLBACK_MAX_PATHS` in Vercel to choose a different cap (maximum 50,000,000). The output is marked `execution_engine: "javascript-fallback"` and `execution_location: "vercel-serverless"`; it is not the native C++ engine.
+
+A `cuda` request is never silently changed to CPU. It returns a clear error until the CUDA container is deployed on an NVIDIA GPU host and connected with `PRICING_SERVICE_URL` and `PRICING_API_KEY`. CPU/GPU speed-up is only calculated when the CPU and CUDA timings come from the same native pricing service; a Vercel CPU fallback and an external GPU host are not a controlled benchmark.
+
 ## Connect Vercel to the pricing service
 
 After deploying the container to a host that exposes an HTTPS URL:
