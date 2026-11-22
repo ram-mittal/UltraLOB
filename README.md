@@ -47,57 +47,113 @@ Experience the web terminal without installing anything:
 
 ## 🏗️ System Architecture
 
-UltraLOB follows the institutional design rule of high-frequency systems: **keep network I/O, persistence, and market data asynchronous at the system boundary while keeping the matching hot path single-threaded, lock-free, and allocation-free.**
+UltraLOB is composed of **two separate runtime systems**:
+
+1. The hosted **web application** on Render, which serves the dashboard, market-data interfaces and Monte Carlo pricing API.
+2. The standalone **C++ exchange engine**, which accepts FIX 4.4 and binary TCP clients, applies pre-trade risk checks, sequences orders, journals requests, matches orders and publishes execution/market-data events.
+
+They are separate deployables. The current Render web terminal does **not** submit its simulated FIX ticket orders to the standalone C++ matching engine.
+
+### Hosted web application and quantitative pricing
 
 ```mermaid
-flowchart TD
-    subgraph Clients["Inbound Client Layer"]
-        FIX_Client["Institutional FIX Client\n(Port 9876)"]
-        BIN_Client["Proprietary Binary Client\n(Port 8080)"]
-        WEB_Client["Web Trading Terminal\n(Render / HTTP + WebSocket)"]
+flowchart TB
+    subgraph Browser["Browser · UltraLOB web terminal"]
+        UI["Trading dashboard and pricing workbench"]
+        SIM["FIX order ticket and sample fills<br/>SIMULATED"]
     end
 
-    subgraph Gateways["Network & Ingestion Layer (Asynchronous Asio)"]
-        FG["FIX 4.4 Acceptor Gateway\n• FixFramer (64KB Buffer)\n• FixMessage (Zero-Copy Tag Index)\n• FixSession (State Machine)\n• FixStore (64MB MMAP Log)"]
-        BG["Binary Gateway\n• Compact POD Protocol\n• Asynchronous Socket Pipelines"]
+    subgraph Render["Render Free · one persistent Node.js service"]
+        APP["server.js<br/>Serves index.html and /healthz"]
+        PRICE["POST /api/pricing"]
+        MDGW["/api/market-data<br/>HTTP health + equity WebSocket gateway"]
+        CPUJS["Built-in JavaScript Monte Carlo CPU fallback<br/>Default AUTO / CPU path"]
     end
 
-    subgraph PTRM["Pre-Trade Risk Management (PTRM)"]
-        RE["Risk Engine\n• Buying Power Validation\n• Fat-Finger Caps (Qty & Notional)\n• Naked Short Prevention\n• Immediate FIX 35=8 Rejection"]
+    BINANCE["Binance Spot public streams<br/>BTCUSDT trade + bookTicker"]
+    TWELVE["Twelve Data WebSocket<br/>AAPL · MSFT · GOOGL"]
+    
+    subgraph OptionalPricing["Optional separately hosted native pricing service"]
+        FASTAPI["FastAPI pricing API"]
+        CPP["Native C++ shared pricing library"]
+        NATIVECPU["Native CPU backend"]
+        CUDA["Optional CUDA / CURAND backend<br/>NVIDIA GPU host"]
     end
 
-    subgraph Sequencer["Core Sequencing & Matching Pipeline"]
-        MPSC["Lock-Free MPSC Inbound Queue\n(Thread-Safe Multi-Producer Single-Consumer)"]
-        NODE["Exchange Node Sequencer\n(Pinned CPU Thread / Spin-Loop Core)"]
-        WAL["Memory-Mapped Journal (WAL)\n(ultralob_events.journal)"]
-        ENGINE["Matching Engine Core\n• Multi-Symbol Books (AAPL, MSFT, ...)\n• PriceLevel Doubly-Linked Lists\n• OrderPool (Zero-Alloc Array)"]
-    end
+    UI -->|"HTTPS · dashboard and pricing inputs"| APP
+    APP --> PRICE
+    APP --> MDGW
+    UI <-->|"WSS · live BTC trades and best bid/ask"| BINANCE
+    UI <-->|"WSS · equity subscription and ticks"| MDGW
+    MDGW <-->|"Private upstream WebSocket<br/>API key stays server-side"| TWELVE
 
-    subgraph Outbound["Outbound Distribution Layer"]
-        EXEC_Q["Lock-Free Outbound Queue\n(Execution Reports)"]
-        MD_PUB["Market Data Publisher\n(UDP Multicast ITCH 239.255.0.1:9001)"]
-    end
+    PRICE -->|"Default when no native service is configured"| CPUJS
+    PRICE -->|"Optional PRICING_SERVICE_URL"| FASTAPI
+    FASTAPI --> CPP
+    CPP --> NATIVECPU
+    CPP --> CUDA
+    CPUJS -->|"Call / put prices · CI · timing"| UI
+    NATIVECPU -->|"Call / put prices · CI · timing"| UI
+    CUDA -->|"Call / put prices · CI · timing"| UI
 
-    FIX_Client <-->|TCP / FIX 4.4| FG
-    BIN_Client <-->|TCP Binary| BG
-    WEB_Client -.->|HTTP / WebSocket| FG
-
-    FG --> RE
-    BG --> RE
-    RE -->|Approved Orders| MPSC
-    RE -.->|Risk Rejected| FG
-
-    MPSC --> NODE
-    NODE --> WAL
-    NODE --> ENGINE
-
-    ENGINE --> EXEC_Q
-    ENGINE --> MD_PUB
-
-    EXEC_Q --> FG
-    EXEC_Q --> BG
+    UI -.-> SIM
 ```
 
+**Web pricing flow:** the browser posts model inputs to the same-origin `/api/pricing` route. The built-in JavaScript CPU fallback is the default, so Monte Carlo pricing does not need a separate pricing server. When `PRICING_SERVICE_URL` is configured, the Node API can forward requests to the optional FastAPI service and its native C++ library. CUDA requires a separate NVIDIA GPU host; the Render Free instance does not provide one.
+
+**Market-data flow:** BTC/USDT connects directly from the browser to Binance's public WebSocket endpoints; the BTC stream does not pass through Render. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. Auto Monte Carlo waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
+
+### Standalone C++ exchange and matching engine
+
+```mermaid
+flowchart TB
+    FIXClient["Institutional FIX 4.4 client<br/>TCP · default port 9876"]
+    BinaryClient["Proprietary binary client<br/>TCP · default port 8080"]
+
+    subgraph Ingress["Asynchronous Asio network ingress"]
+        FIXGW["FIX 4.4 Acceptor Gateway<br/>Framing · zero-copy parsing · session state"]
+        BinaryGW["Binary TCP Gateway<br/>Compact wire protocol · session handling"]
+        FIXRisk["FIX session pre-trade risk checks"]
+        BinaryRisk["Binary session pre-trade risk checks"]
+    end
+
+    subgraph Core["ExchangeNode · dedicated sequencer thread"]
+        Inbound["Lock-free MPSC inbound queue"]
+        Sequencer["Single-consumer spin-loop sequencer"]
+        Journal["Memory-mapped write-ahead journal<br/>Append before order processing"]
+        Matching["MatchingEngine<br/>Price-time priority · OrderPool · PriceLevel"]
+        Outbound["Lock-free outbound execution-report queue"]
+    end
+
+    subgraph Distribution["Outbound distribution"]
+        FIXRouter["FIX execution-report router"]
+        BinaryRouter["Binary execution-report router"]
+        Publisher["MarketDataPublisher"]
+        ITCH["UDP multicast ITCH<br/>239.255.0.1:9001"]
+    end
+
+    FIXClient <-->|"FIX 4.4 messages"| FIXGW
+    BinaryClient <-->|"Binary TCP messages"| BinaryGW
+    FIXGW --> FIXRisk
+    BinaryGW --> BinaryRisk
+    FIXRisk -->|"Approved order / cancel / replace"| Inbound
+    BinaryRisk -->|"Approved order / cancel"| Inbound
+
+    Inbound --> Sequencer
+    Sequencer --> Journal
+    Sequencer --> Matching
+    Matching -->|"Execution reports"| Outbound
+    Outbound --> FIXRouter
+    Outbound --> BinaryRouter
+    FIXRouter --> FIXGW
+    BinaryRouter --> BinaryGW
+    Matching -.->|"ExecutionReport callback"| Publisher
+    Publisher --> ITCH
+```
+
+**Matching-engine flow:** the FIX and binary gateways validate inbound requests before submitting them to the lock-free MPSC queue. The dedicated ExchangeNode thread journals each request before applying it to the matching engine. Execution reports are placed on the outbound queue and routed back through the gateway sessions. The ExchangeNode execution-report callback also feeds the UDP multicast ITCH publisher.
+
+The hosted web terminal is not currently wired to this native exchange path. Its order ticket, order submissions, working-order display and sample fills are a UI simulation; only its market-data and Monte Carlo pricing paths are live integrations.
 ---
 
 ## ⚡ Core Engineering Highlights
