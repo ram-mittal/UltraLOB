@@ -78,6 +78,32 @@ except OSError as exc:
 # One pricing job at a time prevents concurrent requests from overcommitting
 # GPU memory and makes benchmark timings easier to interpret.
 PRICING_LOCK = Lock()
+WARMUP_BACKEND = None
+WARMUP_ERROR = None
+
+
+@app.on_event("startup")
+def warm_native_backend():
+    global WARMUP_BACKEND, WARMUP_ERROR
+    if NATIVE_LIBRARY is None:
+        return
+    request = NativeRequest(100.0, 100.0, 0.05, 0.0, 0.20, 1.0, 4, 1, 0)
+    result = NativeResult()
+    error_buffer = ctypes.create_string_buffer(512)
+    try:
+        with PRICING_LOCK:
+            status = NATIVE_LIBRARY.ultralob_monte_carlo_price(
+                ctypes.byref(request),
+                ctypes.byref(result),
+                error_buffer,
+                ctypes.sizeof(error_buffer),
+            )
+        if status == 0:
+            WARMUP_BACKEND = "CUDA" if result.backend == 2 else "CPU"
+        else:
+            WARMUP_ERROR = error_buffer.value.decode("utf-8", errors="replace")
+    except Exception as exc:
+        WARMUP_ERROR = str(exc)
 
 
 class PricingRequest(BaseModel):
@@ -137,6 +163,8 @@ def health():
         "version": APP_VERSION,
         "native_library_available": ready,
         "cuda_build_enabled": CUDA_BUILD_ENABLED,
+        "warmup_backend": WARMUP_BACKEND,
+        "warmup_error": WARMUP_ERROR,
         "load_error": NATIVE_LOAD_ERROR,
     }
 
