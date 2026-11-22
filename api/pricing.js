@@ -1,4 +1,7 @@
-const MAX_FALLBACK_PATHS = Number.parseInt(process.env.PRICING_FALLBACK_MAX_PATHS || "10000000", 10);
+const configuredFallbackPaths = Number.parseInt(process.env.PRICING_FALLBACK_MAX_PATHS || "10000000", 10);
+const MAX_FALLBACK_PATHS = Number.isSafeInteger(configuredFallbackPaths) && configuredFallbackPaths >= 4
+  ? Math.min(configuredFallbackPaths, 50000000)
+  : 10000000;
 const NORMAL_95 = 1.959963984540054;
 const SQRT_TWO_PI = Math.sqrt(2 * Math.PI);
 
@@ -9,6 +12,9 @@ function parseRequestBody(body) {
 }
 
 function validateRequest(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { error: "Request body must be a JSON object." };
+  }
   const fields = [
     ["spot", 100.0, 0, 1000000000, false],
     ["strike", 100.0, 0, 1000000000, false],
@@ -147,6 +153,11 @@ function runFallbackPricing(input) {
     putSum += putPayoff;
     putSquareSum += putPayoff * putPayoff;
   }
+  if (![callSum, callSquareSum, putSum, putSquareSum].every(Number.isFinite)) {
+    const error = new Error("Simulation produced non-finite values. Reduce volatility or maturity and try again.");
+    error.statusCode = 422;
+    throw error;
+  }
   const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
   const analytic = blackScholes(input);
   const elapsedSeconds = Math.max(elapsedMs / 1000, 1e-9);
@@ -261,18 +272,22 @@ export default async function handler(req, res) {
     let payload;
     try { payload = raw ? JSON.parse(raw) : {}; }
     catch { payload = { error: "Pricing service returned a non-JSON response" }; }
-    if (upstream.ok) return res.status(upstream.status).json(payload);
+    const validPricingPayload = payload && typeof payload === "object" && payload.call && payload.put;
+    if (upstream.ok && validPricingPayload) return res.status(upstream.status).json(payload);
 
-    if (upstream.status >= 500 && input.backend !== "cuda") {
+    if ((upstream.status >= 500 || upstream.ok) && input.backend !== "cuda") {
       try {
+        const reason = upstream.ok
+          ? "External pricing service returned an invalid pricing payload."
+          : "External pricing service returned HTTP " + upstream.status + ".";
         const fallback = runFallbackPricing(input);
-        fallback.fallback_reason = "External pricing service returned HTTP " + upstream.status + "; executed on Vercel CPU fallback.";
+        fallback.fallback_reason = reason + " Executed on Vercel CPU fallback.";
         return res.status(200).json(fallback);
       } catch (error) {
-        return res.status(error.statusCode || 502).json({ error: error.message || payload.error || "Pricing service failed" });
+        return res.status(error.statusCode || 502).json({ error: error.message || payload?.error || "Pricing service failed" });
       }
     }
-    return res.status(upstream.status).json(payload);
+    return res.status(upstream.ok ? 502 : upstream.status).json(payload);
   } catch (error) {
     if (input.backend !== "cuda") {
       try {
