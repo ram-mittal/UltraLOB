@@ -42,3 +42,8 @@ add_executable(ultralob_pricer
     ${CMAKE_CURRENT_LIST_DIR}/../server/monte_carlo_demo.cpp
 )
 target_link_libraries(ultralob_pricer PRIVATE ultralob_quant)
+
+enable_testing()
+add_executable(pricing_bridge_smoke_test ${CMAKE_CURRENT_LIST_DIR}/smoke_test.cpp)
+target_link_libraries(pricing_bridge_smoke_test PRIVATE ultralob_quant)
+add_test(NAME pricing_bridge_smoke_test COMMAND pricing_bridge_smoke_test)
