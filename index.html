@@ -549,11 +549,18 @@
     // Live market data state. The browser never receives the Twelve Data API key.
     const LIVE_MARKET_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "BTCUSDT"];
     const liveMarketQuotes = Object.create(null);
+    // BTC uses a browser-direct public Binance stream; equities use the
+    // same-origin Twelve Data gateway so its API key stays server-side.
+    let liveBtcSocket = null;
+    let liveBtcReconnectTimer = null;
+    let liveBtcReconnectAttempt = 0;
+    let liveBtcEndpointIndex = 0;
     let liveMarketSocket = null;
     let liveMarketReconnectTimer = null;
     let liveMarketHeartbeatTimer = null;
     let liveMarketReconnectAttempt = 0;
     let liveMarketIntentionalClose = false;
+    let twelveDataConfigured = false;
     let liveAutoPricingTimer = null;
     let liveLastAutoPricingAt = 0;
     let liveAutoPricingInFlight = false;
@@ -1068,149 +1075,291 @@
       }
     }
 
+    function socketIsActive(socket) {
+      return Boolean(socket && (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      ));
+    }
+
     function toggleLiveMarketData() {
-      if (liveMarketSocket && (
-        liveMarketSocket.readyState === WebSocket.OPEN ||
-        liveMarketSocket.readyState === WebSocket.CONNECTING
-      )) {
+      if (socketIsActive(liveBtcSocket) || socketIsActive(liveMarketSocket)) {
         stopLiveMarketData();
       } else {
         connectLiveMarketData();
       }
     }
 
+    // Binance public market data is opened directly by the browser. This
+    // removes Render's outbound-WebSocket route from the BTC data path.
+    function connectBinanceBrowser() {
+      if (socketIsActive(liveBtcSocket) || liveMarketIntentionalClose) return;
+
+      const hosts = [
+        "wss://stream.binance.com:443",
+        "wss://data-stream.binance.vision:443",
+        "wss://stream.binance.com:9443"
+      ];
+      const host = hosts[liveBtcEndpointIndex % hosts.length];
+      const streams = "btcusdt@trade/btcusdt@bookTicker";
+      const url = host + "/stream?streams=" + streams;
+      setLiveMarketState("connecting", "Connecting directly to Binance Spot · " + new URL(host).host);
+
+      let socket;
+      try {
+        socket = new WebSocket(url);
+      } catch (error) {
+        scheduleBinanceReconnect("Could not create Binance WebSocket: " + error.message, hosts);
+        return;
+      }
+      liveBtcSocket = socket;
+
+      socket.onopen = function() {
+        liveBtcReconnectAttempt = 0;
+        setLiveMarketState(
+          "waiting",
+          "Browser connected directly to Binance Spot · waiting for BTCUSDT trade and best-bid/ask ticks"
+        );
+      };
+
+      socket.onmessage = function(event) {
+        let envelope;
+        try { envelope = JSON.parse(event.data); }
+        catch { return; }
+        const message = envelope && envelope.data && typeof envelope.data === "object"
+          ? envelope.data
+          : envelope;
+        if (!message || message.s !== "BTCUSDT") return;
+
+        if (message.e === "trade") {
+          handleLiveMarketTick({
+            event: "price",
+            provider: "Binance Spot",
+            symbol: "BTCUSDT",
+            price: Number(message.p),
+            currency: "USDT",
+            exchange: "BINANCE",
+            timestamp: Number(message.T || message.E) || Date.now(),
+            trade_id: Number(message.t),
+            trade_quantity: Number(message.q),
+            buyer_is_maker: Boolean(message.m)
+          });
+        } else if (message.e === "bookTicker") {
+          handleLiveMarketBookTick({
+            event: "book",
+            provider: "Binance Spot",
+            symbol: "BTCUSDT",
+            bid: Number(message.b),
+            bid_quantity: Number(message.B),
+            ask: Number(message.a),
+            ask_quantity: Number(message.A),
+            timestamp: Date.now(),
+            update_id: Number(message.u)
+          });
+        }
+      };
+
+      socket.onerror = function() {
+        // Browsers intentionally hide the underlying network error. The close
+        // event below includes the status code and selected fallback host.
+        setLiveMarketState("reconnecting", "Binance connection error on " + new URL(host).host + " · checking fallback endpoint...");
+      };
+
+      socket.onclose = function(event) {
+        if (liveBtcSocket === socket) liveBtcSocket = null;
+        if (liveMarketIntentionalClose) return;
+        const reason = event.reason ? " · " + event.reason : "";
+        scheduleBinanceReconnect(
+          "Binance stream closed (code " + event.code + ")" + reason,
+          hosts
+        );
+      };
+    }
+
+    function scheduleBinanceReconnect(reason, hosts) {
+      if (liveMarketIntentionalClose) return;
+      liveBtcEndpointIndex = (liveBtcEndpointIndex + 1) % hosts.length;
+      const nextHost = new URL(hosts[liveBtcEndpointIndex]).host;
+      const delay = Math.min(30000, 2000 * Math.pow(2, liveBtcReconnectAttempt));
+      liveBtcReconnectAttempt += 1;
+      setLiveMarketState(
+        "reconnecting",
+        reason + " · switching to " + nextHost + " in " + Math.round(delay / 1000) + "s"
+      );
+      clearTimeout(liveBtcReconnectTimer);
+      liveBtcReconnectTimer = setTimeout(connectBinanceBrowser, delay);
+    }
+
+    function connectTwelveDataGateway() {
+      if (!twelveDataConfigured || socketIsActive(liveMarketSocket) || liveMarketIntentionalClose) return;
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const url = protocol + "//" + window.location.host +
+        "/api/market-data?symbols=" + encodeURIComponent("AAPL,MSFT,GOOGL");
+      let socket;
+      try {
+        socket = new WebSocket(url);
+      } catch (error) {
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "error",
+          "Binance BTC feed is independent · could not create Twelve Data gateway: " + error.message
+        );
+        return;
+      }
+      liveMarketSocket = socket;
+
+      socket.onopen = function() {
+        liveMarketReconnectAttempt = 0;
+        clearInterval(liveMarketHeartbeatTimer);
+        liveMarketHeartbeatTimer = setInterval(function() {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ event: "ping", timestamp: Date.now() }));
+          }
+        }, 60000);
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+          "Twelve Data gateway connected · awaiting AAPL, MSFT or GOOGL subscription confirmation"
+        );
+      };
+
+      socket.onmessage = function(event) {
+        let message;
+        try { message = JSON.parse(event.data); }
+        catch { return; }
+
+        if (message.event === "gateway") {
+          if (message.status === "connected") {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+              "Twelve Data gateway connected · " + (message.message || "Waiting for equity ticks")
+            );
+          } else if (message.status === "disconnected") {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "reconnecting",
+              "Twelve Data gateway disconnected · " + (message.message || "reconnecting")
+            );
+          }
+          return;
+        }
+
+        if (message.event === "subscription") {
+          const successes = Array.isArray(message.success) ? message.success : [];
+          const failures = Array.isArray(message.fails) ? message.fails : [];
+          if (failures.length) {
+            const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+              "BTC feed runs directly from Binance · Twelve Data rejected " + failedSymbols + ". Check plan entitlements."
+            );
+          } else {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+              "Twelve Data subscribed to " + (successes.length || 3) + " equity symbol(s)"
+            );
+          }
+          return;
+        }
+
+        if (message.event === "price") {
+          handleLiveMarketTick(message);
+          return;
+        }
+
+        if (message.event === "notice") {
+          setLiveMarketState(
+            socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+            message.message || "Twelve Data is not configured; BTC remains available directly from Binance."
+          );
+          return;
+        }
+
+        if (message.event === "provider-status") {
+          if (message.status === "disconnected") {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "reconnecting",
+              "Twelve Data equity provider disconnected · " + (message.message || "")
+            );
+          }
+          return;
+        }
+
+        if (message.event === "error") {
+          setLiveMarketState(
+            socketIsActive(liveBtcSocket) ? "connected" : "error",
+            "Twelve Data error: " + (message.message || message.code || "provider error")
+          );
+        }
+      };
+
+      socket.onerror = function() {
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "error",
+          "Twelve Data gateway WebSocket error · check Render logs and TWELVE_DATA_API_KEY"
+        );
+      };
+
+      socket.onclose = function(event) {
+        clearInterval(liveMarketHeartbeatTimer);
+        liveMarketHeartbeatTimer = null;
+        if (liveMarketSocket === socket) liveMarketSocket = null;
+        if (liveMarketIntentionalClose) return;
+        const delay = Math.min(30000, 2000 * Math.pow(2, liveMarketReconnectAttempt));
+        liveMarketReconnectAttempt += 1;
+        const reason = event.reason ? " · " + event.reason : "";
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "reconnecting",
+          "Twelve Data gateway closed (code " + event.code + ")" + reason +
+            " · retrying in " + Math.round(delay / 1000) + "s"
+        );
+        clearTimeout(liveMarketReconnectTimer);
+        liveMarketReconnectTimer = setTimeout(connectTwelveDataGateway, delay);
+      };
+    }
+
     async function connectLiveMarketData() {
-      if (liveMarketSocket && liveMarketSocket.readyState <= WebSocket.OPEN) return;
+      if (liveMarketIntentionalClose) liveMarketIntentionalClose = false;
+      clearTimeout(liveBtcReconnectTimer);
       clearTimeout(liveMarketReconnectTimer);
-      liveMarketIntentionalClose = false;
-      setLiveMarketState("connecting", "Opening Binance Spot for BTCUSDT. Twelve Data equities connect separately when their key and symbol entitlements are configured...");
+
+      if (!socketIsActive(liveBtcSocket)) connectBinanceBrowser();
+
       try {
         const healthResponse = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
         const health = await healthResponse.json();
         if (!healthResponse.ok) throw new Error(health.error || "Market-data gateway unavailable");
-        if (!health.configured || !health.providers?.crypto?.configured) {
-          setLiveMarketState("error", "The Binance Spot BTC market feed is not available from the market-data gateway.");
-          return;
+
+        twelveDataConfigured = Boolean(health.providers?.equities?.configured);
+        if (twelveDataConfigured) {
+          connectTwelveDataGateway();
+        } else {
+          setLiveMarketState(
+            socketIsActive(liveBtcSocket) ? "waiting" : "connecting",
+            "BTC connects directly to Binance · Twelve Data is not configured on Render (add TWELVE_DATA_API_KEY for equities)"
+          );
         }
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const url = protocol + "//" + window.location.host + "/api/market-data?symbols=" +
-          encodeURIComponent(LIVE_MARKET_SYMBOLS.join(","));
-        const socket = new WebSocket(url);
-        liveMarketSocket = socket;
-
-        socket.onopen = function() {
-          liveMarketReconnectAttempt = 0;
-          clearInterval(liveMarketHeartbeatTimer);
-          liveMarketHeartbeatTimer = setInterval(function() {
-            if (socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({ event: "ping", timestamp: Date.now() }));
-            }
-          }, 60000);
-          setLiveMarketState("connecting", "Browser connected to the secure UltraLOB gateway; authorizing the provider stream...");
-        };
-
-        socket.onmessage = function(event) {
-          let message;
-          try { message = JSON.parse(event.data); }
-          catch { return; }
-
-          if (message.event === "gateway") {
-            if (message.status === "connected") {
-              setLiveMarketState("waiting", (message.provider || "Market provider") + " · " +
-                (message.message || "Waiting for first market tick."));
-            } else if (message.status === "disconnected") {
-              setLiveMarketState("reconnecting", message.message || "Provider connection closed.");
-            }
-            return;
-          }
-
-          if (message.event === "subscription") {
-            const successes = Array.isArray(message.success) ? message.success : [];
-            const failures = Array.isArray(message.fails) ? message.fails : [];
-            if (failures.length) {
-              const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
-              setLiveMarketState(
-                "connected",
-                "Binance Spot remains active for BTCUSDT · Twelve Data rejected " + failedSymbols + ". Check equity symbol entitlements."
-              );
-            } else {
-              setLiveMarketState("waiting", "Subscribed to " + (successes.length || LIVE_MARKET_SYMBOLS.length) + " symbol(s). Waiting for the next market tick.");
-            }
-            return;
-          }
-
-          if (message.event === "price") {
-            handleLiveMarketTick(message);
-            return;
-          }
-
-          if (message.event === "book") {
-            handleLiveMarketBookTick(message);
-            return;
-          }
-
-          if (message.event === "notice") {
-            setLiveMarketState("connected", message.message || "Crypto feed is available; equity provider is not configured.");
-            return;
-          }
-
-          if (message.event === "provider-status") {
-            if (message.status === "disconnected" && message.provider === "Twelve Data") {
-              setLiveMarketState("connected", "Binance Spot remains active · Twelve Data equity feed disconnected.");
-            }
-            return;
-          }
-
-          if (message.event === "error") {
-            setLiveMarketState("error", message.message || "A market-data provider returned an error.");
-            if (["CRYPTO_UPSTREAM_ERROR", "INVALID_SYMBOLS", "ORIGIN_NOT_ALLOWED", "CONNECTION_LIMIT"].includes(message.code)) {
-              liveMarketIntentionalClose = false;
-              try { socket.close(); } catch {}
-            }
-          }
-        };
-
-        socket.onerror = function() {
-          setLiveMarketState("error", "Could not establish the live WebSocket. Check deployment status and provider access.");
-        };
-
-        socket.onclose = function() {
-          clearInterval(liveMarketHeartbeatTimer);
-          liveMarketHeartbeatTimer = null;
-          if (liveMarketSocket === socket) liveMarketSocket = null;
-          if (liveMarketIntentionalClose) {
-            const currentStatus = pricingElement("liveMarketStatus").textContent || "";
-            if (!currentStatus.includes("ERROR") && !currentStatus.includes("API KEY REQUIRED")) {
-              setLiveMarketState("disconnected", "Live feed stopped. Your last received quotes remain visible but may be stale.");
-            }
-            return;
-          }
-          const delay = Math.min(30000, 1000 * Math.pow(2, liveMarketReconnectAttempt));
-          liveMarketReconnectAttempt += 1;
-          setLiveMarketState("reconnecting", "Connection closed. Retrying in " + Math.round(delay / 1000) + "s.");
-          clearTimeout(liveMarketReconnectTimer);
-          liveMarketReconnectTimer = setTimeout(connectLiveMarketData, delay);
-        };
       } catch (error) {
-        setLiveMarketState("error", error.message);
-        // Render Free can briefly return a wake-up page on cold start. Retry
-        // health/connection failures with the same bounded exponential backoff.
-        if (!liveMarketIntentionalClose) {
-          const delay = Math.min(30000, 1000 * Math.pow(2, liveMarketReconnectAttempt));
-          liveMarketReconnectAttempt += 1;
-          clearTimeout(liveMarketReconnectTimer);
-          liveMarketReconnectTimer = setTimeout(connectLiveMarketData, delay);
-        }
+        // The public BTC connection does not depend on Render's health route.
+        // Keep it running even if Render is waking or its equity gateway fails.
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "error",
+          "BTC uses a direct Binance connection · Render equity gateway check failed: " + error.message
+        );
       }
     }
 
     function stopLiveMarketData() {
       liveMarketIntentionalClose = true;
+      clearTimeout(liveBtcReconnectTimer);
       clearTimeout(liveMarketReconnectTimer);
       clearInterval(liveMarketHeartbeatTimer);
       liveMarketHeartbeatTimer = null;
       clearTimeout(liveAutoPricingTimer);
       liveAutoPricingPending = false;
+      if (liveBtcSocket) {
+        const socket = liveBtcSocket;
+        liveBtcSocket = null;
+        try { socket.close(1000, "User disconnected"); } catch {}
+      }
       if (liveMarketSocket) {
         const socket = liveMarketSocket;
         liveMarketSocket = null;
