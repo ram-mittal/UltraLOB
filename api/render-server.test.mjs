@@ -76,7 +76,9 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     }
     assert.ok(messages.some((item) => item.event === "gateway" && item.status === "connecting"));
     assert.ok(messages.some((item) => item.event === "heartbeat"));
-    await new Promise((resolve) => socket.close(1000, "test complete").once("close", resolve));
+    const socketClosed = once(socket, "close");
+    socket.close(1000, "test complete");
+    await socketClosed;
 
     const notFound = await fetch(baseUrl + "/unknown-route");
     assert.equal(notFound.status, 404);
