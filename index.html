@@ -165,7 +165,7 @@
               <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
               Order Entry Ticket
             </span>
-            <span class="text-[10px] font-mono text-slate-500">Tag 35=D (NOS)</span>
+            <span class="text-[10px] font-mono text-amber-400">SIMULATED · NO BROKER ROUTING</span>
           </div>
 
           <!-- Side Toggle (Buy / Sell) -->
@@ -557,6 +557,7 @@
     let liveLastAutoPricingAt = 0;
     let liveAutoPricingInFlight = false;
     let liveAutoPricingPending = false;
+    let btcModelDefaultsApplied = false;
 
     // Order books per symbol
     const orderBooks = {
@@ -615,6 +616,10 @@
         sym === 'BTCUSDT' ? 'Live BTC Top of Book · Depth Not Loaded' : 'Simulated Level 2 Order Book';
 
       const liveQuote = liveMarketQuotes[sym];
+      if (sym === 'BTCUSDT' && !btcModelDefaultsApplied) {
+        pricingElement('pricingVol').value = '0.55';
+        pricingElement('pricingDividend').value = '0';
+      }
       if (liveQuote && Number.isFinite(Number(liveQuote.price))) {
         document.getElementById('symLastPrice').textContent = '$' + Number(liveQuote.price).toFixed(2);
         document.getElementById('symLastPriceSource').textContent = 'LIVE · ' + (liveQuote.provider || 'MARKET DATA').toUpperCase();
@@ -1546,6 +1551,10 @@
         buyer_is_maker: tick.buyer_is_maker ?? previous.buyer_is_maker ?? null
       };
       liveMarketQuotes[symbol] = quote;
+      if (symbol === "BTCUSDT" && !btcModelDefaultsApplied) {
+        pricingElement("pricingStrike").value = price.toFixed(2);
+        btcModelDefaultsApplied = true;
+      }
 
       if (symbol === activeSymbol) {
         pricingElement("symLastPrice").textContent = "$" + price.toFixed(2);
@@ -1909,11 +1918,15 @@
 
     function useActiveSymbolSpot() {
       const liveQuote = liveMarketQuotes[activeSymbol];
-      if (liveQuote) {
+      if (liveQuote && Number.isFinite(Number(liveQuote.price)) && Number(liveQuote.price) > 0) {
         pricingElement("pricingSpot").value = Number(liveQuote.price).toFixed(4);
         pricingElement("pricingRunMessage").textContent =
           "Loaded the latest " + activeSymbol + " spot from " + (liveQuote.provider || "the live feed") +
           " at " + new Date(liveQuote.timestamp).toLocaleTimeString() + ".";
+        return;
+      }
+      if (activeSymbol === "BTCUSDT") {
+        pricingElement("pricingRunMessage").textContent = "Waiting for the first Binance BTCUSDT trade tick. No simulated BTC spot is substituted.";
         return;
       }
       const book = orderBooks[activeSymbol];
