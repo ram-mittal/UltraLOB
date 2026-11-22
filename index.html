@@ -1007,7 +1007,7 @@
       const button = pricingElement("liveMarketConnectButton");
       button.textContent = (state === "connected" || state === "waiting" || state === "connecting" || state === "reconnecting")
         ? "DISCONNECT FEED" : "CONNECT LIVE FEED";
-      button.disabled = state === "connecting" || state === "reconnecting";
+      button.disabled = state === "connecting";
     }
 
     async function checkLiveMarketDataConfig() {
@@ -1409,12 +1409,10 @@
       } finally {
         button.disabled = false;
         button.textContent = "RUN MONTE CARLO SIMULATION";
-        if (automatic) {
-          liveAutoPricingInFlight = false;
-          if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
-            liveAutoPricingPending = false;
-            scheduleLiveAutoPricing();
-          }
+        if (automatic) liveAutoPricingInFlight = false;
+        if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+          liveAutoPricingPending = false;
+          scheduleLiveAutoPricing();
         }
       }
     }
