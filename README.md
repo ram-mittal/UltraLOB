@@ -3,7 +3,7 @@
 ### Institutional Low-Latency Limit Order Book & FIX 4.4 Matching Engine
 
 [![C++20](https://img.shields.io/badge/Language-C%2B%2B20-00599C?logo=cplusplus)](https://en.cppreference.com/w/cpp/20)
-[![Build & Tests](https://img.shields.io/badge/Tests-16%2F16%20Passing%20(100%25)-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-17%20suites-blue)](tests/)
 [![Latency](https://img.shields.io/badge/p50%20Latency-%3C100%20ns-blueviolet)](#benchmarks--performance)
 [![Throughput](https://img.shields.io/badge/Throughput-~3.0M%20ops%2Fsec-orange)](#benchmarks--performance)
 [![Live Demo](https://img.shields.io/badge/Web%20Terminal-Live%20on%20Vercel-success?logo=vercel)](https://ultralob.vercel.app)
@@ -198,7 +198,7 @@ UltraLOB/
 │   ├── main.cpp               # Production unified UltraLOB exchange server
 │   ├── monte_carlo_demo.cpp   # Standalone option pricer CLI
 │   └── fix_client_demo.cpp    # Standalone FIX 4.4 trading client demo
-├── tests/                     # 16 Google Test suites (100% pass rate)
+├── tests/                     # 17 Google Test suites
 ├── bench/                     # Google Benchmark performance microbenchmarks
 ├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
 ├── api/pricing.js             # Same-origin Vercel API proxy
@@ -238,7 +238,7 @@ cmake --build build --config Release
 ```bash
 ctest --test-dir build --output-on-failure
 ```
-All **16/16 test suites** will execute and validate matching, session state, persistence, risk checks, and TCP gateway communication.
+CTest runs the repository's 17 test executables, covering matching, session state, persistence, risk checks, FIX connectivity, and Monte Carlo pricing.
 
 ### 3. Launch the Production UltraLOB Server
 
