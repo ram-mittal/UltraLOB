@@ -352,7 +352,7 @@ The service API is documented at `http://localhost:8000/docs`; health is availab
 
 ### Connect the Vercel frontend
 
-Configure these environment variables in the Vercel project:
+Copy [`.env.vercel.example`](.env.vercel.example) as a reference when configuring Vercel. Configure these environment variables in the Vercel project:
 
 | Variable | Value |
 |---|---|
