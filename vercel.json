@@ -7,6 +7,9 @@
     },
     "api/market-data.js": {
       "maxDuration": 300
+    },
+    "api/market-history.js": {
+      "maxDuration": 20
     }
   },
   "rewrites": [

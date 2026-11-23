@@ -20,6 +20,12 @@ The Render service is configured on the Free instance plan. It sleeps after a pe
 
 The landing view selects BTC by default, starts the live gateway automatically, and starts Auto Monte Carlo after the first BTC trade tick. The Auto Monte Carlo checkbox is enabled by default and can be paused by unchecking it.
 
+## Market Monte Carlo scenario lab
+
+The dashboard's separate Market Monte Carlo panel retrieves recent historical candles, calibrates close-to-close log returns, and resamples contiguous return blocks in the browser. BTCUSDT candles are public Binance Spot market data. AAPL, MSFT and GOOGL candles use the Twelve Data `time_series` API through the server; equity history requires `TWELVE_DATA_API_KEY` and consumes the plan's API credits. The endpoint caches BTC history for 15 seconds and equity history for 60 seconds per symbol/interval/lookback request.
+
+The scenario chart displays a sample of simulated paths, the median path and empirical 5–95% / 25–75% percentile fans. It reports terminal price percentiles and close-only first-touch estimates for configured stop and target levels. This is conditional scenario analysis, not a forecast, trading signal, or execution system. It omits intrabar sequence, spread, fees, slippage, liquidity, funding and regime changes.
+
 ## Pricing and compute
 
 The built-in JavaScript Monte Carlo CPU fallback runs on the Render service. The default fallback cap is 10 million paths and can be changed with `PRICING_FALLBACK_MAX_PATHS`.
@@ -32,4 +38,5 @@ The FIX order ticket remains a simulation and is not connected to a broker or ex
 
 - `/healthz` — Render process health
 - `/api/market-data` — available symbols and provider configuration
+- `/api/market-history?symbol=BTCUSDT&interval=5m&limit=250` — historical candles for scenario calibration
 - `/api/pricing` — pricing backend health

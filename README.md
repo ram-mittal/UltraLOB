@@ -67,11 +67,14 @@ flowchart TB
         APP["server.js<br/>Serves index.html and /healthz"]
         PRICE["POST /api/pricing"]
         MDGW["/api/market-data<br/>HTTP health + equity WebSocket gateway"]
+        HISTORY["/api/market-history<br/>Cached historical candle API"]
         CPUJS["Built-in JavaScript Monte Carlo CPU fallback<br/>Default AUTO / CPU path"]
     end
 
     BINANCE["Binance Spot public streams<br/>BTCUSDT trade + bookTicker"]
+    BINANCE_REST["Binance Spot public klines REST"]
     TWELVE["Twelve Data WebSocket<br/>AAPL · MSFT · GOOGL"]
+    TWELVE_REST["Twelve Data time_series REST<br/>AAPL · MSFT · GOOGL"]
     
     subgraph OptionalPricing["Optional separately hosted native pricing service"]
         FASTAPI["FastAPI pricing API"]
@@ -83,9 +86,13 @@ flowchart TB
     UI -->|"HTTPS · dashboard and pricing inputs"| APP
     APP --> PRICE
     APP --> MDGW
+    APP --> HISTORY
     UI <-->|"WSS · live BTC trades and best bid/ask"| BINANCE
     UI <-->|"WSS · equity subscription and ticks"| MDGW
     MDGW <-->|"Private upstream WebSocket<br/>API key stays server-side"| TWELVE
+    UI <-->|"HTTPS · historical candles for scenario lab"| HISTORY
+    HISTORY -->|"Public klines · no key"| BINANCE_REST
+    HISTORY -->|"Private time_series request"| TWELVE_REST
 
     PRICE -->|"Default when no native service is configured"| CPUJS
     PRICE -->|"Optional PRICING_SERVICE_URL"| FASTAPI
@@ -101,7 +108,7 @@ flowchart TB
 
 **Web pricing flow:** the browser posts model inputs to the same-origin `/api/pricing` route. The built-in JavaScript CPU fallback is the default, so Monte Carlo pricing does not need a separate pricing server. When `PRICING_SERVICE_URL` is configured, the Node API can forward requests to the optional FastAPI service and its native C++ library. CUDA requires a separate NVIDIA GPU host; the Render Free instance does not provide one.
 
-**Market-data flow:** BTC/USDT connects directly from the browser to Binance's public WebSocket endpoints; the BTC stream does not pass through Render. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. Auto Monte Carlo waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
+**Market-data flow:** BTC/USDT connects directly from the browser to Binance's public WebSocket endpoints; the BTC stream does not pass through Render. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. The separate `/api/market-history` endpoint retrieves Binance public klines for BTC and Twelve Data time-series candles for equities, with short server-side caching. The Market Monte Carlo scenario lab calibrates historical return blocks from completed candles; a fresh live quote can anchor the simulated entry price. The option-pricing Auto Monte Carlo separately waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
 
 ### Standalone C++ exchange and matching engine
 
@@ -261,6 +268,7 @@ UltraLOB/
 ├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
 ├── api/pricing.js             # Monte Carlo API + bounded JavaScript CPU fallback
 ├── api/market-data.js         # Twelve Data equity WebSocket gateway + HTTP health route
+├── api/market-history.js      # Historical OHLC candles for Monte Carlo scenarios
 ├── lib/market-data.js         # Market symbol validation and provider message normalizers
 ├── pricing_service/           # FastAPI + native C++ CPU/CUDA pricing service
 ├── server.js                  # Persistent Node entrypoint for Render
@@ -374,6 +382,19 @@ cmake -S . -B build-cuda -G Ninja \
 cmake --build build-cuda --config Release
 ./build-cuda/ultralob_pricer --backend cuda --paths 10000000
 ```
+
+### Market Monte Carlo scenario lab
+
+The web terminal has a second Monte Carlo tool dedicated to **underlying-price scenario analysis** (separate from European option valuation). It retrieves recent OHLC candles through `/api/market-history`, calculates close-to-close log returns and resamples contiguous historical return blocks to generate future paths.
+
+- **BTCUSDT:** historical 1m/5m/15m/1h candles from Binance Spot public market data; no Binance API key required.
+- **AAPL, MSFT, GOOGL:** historical candles from Twelve Data `time_series`; the API key remains server-side. Requests consume the Twelve Data plan's API credits and are cached on the service.
+- **Visualization:** historical price line, sample simulated paths, median path, 25–75% and 5–95% percentile fans, plus entry, stop and target reference levels.
+- **Scenario statistics:** median terminal price, 5th–95th terminal range, probability that target is touched before stop, probability stop is touched first, and probability neither is touched inside the horizon.
+
+The user controls candle interval, lookback size, forecast horizon, number of paths, historical block length, long/short scenario direction, stop distance, target distance and random seed. A fresh live quote anchors the simulation when available; otherwise, the latest returned historical candle close is used and identified as the entry source. The result displays the candle timestamp, return sample size, per-bar mean and volatility, and seed for reproducibility.
+
+The model is a **historical block-bootstrap scenario tool**, not a market prediction or directional signal. It assumes sampled historical return blocks remain informative and does not model sudden regime changes, gaps, spread, slippage, fees, funding, liquidity, news, or intrabar ordering of stop/target touches. Validate with out-of-sample tests and paper trading before relying on it in a trading decision.
 
 ### Live market data and automatic Monte Carlo repricing
 

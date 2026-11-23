@@ -49,5 +49,6 @@ jobs:
         run: |
           node --check api/pricing.js
           node --check api/market-data.js
+          node --check api/market-history.js
           node --check server.js
-          node --test api/pricing.test.mjs api/market-data.test.mjs api/render-server.test.mjs
+          node --test api/pricing.test.mjs api/market-data.test.mjs api/market-history.test.mjs api/render-server.test.mjs
