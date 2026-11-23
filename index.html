@@ -1845,9 +1845,13 @@
           throw new Error("At least 21 valid candles are required to calibrate the simulation.");
         }
 
+        const referenceTime = Number(payload.fetched_at) || Date.now();
+        // Exclude the currently forming bar so calibration uses completed
+        // candles only. A fresh live quote can still anchor the entry price.
         const candles = payload.candles.filter((candle) =>
           Number.isFinite(Number(candle.close)) && Number(candle.close) > 0 &&
-          Number.isFinite(Number(candle.time))
+          Number.isFinite(Number(candle.time)) &&
+          (candle.close_time == null || Number(candle.close_time) < referenceTime)
         ).sort((a, b) => a.time - b.time);
         if (candles.length < 21) throw new Error("Not enough valid historical candles after normalization.");
 
