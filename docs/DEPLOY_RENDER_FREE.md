@@ -14,7 +14,7 @@ The Render service is configured on the Free instance plan. It sleeps after a pe
 
 ## Market data
 
-- **BTC/USDT:** connects automatically from the browser directly to Binance Spot's public WebSocket stream. This bypasses Render's outbound WebSocket gateway for BTC and requires no API key. If the primary hostname cannot be reached, the browser rotates through Binance's official market-data-only hostname and port 9443 fallback.
+- **BTC/USD (internal UI key: BTCUSDT):** connects automatically from the browser directly to Kraken Spot WebSocket v2 ticker and trade channels. The public feed requires no API key. The Render historical-candle endpoint uses Kraken's public OHLC REST API. Kraken's REST OHLC endpoint returns at most 720 recent entries and includes the currently forming candle; the scenario model filters incomplete candles before calibration. [Kraken WebSocket FAQ](https://support.kraken.com/en-us/articles/360022326871-kraken-websocket-api-frequently-asked-questions) · [Kraken OHLC endpoint](https://docs.kraken.com/api/docs/rest-api/get-ohlc-data).
 - **AAPL, MSFT, GOOGL:** add `TWELVE_DATA_API_KEY` under the Render service's Environment settings. Vercel environment variables are not shared with Render. Save with **Save, rebuild, and deploy** (or **Save and deploy**) to apply the key; never paste the secret into `index.html`.
 - **Twelve Data plan limits:** Basic and Grow accounts are limited to trial symbols for WebSocket use; they do not unlock arbitrary AAPL/MSFT/GOOGL subscriptions. Check your account's permitted trial-symbol list or an eligible higher-tier plan before expecting those three equities to stream. See the [Twelve Data WebSocket documentation](https://twelvedata.com/docs/websocket/websocket-getting-started) and [trial details](https://support.twelvedata.com/en/articles/5335783-trial).
 
@@ -22,7 +22,7 @@ The landing view selects BTC by default, starts the live gateway automatically, 
 
 ## Market Monte Carlo scenario lab
 
-The dashboard's separate Market Monte Carlo panel retrieves recent historical candles, calibrates close-to-close log returns, and resamples contiguous return blocks in the browser. BTCUSDT candles are public Binance Spot market data. AAPL, MSFT and GOOGL candles use the Twelve Data `time_series` API through the server; equity history requires `TWELVE_DATA_API_KEY` and consumes the plan's API credits. The endpoint caches BTC history for 15 seconds and equity history for 60 seconds per symbol/interval/lookback request.
+The dashboard's separate Market Monte Carlo panel retrieves recent historical candles, calibrates close-to-close log returns, and resamples contiguous return blocks in the browser. BTCUSDT is an internal UI key for Kraken Spot BTC/USD candles; the quote currency is USD. AAPL, MSFT and GOOGL candles use the Twelve Data `time_series` API through the server; equity history requires `TWELVE_DATA_API_KEY` and consumes the plan's API credits. The endpoint caches BTC history for 15 seconds and equity history for 60 seconds per symbol/interval/lookback request.
 
 The scenario chart displays a sample of simulated paths, the median path and empirical 5–95% / 25–75% percentile fans. It reports terminal price percentiles and close-only first-touch estimates for configured stop and target levels. This is conditional scenario analysis, not a forecast, trading signal, or execution system. It omits intrabar sequence, spread, fees, slippage, liquidity, funding and regime changes.
 
