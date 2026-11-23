@@ -46,6 +46,7 @@ function normalizeBinanceCandles(rows) {
     if (!Array.isArray(row) || row.length < 6) return null;
     return {
       time: Number(row[0]),
+      close_time: Number(row[6]),
       open: Number(row[1]),
       high: Number(row[2]),
       low: Number(row[3]),
@@ -63,16 +64,21 @@ function parseTwelveDataTime(value) {
   return Date.parse(normalized);
 }
 
-function normalizeTwelveDataCandles(payload) {
+function normalizeTwelveDataCandles(payload, interval) {
   if (!payload || !Array.isArray(payload.values)) return [];
-  return payload.values.map((row) => ({
-    time: parseTwelveDataTime(row.datetime),
+  const intervalMs = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000 }[interval];
+  return payload.values.map((row) => {
+    const time = parseTwelveDataTime(row.datetime);
+    return {
+    time,
+    close_time: time + intervalMs - 1,
     open: Number(row.open),
     high: Number(row.high),
     low: Number(row.low),
     close: Number(row.close),
     volume: row.volume == null || row.volume === "" ? 0 : Number(row.volume)
-  })).filter(validCandle).sort((a, b) => a.time - b.time);
+    };
+  }).filter(validCandle).sort((a, b) => a.time - b.time);
 }
 
 function sendJson(res, status, payload) {
@@ -166,7 +172,7 @@ export function createMarketHistoryHandler({
         if (!response.ok || payload?.status === "error" || payload?.code) {
           throw new Error(payload?.message || payload?.msg || "Twelve Data returned HTTP " + response.status);
         }
-        candles = normalizeTwelveDataCandles(payload);
+        candles = normalizeTwelveDataCandles(payload, interval);
         if (candles.length < 20) {
           throw new Error("Twelve Data returned fewer than 20 valid candles for " + symbol + ".");
         }
