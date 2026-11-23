@@ -85,6 +85,7 @@ test("returns normalized chronological Binance BTC candles without an API key", 
   assert.ok(res.body.candles[0].time < res.body.candles.at(-1).time);
   assert.equal(res.body.candles[0].open, 100);
   assert.equal(res.body.candles[0].close, 100.5);
+  assert.equal(res.body.candles[0].close_time, 1700000059999);
 });
 
 test("returns cached Binance candles within the cache window", async () => {
@@ -140,6 +141,7 @@ test("returns normalized chronological Twelve Data equity candles", async () => 
   assert.equal(url.searchParams.get("outputsize"), "60");
   assert.equal(url.searchParams.get("apikey"), "unit-test-key");
   assert.ok(res.body.candles[0].time < res.body.candles.at(-1).time);
+  assert.equal(res.body.candles[0].close_time, res.body.candles[0].time + 299999);
 });
 
 test("rejects methods other than GET", async () => {
