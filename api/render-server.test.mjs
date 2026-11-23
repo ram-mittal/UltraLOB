@@ -48,6 +48,13 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     assert.equal(marketPayload.status, "ok");
     assert.equal(marketPayload.providers.crypto.configured, true);
 
+    const historyInvalid = await fetch(baseUrl + "/api/market-history?symbol=TSLA&interval=1m&limit=100");
+    assert.equal(historyInvalid.status, 400);
+    assert.match((await historyInvalid.json()).error, /Unsupported symbol/);
+    const historyEquityMissingKey = await fetch(baseUrl + "/api/market-history?symbol=AAPL&interval=1m&limit=100");
+    assert.equal(historyEquityMissingKey.status, 503);
+    assert.equal((await historyEquityMissingKey.json()).code, "EQUITIES_KEY_MISSING");
+
     const pricingHealth = await fetch(baseUrl + "/api/pricing");
     const pricingHealthPayload = await pricingHealth.json();
     assert.equal(pricingHealth.status, 200);
