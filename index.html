@@ -350,7 +350,7 @@
           <span id="pricingBackendBadge" class="text-[10px] font-mono px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">CPU FALLBACK · CUDA OPTIONAL</span>
         </div>
         <h2 class="text-lg font-bold text-slate-100">Monte Carlo Option Pricing</h2>
-        <p class="text-xs text-slate-400 mt-1 max-w-3xl">European call and put valuation using risk-neutral geometric Brownian motion, antithetic variates, and an optional NVIDIA CUDA backend. This workload runs separately from the order-matching sequencer.</p>
+        <p class="text-xs text-slate-400 mt-1 max-w-3xl">European exercise (exercise at expiry) call and put valuation using risk-neutral geometric Brownian motion and antithetic variates. Current underlying: <span id="pricingUnderlyingLabel" class="font-semibold text-slate-200">BTCUSDT</span>. This theoretical pricing model uses your contract assumptions; it is separate from the market-path scenario lab below.</p>
       </div>
       <div class="flex items-center gap-2 rounded-lg bg-slate-950/70 border border-slate-800 px-3 py-2 min-w-[250px]">
         <span id="pricingServiceDot" class="w-2 h-2 rounded-full bg-amber-400"></span>
@@ -763,6 +763,12 @@
     function selectSymbol(sym) {
       if (!LIVE_MARKET_SYMBOLS.includes(sym)) return;
       activeSymbol = sym;
+      pricingElement("pricingUnderlyingLabel").textContent = sym;
+      if (window.lastMonteCarloResult && window.lastMonteCarloSymbol !== sym) {
+        pricingElement("pricingRunMessage").textContent =
+          "Last option-pricing result was for " + window.lastMonteCarloSymbol +
+          ". Run the option pricer again to price " + sym + ".";
+      }
       updateMarketMonteCarloSelection();
       document.querySelectorAll('.symbol-tab').forEach(b => {
         b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
@@ -2126,7 +2132,15 @@
 
     function renderPricingResults(data) {
       window.lastMonteCarloResult = data;
+      window.lastMonteCarloSymbol = activeSymbol;
       const call = data.call, put = data.put;
+      const pricingInputs = data.inputs || readPricingInputs();
+      pricingElement("pricingUnderlyingLabel").textContent = activeSymbol;
+      pricingElement("pricingResultMeta").title =
+        activeSymbol + " · Spot " + pricingInputs.spot +
+        " · Strike " + pricingInputs.strike +
+        " · Volatility " + pricingInputs.volatility +
+        " · Maturity " + pricingInputs.maturity_years + " years";
       pricingElement("pricingCallPrice").textContent = "$" + formatPricingNumber(call.price, 5);
       pricingElement("pricingCallBS").textContent = "$" + formatPricingNumber(call.black_scholes, 5);
       pricingElement("pricingCallCI").textContent = "[$" + formatPricingNumber(call.confidence_low_95, 5) + ", $" + formatPricingNumber(call.confidence_high_95, 5) + "]";
@@ -2136,13 +2150,18 @@
       pricingElement("pricingPutCI").textContent = "[$" + formatPricingNumber(put.confidence_low_95, 5) + ", $" + formatPricingNumber(put.confidence_high_95, 5) + "]";
       pricingElement("pricingPutSE").textContent = "$" + formatPricingNumber(put.standard_error, 6);
       pricingElement("pricingMetricBackend").textContent =
-        data.execution_engine === "javascript-fallback" ? "CPU · Vercel" : (data.backend || "—");
+        data.execution_engine === "javascript-fallback" ? "Node.js CPU" : (data.backend || "—");
       pricingElement("pricingMetricTime").textContent = formatPricingNumber(data.elapsed_ms, 2) + " ms";
       pricingElement("pricingMetricThroughput").textContent = formatPricingNumber(data.paths_per_second, 0) + " /s";
       pricingElement("pricingMetricGpu").textContent = data.gpu_utilization == null ? "Not reported" : formatPricingNumber(data.gpu_utilization, 1) + "%";
       const executionLabel = data.execution_engine === "javascript-fallback" ? "Node.js CPU" : "native pricing service";
       pricingElement("pricingResultMeta").textContent =
-        formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed + " · " + executionLabel + " · " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
+        activeSymbol + " · S " + formatPricingNumber(pricingInputs.spot, 2) +
+        " · K " + formatPricingNumber(pricingInputs.strike, 2) +
+        " · σ " + formatPricingNumber(pricingInputs.volatility * 100, 1) + "%" +
+        " · T " + formatPricingNumber(pricingInputs.maturity_years, 2) + "y" +
+        " · " + formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed +
+        " · " + executionLabel + " · " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
       drawPricingComparison(call, put);
     }
 
@@ -2339,6 +2358,7 @@
       }
       if (marketMcLastResult) drawMarketMonteCarloChart(marketMcLastResult);
     });
+    pricingElement("marketMcSymbol").textContent = activeSymbol;
     checkPricingService();
     checkLiveMarketDataConfig();
     // Start with the public BTC feed so the page demonstrates live data and
