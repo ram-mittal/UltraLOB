@@ -75,13 +75,14 @@ function sendMarketDataHealth(response) {
         symbols: EQUITY_SYMBOLS
       },
       crypto: {
-        provider: "Binance Spot",
+        provider: "Kraken Spot",
+        market_symbol: "BTC/USD",
         configured: true,
         symbols: CRYPTO_SYMBOLS,
         authentication_required: false
       }
     },
-    note: "BTCUSDT uses Binance Spot public streams. US equities use Twelve Data when configured."
+    note: "BTCUSDT is mapped to Kraken Spot BTC/USD public market data. US equities use Twelve Data when configured."
   });
 }
 
@@ -199,7 +200,7 @@ wss.on("connection", (client, request) => {
       send(client, {
         event: "gateway",
         status: "connected",
-        provider: "Binance Spot",
+        provider: "Kraken Spot",
         symbols: ["BTCUSDT"],
         message: "Binance Spot connected · waiting for BTCUSDT trades and best-bid/ask updates."
       });
@@ -233,7 +234,7 @@ wss.on("connection", (client, request) => {
       send(client, {
         event: "error",
         code: "CRYPTO_UPSTREAM_ERROR",
-        provider: "Binance Spot",
+        provider: "Kraken Spot",
         message: error.message || "Could not connect to Binance Spot."
       });
       closeClientForReconnect("Binance Spot connection failed; retrying the live market feed.");
