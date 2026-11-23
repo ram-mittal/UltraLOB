@@ -97,7 +97,7 @@ test("returns normalized chronological Kraken BTC candles without an API key", a
   assert.ok(res.body.candles[0].time < res.body.candles.at(-1).time);
   assert.equal(res.body.candles[0].open, 100);
   assert.equal(res.body.candles[0].close, 100.5);
-  assert.equal(res.body.candles[0].close_time, 1700000000999);
+  assert.equal(res.body.candles[0].close_time, 1700000059999);
 });
 
 test("returns cached Kraken candles within the cache window", async () => {
