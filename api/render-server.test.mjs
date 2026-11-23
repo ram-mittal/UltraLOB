@@ -24,8 +24,9 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     assert.equal(dashboard.status, 200);
     const dashboardHtml = await dashboard.text();
     assert.match(dashboardHtml, /UltraLOB/);
-    assert.match(dashboardHtml, /wss:\/\/stream\.binance\.com:443/);
-    assert.match(dashboardHtml, /wss:\/\/data-stream\.binance\.vision:443/);
+    assert.match(dashboardHtml, /wss:\/\/ws\.kraken\.com\/v2/);
+    assert.match(dashboardHtml, /channel: "ticker"/);
+    assert.match(dashboardHtml, /channel: "trade"/);
     assert.match(dashboardHtml, /let activeSymbol = 'BTCUSDT'/);
     assert.match(dashboardHtml, /scheduleLiveAutoPricing\(\)/);
     assert.match(dashboardHtml, /Market Monte Carlo Simulation/);
@@ -50,6 +51,8 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     assert.equal(market.status, 200);
     assert.equal(marketPayload.status, "ok");
     assert.equal(marketPayload.providers.crypto.configured, true);
+    assert.equal(marketPayload.providers.crypto.provider, "Kraken Spot");
+    assert.equal(marketPayload.providers.crypto.market_symbol, "BTC/USD");
 
     const historyInvalid = await fetch(baseUrl + "/api/market-history?symbol=TSLA&interval=1m&limit=100");
     assert.equal(historyInvalid.status, 400);
