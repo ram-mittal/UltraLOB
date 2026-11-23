@@ -1739,8 +1739,25 @@
     }
 
     function marketMcFormatPrice(value) {
-      const digits = activeSymbol === "BTCUSDT" ? 2 : value >= 100 ? 2 : 4;
+      const symbol = marketMcLastResult?.symbol || activeSymbol;
+      const digits = symbol === "BTCUSDT" ? 2 : value >= 100 ? 2 : 4;
       return Number(value).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    }
+
+    function clearMarketMonteCarloResults(message) {
+      marketMcLastResult = null;
+      [
+        "marketMcEntry", "marketMcMedian", "marketMcMedianReturn",
+        "marketMcRange", "marketMcTargetFirst", "marketMcStopFirst", "marketMcNoHit"
+      ].forEach((id) => { pricingElement(id).textContent = "—"; });
+      pricingElement("marketMcEntrySource").textContent = "No data";
+      pricingElement("marketMcModelSummary").textContent = "Model calibration: waiting for historical data.";
+      pricingElement("marketMcDataTimestamp").textContent = "Data timestamp: —";
+      pricingElement("marketMcChartEmpty").textContent = message || "Run a scenario to load candles and draw the Monte Carlo fan.";
+      pricingElement("marketMcChartEmpty").classList.remove("hidden");
+      const canvas = pricingElement("marketMcCanvas");
+      const context = canvas?.getContext?.("2d");
+      if (context) context.clearRect(0, 0, canvas.width, canvas.height);
     }
 
     function marketMcPercent(value, digits) {
@@ -1781,6 +1798,7 @@
       const button = pricingElement("marketMcRunButton");
       const status = pricingElement("marketMcRunStatus");
       const symbol = activeSymbol;
+      clearMarketMonteCarloResults("Loading " + symbol + " historical candles and calibrating scenarios...");
       const interval = pricingElement("marketMcInterval").value;
       const lookback = Number(pricingElement("marketMcLookback").value);
       const horizon = Number(pricingElement("marketMcHorizon").value);
@@ -2124,8 +2142,9 @@
     function updateMarketMonteCarloSelection() {
       pricingElement("marketMcSymbol").textContent = activeSymbol;
       if (marketMcLastResult && marketMcLastResult.symbol !== activeSymbol) {
+        clearMarketMonteCarloResults("Instrument changed to " + activeSymbol + " · run a new scenario to draw its path fan.");
         pricingElement("marketMcRunStatus").textContent =
-          "Instrument changed to " + activeSymbol + " · run a new scenario to refresh the chart.";
+          "Instrument changed to " + activeSymbol + " · run a new scenario.";
         pricingElement("marketMcDataStatus").textContent = "Select RUN MARKET MONTE CARLO to load this instrument.";
       }
     }
