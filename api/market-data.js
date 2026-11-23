@@ -10,9 +10,7 @@ import {
   EQUITY_SYMBOLS,
   CRYPTO_SYMBOLS,
   normalizeSymbols,
-  normalizeTwelveDataMessage,
-  normalizeBinanceTradeMessage,
-  normalizeBinanceBookTickerMessage
+  normalizeTwelveDataMessage
 } from "../lib/market-data.js";
 
 const app = express();
@@ -185,66 +183,112 @@ wss.on("connection", (client, request) => {
     client.close(1012, "Market provider disconnected");
   };
 
-  // Public Binance Spot streams make BTCUSDT available without an API key.
+  // Kraken's public Spot WebSocket v2 provides live BTC/USD ticker and trades.
   if (cryptoSymbols.includes("BTCUSDT") && process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS !== "true") {
-    const streams = ["btcusdt@trade", "btcusdt@bookTicker"];
-    // Port 443 is friendlier to hosted environments and is an official Binance
-    // Spot market-stream endpoint. It carries the same public combined streams.
-    const binanceUrl = "wss://stream.binance.com:443/stream?streams=" + streams.join("/");
-    console.info("[market-data] opening Binance Spot public stream");
-    const binance = new WebSocket(binanceUrl, { handshakeTimeout: 15000 });
-    upstreams.add(binance);
+    const kraken = new WebSocket("wss://ws.kraken.com/v2", { handshakeTimeout: 15000 });
+    upstreams.add(kraken);
 
-    binance.on("open", () => {
-      console.info("[market-data] Binance Spot stream connected");
+    kraken.on("open", () => {
+      console.info("[market-data] Kraken Spot WebSocket connected");
       send(client, {
         event: "gateway",
         status: "connected",
         provider: "Kraken Spot",
         symbols: ["BTCUSDT"],
-        message: "Binance Spot connected · waiting for BTCUSDT trades and best-bid/ask updates."
+        market_symbol: "BTC/USD",
+        message: "Kraken Spot connected · waiting for BTC/USD trades and best-bid/ask updates."
       });
+      kraken.send(JSON.stringify({
+        method: "subscribe",
+        params: { channel: "ticker", symbol: ["BTC/USD"], event_trigger: "bbo", snapshot: true }
+      }));
+      kraken.send(JSON.stringify({
+        method: "subscribe",
+        params: { channel: "trade", symbol: ["BTC/USD"], snapshot: false }
+      }));
     });
 
-    binance.on("message", (raw) => {
+    kraken.on("message", (raw) => {
       let decoded;
-      try {
-        decoded = JSON.parse(raw.toString());
-      } catch {
+      try { decoded = JSON.parse(raw.toString()); } catch { return; }
+      if (decoded?.success === false) {
+        send(client, {
+          event: "error",
+          code: "CRYPTO_SUBSCRIPTION_ERROR",
+          provider: "Kraken Spot",
+          message: decoded.error || "Kraken rejected the BTC/USD subscription."
+        });
         return;
       }
+      if (!Array.isArray(decoded?.data)) return;
+      const toTimestamp = (value) => {
+        const parsed = Date.parse(value || "");
+        return Number.isFinite(parsed) ? parsed : Date.now();
+      };
 
-      // Binance combined-stream responses wrap the original event in the data property.
-      const message = decoded && typeof decoded === "object" && decoded.data
-        ? decoded.data
-        : decoded;
-      const trade = normalizeBinanceTradeMessage(message);
-      if (trade) {
-        send(client, trade);
-        return;
-      }
-      const book = normalizeBinanceBookTickerMessage(message);
-      if (book) {
-        send(client, book);
+      if (decoded.channel === "ticker") {
+        for (const quote of decoded.data) {
+          if (quote.symbol !== "BTC/USD") continue;
+          const last = Number(quote.last);
+          if (last > 0) {
+            send(client, {
+              event: "price",
+              provider: "Kraken Spot",
+              symbol: "BTCUSDT",
+              price: last,
+              currency: "USD",
+              exchange: "KRAKEN",
+              timestamp: toTimestamp(quote.timestamp)
+            });
+          }
+          const bid = Number(quote.bid);
+          const ask = Number(quote.ask);
+          if (bid > 0 && ask >= bid) {
+            send(client, {
+              event: "book",
+              provider: "Kraken Spot",
+              symbol: "BTCUSDT",
+              bid,
+              bid_quantity: Number(quote.bid_qty) || 0,
+              ask,
+              ask_quantity: Number(quote.ask_qty) || 0,
+              timestamp: toTimestamp(quote.timestamp)
+            });
+          }
+        }
+      } else if (decoded.channel === "trade") {
+        for (const trade of decoded.data) {
+          if (trade.symbol !== "BTC/USD") continue;
+          send(client, {
+            event: "price",
+            provider: "Kraken Spot",
+            symbol: "BTCUSDT",
+            price: Number(trade.price),
+            currency: "USD",
+            exchange: "KRAKEN",
+            timestamp: toTimestamp(trade.timestamp),
+            trade_id: trade.trade_id ?? null,
+            trade_quantity: Number(trade.qty) || 0,
+            buyer_is_maker: trade.side === "sell"
+          });
+        }
       }
     });
 
-    binance.on("error", (error) => {
-      console.error("[market-data] Binance Spot upstream error:", error.message || error);
+    kraken.on("error", (error) => {
+      console.error("[market-data] Kraken Spot upstream error:", error.message || error);
       send(client, {
         event: "error",
         code: "CRYPTO_UPSTREAM_ERROR",
         provider: "Kraken Spot",
-        message: error.message || "Could not connect to Binance Spot."
+        message: error.message || "Could not connect to Kraken Spot."
       });
-      closeClientForReconnect("Binance Spot connection failed; retrying the live market feed.");
+      closeClientForReconnect("Kraken Spot connection failed; retrying the live market feed.");
     });
 
-    binance.on("close", (code, reason) => {
+    kraken.on("close", (code, reason) => {
       if (client.readyState === WebSocket.OPEN) {
-        closeClientForReconnect(
-          reason.toString() || "Binance Spot closed the stream; reconnecting."
-        );
+        closeClientForReconnect(reason.toString() || "Kraken Spot closed the stream; reconnecting.");
       }
       cleanup();
     });
@@ -260,7 +304,7 @@ wss.on("connection", (client, request) => {
         event: "notice",
         code: "EQUITIES_KEY_MISSING",
         provider: "Twelve Data",
-        message: "BTCUSDT is available through Binance Spot. Add TWELVE_DATA_API_KEY to enable US equity ticks."
+        message: "BTCUSDT maps to Kraken Spot BTC/USD public data. Add TWELVE_DATA_API_KEY to enable US equity ticks."
       });
     } else {
       const upstreamUrl = "wss://ws.twelvedata.com/v1/quotes/price?apikey=" + encodeURIComponent(apiKey);
