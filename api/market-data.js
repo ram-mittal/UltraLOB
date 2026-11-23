@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import pricingHandler from "./pricing.js";
+import marketHistoryHandler from "./market-history.js";
 import WebSocket, { WebSocketServer } from "ws";
 import {
   LIVE_SYMBOLS,
@@ -98,6 +99,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
     response.status(200).json({ status: "ok", service: "ultralob" });
   });
   app.get("/api/market-data", (_request, response) => sendMarketDataHealth(response));
+  app.get("/api/market-history", (request, response) => marketHistoryHandler(request, response));
   app.use((_request, response) => response.status(404).json({ error: "Not found" }));
 } else {
   // Vercel routes this module as the /api/market-data function.
