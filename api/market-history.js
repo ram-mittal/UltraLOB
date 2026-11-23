@@ -179,6 +179,8 @@ export function createMarketHistoryHandler({
       const result = {
         status: "ok",
         symbol,
+        market_symbol: isCrypto ? "BTC/USD" : symbol,
+        quote_currency: "USD",
         provider,
         interval,
         count: candles.length,
