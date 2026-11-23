@@ -17,19 +17,27 @@ function mockResponse() {
   };
 }
 
-function makeBinanceRows(count = 60) {
-  return Array.from({ length: count }, (_, index) => {
-    const price = 100 + index;
-    return [
-      1700000000000 + index * 60000,
-      String(price),
-      String(price + 1),
-      String(price - 1),
-      String(price + 0.5),
-      "10.5",
-      1700000059999 + index * 60000
-    ];
-  });
+function makeKrakenPayload(count = 60) {
+  const startSeconds = 1700000000;
+  return {
+    error: [],
+    result: {
+      XXBTZUSD: Array.from({ length: count }, (_, index) => {
+        const price = 100 + index;
+        return [
+          startSeconds + index * 60,
+          String(price),
+          String(price + 1),
+          String(price - 1),
+          String(price + 0.5),
+          String(price + 0.25),
+          "10.5",
+          25
+        ];
+      }),
+      last: startSeconds + count * 60
+    }
+  };
 }
 
 function makeTwelvePayload(count = 60) {
@@ -65,13 +73,13 @@ test("rejects unsupported symbols, intervals, and limits", async () => {
   }
 });
 
-test("returns normalized chronological Binance BTC candles without an API key", async () => {
+test("returns normalized chronological Kraken BTC candles without an API key", async () => {
   clearMarketHistoryCache();
   let requestedUrl = "";
   const handler = createMarketHistoryHandler({
     fetchImpl: async (url) => {
       requestedUrl = String(url);
-      return { ok: true, status: 200, json: async () => makeBinanceRows() };
+      return { ok: true, status: 200, json: async () => makeKrakenPayload() };
     },
     env: {}
   });
@@ -79,23 +87,27 @@ test("returns normalized chronological Binance BTC candles without an API key", 
   await handler({ method: "GET", query: { symbol: "BTCUSDT", interval: "1m", limit: "60" } }, res);
 
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.provider, "Binance Spot");
+  assert.equal(res.body.provider, "Kraken Spot");
+  assert.equal(res.body.market_symbol, "BTC/USD");
+  assert.equal(res.body.quote_currency, "USD");
   assert.equal(res.body.count, 60);
-  assert.ok(requestedUrl.startsWith("https://data-api.binance.vision/api/v3/klines?"));
+  assert.ok(requestedUrl.startsWith("https://api.kraken.com/0/public/OHLC?"));
+  assert.equal(new URL(requestedUrl).searchParams.get("pair"), "XBTUSD");
+  assert.equal(new URL(requestedUrl).searchParams.get("interval"), "1");
   assert.ok(res.body.candles[0].time < res.body.candles.at(-1).time);
   assert.equal(res.body.candles[0].open, 100);
   assert.equal(res.body.candles[0].close, 100.5);
   assert.equal(res.body.candles[0].close_time, 1700000059999);
 });
 
-test("returns cached Binance candles within the cache window", async () => {
+test("returns cached Kraken candles within the cache window", async () => {
   clearMarketHistoryCache();
   let calls = 0;
   let clock = 100000;
   const handler = createMarketHistoryHandler({
     fetchImpl: async () => {
       calls += 1;
-      return { ok: true, status: 200, json: async () => makeBinanceRows() };
+      return { ok: true, status: 200, json: async () => makeKrakenPayload() };
     },
     now: () => clock
   });

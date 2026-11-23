@@ -134,7 +134,7 @@
           <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">AAPL</button>
           <button onclick="selectSymbol('MSFT')" id="tab-MSFT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">MSFT</button>
           <button onclick="selectSymbol('GOOGL')" id="tab-GOOGL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">GOOGL</button>
-          <button onclick="selectSymbol('BTCUSDT')" id="tab-BTCUSDT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">BTC</button>
+          <button onclick="selectSymbol('BTCUSDT')" id="tab-BTCUSDT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">BTC/USD</button>
         </div>
         <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
           <div>
@@ -367,7 +367,7 @@
         <span id="liveMarketDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
         <div class="min-w-[210px] flex-1">
           <div id="liveMarketStatus" class="text-[10px] uppercase tracking-wider font-bold text-slate-300">LIVE FEED NOT CONNECTED</div>
-          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Binance Spot · BTCUSDT trades and top-of-book · Twelve Data equities</div>
+          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Kraken Spot · BTC/USD trades and top-of-book · Twelve Data equities</div>
         </div>
         <button id="liveMarketConnectButton" type="button" onclick="toggleLiveMarketData()" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold">CONNECT LIVE FEED</button>
       </div>
@@ -695,12 +695,11 @@
     // Live market data state. The browser never receives the Twelve Data API key.
     const LIVE_MARKET_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "BTCUSDT"];
     const liveMarketQuotes = Object.create(null);
-    // BTC uses a browser-direct public Binance stream; equities use the
+    // BTC uses a browser-direct public Kraken stream; equities use the
     // same-origin Twelve Data gateway so its API key stays server-side.
     let liveBtcSocket = null;
     let liveBtcReconnectTimer = null;
     let liveBtcReconnectAttempt = 0;
-    let liveBtcEndpointIndex = 0;
     let liveMarketSocket = null;
     let liveMarketReconnectTimer = null;
     let liveMarketHeartbeatTimer = null;
@@ -763,7 +762,7 @@
     function selectSymbol(sym) {
       if (!LIVE_MARKET_SYMBOLS.includes(sym)) return;
       activeSymbol = sym;
-      pricingElement("pricingUnderlyingLabel").textContent = sym;
+      pricingElement("pricingUnderlyingLabel").textContent = marketDisplaySymbol(sym);
       if (window.lastMonteCarloResult && window.lastMonteCarloSymbol !== sym) {
         pricingElement("pricingRunMessage").textContent =
           "Last option-pricing result was for " + window.lastMonteCarloSymbol +
@@ -774,7 +773,7 @@
         b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
       });
       document.getElementById('tab-' + sym).className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
-      document.getElementById('bookSymbolBadge').innerText = sym;
+      document.getElementById('bookSymbolBadge').innerText = marketDisplaySymbol(sym);
       document.getElementById('bookModeLabel').textContent =
         sym === 'BTCUSDT' ? 'Live BTC Top of Book · Depth Not Loaded' : 'Simulated Level 2 Order Book';
       document.getElementById('symSpreadLabel').textContent = sym === 'BTCUSDT' ? 'LIVE SPREAD' : 'DEMO SPREAD';
@@ -796,7 +795,7 @@
         }
       } else if (sym === 'BTCUSDT') {
         document.getElementById('symLastPrice').textContent = '$—';
-        document.getElementById('symLastPriceSource').textContent = 'WAITING FOR BINANCE';
+        document.getElementById('symLastPriceSource').textContent = 'WAITING FOR KRAKEN';
         document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-amber-400';
         document.getElementById('symBestBid').textContent = '$—';
         document.getElementById('symBestAsk').textContent = '$—';
@@ -1222,7 +1221,7 @@
         const equityReady = Boolean(payload.providers?.equities?.configured);
         setLiveMarketState(
           "ready",
-          "Binance Spot public feed ready for BTCUSDT · " +
+          "Kraken Spot public feed ready for BTC/USD · " +
             (equityReady ? "Twelve Data equities also configured" : "Twelve Data key missing; equities unavailable")
         );
       } catch (error) {
@@ -1245,104 +1244,139 @@
       }
     }
 
-    // Binance public market data is opened directly by the browser. This
-    // removes Render's outbound-WebSocket route from the BTC data path.
-    function connectBinanceBrowser() {
+    // Kraken's public Spot WebSocket v2 supplies BTC/USD trades and top-of-book.
+    // BTC is kept under the existing BTCUSDT UI key for compatibility, but
+    // quotes from this source are explicitly denominated in USD.
+    function connectKrakenBrowser() {
       if (socketIsActive(liveBtcSocket) || liveMarketIntentionalClose) return;
-
-      const hosts = [
-        "wss://stream.binance.com:443",
-        "wss://data-stream.binance.vision:443",
-        "wss://stream.binance.com:9443"
-      ];
-      const host = hosts[liveBtcEndpointIndex % hosts.length];
-      const streams = "btcusdt@trade/btcusdt@bookTicker";
-      const url = host + "/stream?streams=" + streams;
-      setLiveMarketState("connecting", "Connecting directly to Binance Spot · " + new URL(host).host);
+      const url = "wss://ws.kraken.com/v2";
+      setLiveMarketState("connecting", "Connecting directly to Kraken Spot · BTC/USD public ticker and trade channels...");
 
       let socket;
       try {
         socket = new WebSocket(url);
       } catch (error) {
-        scheduleBinanceReconnect("Could not create Binance WebSocket: " + error.message, hosts);
+        scheduleKrakenReconnect("Could not create Kraken WebSocket: " + error.message);
         return;
       }
       liveBtcSocket = socket;
 
       socket.onopen = function() {
         liveBtcReconnectAttempt = 0;
+        socket.send(JSON.stringify({
+          method: "subscribe",
+          params: {
+            channel: "ticker",
+            symbol: ["BTC/USD"],
+            event_trigger: "bbo",
+            snapshot: true
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "subscribe",
+          params: {
+            channel: "trade",
+            symbol: ["BTC/USD"],
+            snapshot: false
+          }
+        }));
         setLiveMarketState(
           "waiting",
-          "Browser connected directly to Binance Spot · waiting for BTCUSDT trade and best-bid/ask ticks"
+          "Browser connected to Kraken Spot · subscribing to BTC/USD ticker and trades"
         );
       };
 
       socket.onmessage = function(event) {
-        let envelope;
-        try { envelope = JSON.parse(event.data); }
+        let message;
+        try { message = JSON.parse(event.data); }
         catch { return; }
-        const message = envelope && envelope.data && typeof envelope.data === "object"
-          ? envelope.data
-          : envelope;
-        if (!message || message.s !== "BTCUSDT") return;
 
-        if (message.e === "trade") {
-          handleLiveMarketTick({
-            event: "price",
-            provider: "Binance Spot",
-            symbol: "BTCUSDT",
-            price: Number(message.p),
-            currency: "USDT",
-            exchange: "BINANCE",
-            timestamp: Number(message.T || message.E) || Date.now(),
-            trade_id: Number(message.t),
-            trade_quantity: Number(message.q),
-            buyer_is_maker: Boolean(message.m)
-          });
-        } else if (message.e === "bookTicker") {
-          handleLiveMarketBookTick({
-            event: "book",
-            provider: "Binance Spot",
-            symbol: "BTCUSDT",
-            bid: Number(message.b),
-            bid_quantity: Number(message.B),
-            ask: Number(message.a),
-            ask_quantity: Number(message.A),
-            timestamp: Date.now(),
-            update_id: Number(message.u)
-          });
+        if (message && message.success === false) {
+          const detail = message.error || "Kraken rejected a public market-data subscription.";
+          setLiveMarketState("error", "Kraken subscription error · " + detail);
+          return;
+        }
+
+        if (!message || !Array.isArray(message.data)) return;
+        const timestamp = (value) => {
+          const parsed = Date.parse(value || "");
+          return Number.isFinite(parsed) ? parsed : Date.now();
+        };
+
+        if (message.channel === "ticker") {
+          for (const quote of message.data) {
+            if (quote.symbol !== "BTC/USD") continue;
+            const last = Number(quote.last);
+            if (Number.isFinite(last) && last > 0) {
+              handleLiveMarketTick({
+                event: "price",
+                provider: "Kraken Spot",
+                symbol: "BTCUSDT",
+                price: last,
+                currency: "USD",
+                exchange: "KRAKEN",
+                timestamp: timestamp(quote.timestamp)
+              });
+            }
+            const bid = Number(quote.bid);
+            const ask = Number(quote.ask);
+            if (bid > 0 && ask >= bid) {
+              handleLiveMarketBookTick({
+                event: "book",
+                provider: "Kraken Spot",
+                symbol: "BTCUSDT",
+                bid,
+                bid_quantity: Number(quote.bid_qty) || 0,
+                ask,
+                ask_quantity: Number(quote.ask_qty) || 0,
+                timestamp: timestamp(quote.timestamp)
+              });
+            }
+          }
+          return;
+        }
+
+        if (message.channel === "trade") {
+          for (const trade of message.data) {
+            if (trade.symbol !== "BTC/USD") continue;
+            handleLiveMarketTick({
+              event: "price",
+              provider: "Kraken Spot",
+              symbol: "BTCUSDT",
+              price: Number(trade.price),
+              currency: "USD",
+              exchange: "KRAKEN",
+              timestamp: timestamp(trade.timestamp),
+              trade_id: trade.trade_id ?? null,
+              trade_quantity: Number(trade.qty) || 0,
+              buyer_is_maker: trade.side === "sell"
+            });
+          }
         }
       };
 
       socket.onerror = function() {
-        // Browsers intentionally hide the underlying network error. The close
-        // event below includes the status code and selected fallback host.
-        setLiveMarketState("reconnecting", "Binance connection error on " + new URL(host).host + " · checking fallback endpoint...");
+        setLiveMarketState("reconnecting", "Kraken Spot WebSocket error · attempting to reconnect...");
       };
 
       socket.onclose = function(event) {
         if (liveBtcSocket === socket) liveBtcSocket = null;
         if (liveMarketIntentionalClose) return;
         const reason = event.reason ? " · " + event.reason : "";
-        scheduleBinanceReconnect(
-          "Binance stream closed (code " + event.code + ")" + reason,
-          hosts
-        );
+        scheduleKrakenReconnect("Kraken Spot stream closed (code " + event.code + ")" + reason);
       };
     }
 
-    function scheduleBinanceReconnect(reason, hosts) {
+    function scheduleKrakenReconnect(reason) {
       if (liveMarketIntentionalClose) return;
-      liveBtcEndpointIndex = (liveBtcEndpointIndex + 1) % hosts.length;
-      const nextHost = new URL(hosts[liveBtcEndpointIndex]).host;
       const delay = Math.min(30000, 2000 * Math.pow(2, liveBtcReconnectAttempt));
       liveBtcReconnectAttempt += 1;
       setLiveMarketState(
         "reconnecting",
-        reason + " · switching to " + nextHost + " in " + Math.round(delay / 1000) + "s"
+        reason + " · retrying Kraken in " + Math.round(delay / 1000) + "s"
       );
       clearTimeout(liveBtcReconnectTimer);
-      liveBtcReconnectTimer = setTimeout(connectBinanceBrowser, delay);
+      liveBtcReconnectTimer = setTimeout(connectKrakenBrowser, delay);
     }
 
     function connectTwelveDataGateway() {
@@ -1357,7 +1391,7 @@
       } catch (error) {
         setLiveMarketState(
           socketIsActive(liveBtcSocket) ? "connected" : "error",
-          "Binance BTC feed is independent · could not create Twelve Data gateway: " + error.message
+          "Kraken BTC feed is independent · could not create Twelve Data gateway: " + error.message
         );
         return;
       }
@@ -1404,7 +1438,7 @@
             const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
             setLiveMarketState(
               socketIsActive(liveBtcSocket) ? "connected" : "waiting",
-              "BTC feed runs directly from Binance · Twelve Data rejected " + failedSymbols + ". Check plan entitlements."
+              "BTC feed runs directly from Kraken · Twelve Data rejected " + failedSymbols + ". Check plan entitlements."
             );
           } else {
             setLiveMarketState(
@@ -1423,7 +1457,7 @@
         if (message.event === "notice") {
           setLiveMarketState(
             socketIsActive(liveBtcSocket) ? "connected" : "waiting",
-            message.message || "Twelve Data is not configured; BTC remains available directly from Binance."
+            message.message || "Twelve Data is not configured; BTC remains available directly from Kraken."
           );
           return;
         }
@@ -1476,7 +1510,7 @@
       clearTimeout(liveBtcReconnectTimer);
       clearTimeout(liveMarketReconnectTimer);
 
-      if (!socketIsActive(liveBtcSocket)) connectBinanceBrowser();
+      if (!socketIsActive(liveBtcSocket)) connectKrakenBrowser();
 
       try {
         const healthResponse = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
@@ -1489,7 +1523,7 @@
         } else {
           setLiveMarketState(
             socketIsActive(liveBtcSocket) ? "waiting" : "connecting",
-            "BTC connects directly to Binance · Twelve Data is not configured on Render (add TWELVE_DATA_API_KEY for equities)"
+            "BTC connects directly to Kraken · Twelve Data is not configured on Render (add TWELVE_DATA_API_KEY for equities)"
           );
         }
       } catch (error) {
@@ -1497,7 +1531,7 @@
         // Keep it running even if Render is waking or its equity gateway fails.
         setLiveMarketState(
           socketIsActive(liveBtcSocket) ? "connected" : "error",
-          "BTC uses a direct Binance connection · Render equity gateway check failed: " + error.message
+          "BTC uses a direct Kraken connection · Render equity gateway check failed: " + error.message
         );
       }
     }
@@ -1522,6 +1556,10 @@
       }
       setLiveMarketState("disconnected", "Live feed stopped. Simulated order-book data is unchanged.");
       pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+    }
+
+    function marketDisplaySymbol(symbol) {
+      return symbol === "BTCUSDT" ? "BTC/USD" : symbol;
     }
 
     function handleLiveMarketTick(tick) {
@@ -1551,13 +1589,13 @@
       if (symbol === activeSymbol) {
         if (pricingElement("marketMcRunStatus") && marketMcLastResult && marketMcLastResult.symbol === symbol) {
           pricingElement("marketMcRunStatus").textContent =
-            "New live " + symbol + " quote received · rerun the scenario to refresh its entry anchor.";
+            "New live " + marketDisplaySymbol(symbol) + " quote received · rerun the scenario to refresh its entry anchor.";
         }
         pricingElement("symLastPrice").textContent = "$" + price.toFixed(2);
         pricingElement("symLastPriceSource").textContent = "LIVE · " + quote.provider.toUpperCase();
         pricingElement("symLastPriceSource").className = "text-[9px] font-mono text-emerald-400";
         pricingElement("liveMarketLastTick").textContent =
-          symbol + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
+          marketDisplaySymbol(symbol) + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
         pricingElement("inputPrice").value = price.toFixed(4);
         if (pricingElement("autoSpotSync").checked) {
           pricingElement("pricingSpot").value = price.toFixed(4);
@@ -1575,7 +1613,7 @@
       const bid = Number(tick.bid);
       const ask = Number(tick.ask);
       if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return;
-      const previous = liveMarketQuotes.BTCUSDT || { provider: "Binance Spot", currency: "USDT" };
+      const previous = liveMarketQuotes.BTCUSDT || { provider: "Kraken Spot", currency: "USD" };
       liveMarketQuotes.BTCUSDT = {
         ...previous,
         bid,
@@ -1583,17 +1621,17 @@
         bid_quantity: Number(tick.bid_quantity) || 0,
         ask_quantity: Number(tick.ask_quantity) || 0,
         book_timestamp: Number(tick.timestamp) || Date.now(),
-        provider: "Binance Spot"
+        provider: "Kraken Spot"
       };
       if (activeSymbol === "BTCUSDT") renderBook();
-      setLiveMarketState("connected", "Binance Spot live · BTCUSDT trade and best-bid/ask streams active");
+      setLiveMarketState("connected", "Kraken Spot live · BTC/USD trade and best-bid/ask streams active");
     }
 
     function scheduleLiveAutoPricing() {
       if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
       const quote = liveMarketQuotes[activeSymbol];
       if (!quote) {
-        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + activeSymbol + " tick";
+        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + marketDisplaySymbol(activeSymbol) + " tick";
         return;
       }
       if (liveAutoPricingInFlight) {
@@ -1616,7 +1654,7 @@
         }
         liveLastAutoPricingAt = Date.now();
         pricingElement("liveAutoPricingStatus").textContent =
-          "Pricing " + activeSymbol + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
+          "Pricing " + marketDisplaySymbol(activeSymbol) + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
         await runMonteCarloPricing({ automatic: true });
       }, delay);
     }
@@ -1983,9 +2021,9 @@
 
     function renderMarketMonteCarloResults(result) {
       const percent = (count) => (100 * count / result.pathCount).toFixed(1) + "%";
-      pricingElement("marketMcSymbol").textContent = result.symbol;
+      pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(result.symbol) + (result.symbol === "BTCUSDT" ? " · KRAKEN" : "");
       pricingElement("marketMcEntry").textContent = "$" + marketMcFormatPrice(result.spot);
-      pricingElement("marketMcEntrySource").textContent = result.source;
+      pricingElement("marketMcEntrySource").textContent = result.source + (result.symbol === "BTCUSDT" ? " · Kraken BTC/USD" : "");
       pricingElement("marketMcMedian").textContent = "$" + marketMcFormatPrice(result.terminalMedian);
       pricingElement("marketMcMedianReturn").textContent =
         "Median " + (result.medianReturn >= 0 ? "+" : "") + marketMcPercent(result.medianReturn);
@@ -2147,7 +2185,7 @@
     }
 
     function updateMarketMonteCarloSelection() {
-      pricingElement("marketMcSymbol").textContent = activeSymbol;
+      pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
       if (marketMcLastResult && marketMcLastResult.symbol !== activeSymbol) {
         clearMarketMonteCarloResults("Instrument changed to " + activeSymbol + " · run a new scenario to draw its path fan.");
         pricingElement("marketMcRunStatus").textContent =
@@ -2161,7 +2199,7 @@
       window.lastMonteCarloSymbol = activeSymbol;
       const call = data.call, put = data.put;
       const pricingInputs = data.inputs || readPricingInputs();
-      pricingElement("pricingUnderlyingLabel").textContent = activeSymbol;
+      pricingElement("pricingUnderlyingLabel").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
       pricingElement("pricingResultMeta").title =
         activeSymbol + " · Spot " + pricingInputs.spot +
         " · Strike " + pricingInputs.strike +
@@ -2241,7 +2279,7 @@
             : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.");
         if (automatic) {
           pricingElement("liveAutoPricingStatus").textContent =
-            "Last auto-price " + activeSymbol + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
+            "Last auto-price " + marketDisplaySymbol(activeSymbol) + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
         }
       } catch (error) {
         if (error.status === 413) {
@@ -2353,7 +2391,7 @@
         return;
       }
       if (activeSymbol === "BTCUSDT") {
-        pricingElement("pricingRunMessage").textContent = "Waiting for the first Binance BTCUSDT trade tick. No simulated BTC spot is substituted.";
+        pricingElement("pricingRunMessage").textContent = "Waiting for the first Kraken BTC/USD trade tick. No simulated BTC spot is substituted.";
         return;
       }
       const book = orderBooks[activeSymbol];
@@ -2384,7 +2422,7 @@
       }
       if (marketMcLastResult) drawMarketMonteCarloChart(marketMcLastResult);
     });
-    pricingElement("marketMcSymbol").textContent = activeSymbol;
+    pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
     checkPricingService();
     checkLiveMarketDataConfig();
     // Start with the public BTC feed so the page demonstrates live data and

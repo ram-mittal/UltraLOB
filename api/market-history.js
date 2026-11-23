@@ -40,18 +40,20 @@ function validCandle(candle) {
     Number.isFinite(candle.volume) && candle.volume >= 0;
 }
 
-function normalizeBinanceCandles(rows) {
+function normalizeKrakenCandles(rows, interval) {
   if (!Array.isArray(rows)) return [];
+  const intervalMs = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000 }[interval];
   return rows.map((row) => {
-    if (!Array.isArray(row) || row.length < 6) return null;
+    if (!Array.isArray(row) || row.length < 8) return null;
+    const time = Number(row[0]) * 1000;
     return {
-      time: Number(row[0]),
-      close_time: Number(row[6]),
+      time,
+      close_time: time + intervalMs - 1,
       open: Number(row[1]),
       high: Number(row[2]),
       low: Number(row[3]),
       close: Number(row[4]),
-      volume: Number(row[5])
+      volume: Number(row[6])
     };
   }).filter(validCandle).sort((a, b) => a.time - b.time);
 }
@@ -102,7 +104,7 @@ export function createMarketHistoryHandler({
 
     const { symbol, interval, limit } = parsed.value;
     const isCrypto = symbol === "BTCUSDT";
-    const provider = isCrypto ? "Binance Spot" : "Twelve Data";
+    const provider = isCrypto ? "Kraken Spot" : "Twelve Data";
     const cacheKey = [symbol, interval, limit].join(":");
     const timestamp = now();
     const cached = historyCache.get(cacheKey);
@@ -114,43 +116,39 @@ export function createMarketHistoryHandler({
     try {
       let candles;
       if (isCrypto) {
+        // Kraken's public Spot OHLC endpoint is used instead of Binance because
+        // Binance returned a geographic-eligibility rejection to this deployment.
+        const intervalMap = { "1m": 1, "5m": 5, "15m": 15, "1h": 60 };
         const params = new URLSearchParams({
-          symbol: "BTCUSDT",
-          interval,
-          limit: String(limit)
+          pair: "XBTUSD",
+          interval: String(intervalMap[interval])
         });
-        const endpoints = [
-          "https://data-api.binance.vision/api/v3/klines",
-          "https://api.binance.com/api/v3/klines"
-        ];
-        let lastError;
-        for (const endpoint of endpoints) {
-          try {
-            const response = await fetchImpl(endpoint + "?" + params.toString(), {
-              headers: { Accept: "application/json" },
-              signal: AbortSignal.timeout(12000)
-            });
-            const payload = await response.json();
-            if (!response.ok) {
-              throw new Error(payload?.msg || "Binance returned HTTP " + response.status);
-            }
-            candles = normalizeBinanceCandles(payload);
-            if (candles.length >= 20) break;
-            throw new Error("Binance returned fewer than 20 valid candles.");
-          } catch (error) {
-            lastError = error;
-          }
+        const response = await fetchImpl("https://api.kraken.com/0/public/OHLC?" + params.toString(), {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(12000)
+        });
+        const payload = await response.json();
+        if (!response.ok || (Array.isArray(payload?.error) && payload.error.length)) {
+          throw new Error(
+            (Array.isArray(payload?.error) ? payload.error.join("; ") : "") ||
+            "Kraken returned HTTP " + response.status
+          );
         }
+        const resultEntries = Object.entries(payload?.result || {})
+          .filter(([key, value]) => key !== "last" && Array.isArray(value));
+        if (!resultEntries.length) throw new Error("Kraken returned no XBT/USD OHLC series.");
+        candles = normalizeKrakenCandles(resultEntries[0][1], interval);
         if (!candles || candles.length < 20) {
-          throw lastError || new Error("Could not retrieve Binance candle history.");
+          throw new Error("Kraken returned fewer than 20 valid BTC/USD candles.");
         }
+        candles = candles.slice(-limit);
       } else {
         const apiKey = String(env.TWELVE_DATA_API_KEY || "").trim();
         if (!apiKey) {
           return sendJson(res, 503, {
             error: "Twelve Data historical candles are not configured on this host.",
             code: "EQUITIES_KEY_MISSING",
-            hint: "Add TWELVE_DATA_API_KEY to the Render environment and redeploy. BTC history is available without a key."
+            hint: "Add TWELVE_DATA_API_KEY to the Render environment and redeploy. BTC history uses Kraken public market data and does not need a key."
           });
         }
         const intervalMap = { "1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h" };
@@ -181,6 +179,8 @@ export function createMarketHistoryHandler({
       const result = {
         status: "ok",
         symbol,
+        market_symbol: isCrypto ? "BTC/USD" : symbol,
+        quote_currency: "USD",
         provider,
         interval,
         count: candles.length,
@@ -194,7 +194,7 @@ export function createMarketHistoryHandler({
     } catch (error) {
       return sendJson(res, 502, {
         error: error?.message || "Could not retrieve historical candles.",
-        code: isCrypto ? "BINANCE_HISTORY_UNAVAILABLE" : "TWELVE_DATA_HISTORY_UNAVAILABLE",
+        code: isCrypto ? "KRAKEN_HISTORY_UNAVAILABLE" : "TWELVE_DATA_HISTORY_UNAVAILABLE",
         provider,
         symbol
       });
