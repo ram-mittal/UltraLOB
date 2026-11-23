@@ -261,6 +261,7 @@ UltraLOB/
 ├── docs/MONTE_CARLO.md        # Monte Carlo model and build guide
 ├── api/pricing.js             # Monte Carlo API + bounded JavaScript CPU fallback
 ├── api/market-data.js         # Twelve Data equity WebSocket gateway + HTTP health route
+├── api/market-history.js      # Historical OHLC candles for Monte Carlo scenarios
 ├── lib/market-data.js         # Market symbol validation and provider message normalizers
 ├── pricing_service/           # FastAPI + native C++ CPU/CUDA pricing service
 ├── server.js                  # Persistent Node entrypoint for Render
@@ -374,6 +375,19 @@ cmake -S . -B build-cuda -G Ninja \
 cmake --build build-cuda --config Release
 ./build-cuda/ultralob_pricer --backend cuda --paths 10000000
 ```
+
+### Market Monte Carlo scenario lab
+
+The web terminal has a second Monte Carlo tool dedicated to **underlying-price scenario analysis** (separate from European option valuation). It retrieves recent OHLC candles through `/api/market-history`, calculates close-to-close log returns and resamples contiguous historical return blocks to generate future paths.
+
+- **BTCUSDT:** historical 1m/5m/15m/1h candles from Binance Spot public market data; no Binance API key required.
+- **AAPL, MSFT, GOOGL:** historical candles from Twelve Data `time_series`; the API key remains server-side. Requests consume the Twelve Data plan's API credits and are cached on the service.
+- **Visualization:** historical price line, sample simulated paths, median path, 25–75% and 5–95% percentile fans, plus entry, stop and target reference levels.
+- **Scenario statistics:** median terminal price, 5th–95th terminal range, probability that target is touched before stop, probability stop is touched first, and probability neither is touched inside the horizon.
+
+The user controls candle interval, lookback size, forecast horizon, number of paths, historical block length, long/short scenario direction, stop distance, target distance and random seed. A fresh live quote anchors the simulation when available; otherwise, the latest returned historical candle close is used and identified as the entry source. The result displays the candle timestamp, return sample size, per-bar mean and volatility, and seed for reproducibility.
+
+The model is a **historical block-bootstrap scenario tool**, not a market prediction or directional signal. It assumes sampled historical return blocks remain informative and does not model sudden regime changes, gaps, spread, slippage, fees, funding, liquidity, news, or intrabar ordering of stop/target touches. Validate with out-of-sample tests and paper trading before relying on it in a trading decision.
 
 ### Live market data and automatic Monte Carlo repricing
 
