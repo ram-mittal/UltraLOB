@@ -88,6 +88,8 @@ test("returns normalized chronological Kraken BTC candles without an API key", a
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.provider, "Kraken Spot");
+  assert.equal(res.body.market_symbol, "BTC/USD");
+  assert.equal(res.body.quote_currency, "USD");
   assert.equal(res.body.count, 60);
   assert.ok(requestedUrl.startsWith("https://api.kraken.com/0/public/OHLC?"));
   assert.equal(new URL(requestedUrl).searchParams.get("pair"), "XBTUSD");
