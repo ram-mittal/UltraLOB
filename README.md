@@ -10,7 +10,7 @@
 
 UltraLOB is a production-grade, deterministic electronic exchange and order-matching platform written in **modern C++20**. It models the complete execution architecture of modern financial exchanges (such as NASDAQ, CME, or NYSE): inbound order framing, zero-allocation FIX 4.4 and binary network gateways, real-time pre-trade risk management, single-threaded lock-free sequencing, price-time-priority matching, memory-mapped write-ahead logging (WAL), and real-time ITCH market data dissemination.
 
-The system is accompanied by an interactive **[Visual Trading Terminal](https://ultralob.onrender.com)** deployed on Render. The hosted application combines a direct browser-to-Binance BTC feed, an optional server-side Twelve Data equity feed, and a Monte Carlo pricing workbench.
+The system is accompanied by an interactive **[Visual Trading Terminal](https://ultralob.onrender.com)** deployed on Render. The hosted application combines a direct browser-to-Kraken BTC/USD feed, an optional server-side Twelve Data equity feed, and a Monte Carlo pricing workbench.
 
 ---
 
@@ -35,7 +35,7 @@ Experience the web terminal without installing anything:
 
 👉 **[Launch UltraLOB on Render](https://ultralob.onrender.com)**
 
-* **BTC/USDT live market data**: Browser-direct Binance Spot trade and best-bid/ask streams, with public endpoint fallbacks and no Binance API key.
+* **BTC/USD live market data**: Browser-direct Kraken Spot WebSocket v2 ticker/trade and best-bid/ask stream; public access requires no API key.
 * **Automated Monte Carlo repricing**: Live BTC spot can update the pricing input and trigger European call/put repricing on a configurable interval.
 * **Optional US equity feed**: AAPL, MSFT and GOOGL use Twelve Data through a server-side WebSocket gateway when the key and account entitlements are configured.
 * **Pricing analytics**: Risk-neutral GBM Monte Carlo, antithetic variates, Black–Scholes reference values, standard errors and 95% confidence intervals.
@@ -71,8 +71,8 @@ flowchart TB
         CPUJS["Built-in JavaScript Monte Carlo CPU fallback<br/>Default AUTO / CPU path"]
     end
 
-    BINANCE["Binance Spot public streams<br/>BTCUSDT trade + bookTicker"]
-    BINANCE_REST["Binance Spot public klines REST"]
+    KRAKEN["Kraken Spot WebSocket v2<br/>BTC/USD ticker + trade"]
+    KRAKEN_REST["Kraken Spot public OHLC REST<br/>BTC/USD"]
     TWELVE["Twelve Data WebSocket<br/>AAPL · MSFT · GOOGL"]
     TWELVE_REST["Twelve Data time_series REST<br/>AAPL · MSFT · GOOGL"]
     
@@ -87,11 +87,11 @@ flowchart TB
     APP --> PRICE
     APP --> MDGW
     APP --> HISTORY
-    UI <-->|"WSS · live BTC trades and best bid/ask"| BINANCE
+    UI <-->|"WSS · live BTC/USD trades and best bid/ask"| KRAKEN
     UI <-->|"WSS · equity subscription and ticks"| MDGW
     MDGW <-->|"Private upstream WebSocket<br/>API key stays server-side"| TWELVE
     UI <-->|"HTTPS · historical candles for scenario lab"| HISTORY
-    HISTORY -->|"Public klines · no key"| BINANCE_REST
+    HISTORY -->|"Public OHLC · no key"| KRAKEN_REST
     HISTORY -->|"Private time_series request"| TWELVE_REST
 
     PRICE -->|"Default when no native service is configured"| CPUJS
@@ -108,7 +108,7 @@ flowchart TB
 
 **Web pricing flow:** the browser posts model inputs to the same-origin `/api/pricing` route. The built-in JavaScript CPU fallback is the default, so Monte Carlo pricing does not need a separate pricing server. When `PRICING_SERVICE_URL` is configured, the Node API can forward requests to the optional FastAPI service and its native C++ library. CUDA requires a separate NVIDIA GPU host; the Render Free instance does not provide one.
 
-**Market-data flow:** BTC/USDT connects directly from the browser to Binance's public WebSocket endpoints; the BTC stream does not pass through Render. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. The separate `/api/market-history` endpoint retrieves Binance public klines for BTC and Twelve Data time-series candles for equities, with short server-side caching. The Market Monte Carlo scenario lab calibrates historical return blocks from completed candles; a fresh live quote can anchor the simulated entry price. The option-pricing Auto Monte Carlo separately waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
+**Market-data flow:** BTC/USD connects directly from the browser to Kraken's public WebSocket v2 endpoints; the BTC stream does not pass through Render. The application keeps `BTCUSDT` as an internal UI key but labels the actual Kraken market as BTC/USD. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. The separate `/api/market-history` endpoint retrieves Kraken public OHLC candles for BTC/USD and Twelve Data time-series candles for equities, with short server-side caching. The Market Monte Carlo scenario lab calibrates historical return blocks from completed candles; a fresh live quote can anchor the simulated entry price. The option-pricing Auto Monte Carlo separately waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
 
 ### Standalone C++ exchange and matching engine
 
@@ -387,7 +387,7 @@ cmake --build build-cuda --config Release
 
 The web terminal has a second Monte Carlo tool dedicated to **underlying-price scenario analysis** (separate from European option valuation). It retrieves recent OHLC candles through `/api/market-history`, calculates close-to-close log returns and resamples contiguous historical return blocks to generate future paths.
 
-- **BTCUSDT:** historical 1m/5m/15m/1h candles from Binance Spot public market data; no Binance API key required.
+- **BTC/USD (internal key BTCUSDT):** historical 1m/5m/15m/1h candles from Kraken Spot public OHLC; no API key required. Kraken returns up to 720 recent candles and includes an uncommitted current candle, which is excluded from calibration.
 - **AAPL, MSFT, GOOGL:** historical candles from Twelve Data `time_series`; the API key remains server-side. Requests consume the Twelve Data plan's API credits and are cached on the service.
 - **Visualization:** historical price line, sample simulated paths, median path, 25–75% and 5–95% percentile fans, plus entry, stop and target reference levels.
 - **Scenario statistics:** median terminal price, 5th–95th terminal range, probability that target is touched before stop, probability stop is touched first, and probability neither is touched inside the horizon.
@@ -400,12 +400,12 @@ The model is a **historical block-bootstrap scenario tool**, not a market predic
 
 The dashboard uses two deliberately separate market-data paths:
 
-- **BTC/USDT — direct browser connection:** the browser subscribes to Binance Spot's public combined streams `btcusdt@trade` and `btcusdt@bookTicker`. This bypasses Render's outbound WebSocket gateway for BTC and does not require a Binance API key. The client retries across `stream.binance.com:443`, Binance's market-data-only `data-stream.binance.vision:443` hostname, and `stream.binance.com:9443`.
+- **BTC/USD — direct browser connection:** the dashboard retains `BTCUSDT` as its internal symbol key for compatibility, but the live market is Kraken Spot `BTC/USD` (USD quote currency). The browser subscribes to Kraken's public WebSocket v2 `ticker` and `trade` channels. The public feed requires no API key.
 - **AAPL, MSFT, GOOGL — server-side Twelve Data connection:** the browser connects to UltraLOB's same-origin `/api/market-data` WebSocket gateway. The Node service connects to Twelve Data's real-time `/quotes/price` stream and keeps `TWELVE_DATA_API_KEY` on the server. The key is never included in browser code.
 
-The landing page selects BTCUSDT by default and attempts to connect the Binance feed automatically. When the first BTC trade arrives, the dashboard updates the live spot display and, when **Sync spot to live tick** is enabled, the Monte Carlo spot input. **Auto Monte Carlo** is enabled by default and runs the European call/put simulation after a live tick, then reprices on the selected 2/5/10/30-second interval (5 seconds by default). It does not run until a live quote is available. Strike, volatility, rate, dividend yield and maturity remain editable model assumptions. On the first BTC tick, the UI sets the strike to the observed spot and applies 55% annualized volatility and zero dividend yield as starting assumptions.
+The landing page selects BTC/USD by default and attempts to connect the Kraken Spot feed automatically. When the first BTC trade arrives, the dashboard updates the live spot display and, when **Sync spot to live tick** is enabled, the Monte Carlo spot input. **Auto Monte Carlo** is enabled by default and runs the European call/put simulation after a live tick, then reprices on the selected 2/5/10/30-second interval (5 seconds by default). It does not run until a live quote is available. Strike, volatility, rate, dividend yield and maturity remain editable model assumptions. On the first BTC tick, the UI sets the strike to the observed spot and applies 55% annualized volatility and zero dividend yield as starting assumptions.
 
-For BTC, the dashboard displays Binance's best bid/ask and spread—not a full Level-2 depth book. The equity Level 2 books are demo data. The FIX order ticket, order submissions and sample fills in the web terminal are simulated; the terminal does not submit real broker or exchange orders.
+For BTC, the dashboard displays Kraken's best bid/ask and spread—not a full Level-2 depth book. The quote is BTC/USD, not a USDT-denominated Binance price. The equity Level 2 books are demo data. The FIX order ticket, order submissions and sample fills in the web terminal are simulated; the terminal does not submit real broker or exchange orders.
 
 **Twelve Data configuration:** add `TWELVE_DATA_API_KEY` under the Render service's Environment settings, then save and redeploy. Vercel and Render environment variables are separate. The `GET /api/market-data` health response reports whether the key is present; it does not validate the key or confirm symbol entitlements. Basic/Grow WebSocket access is restricted to permitted trial symbols, so AAPL/MSFT/GOOGL may be rejected unless your account is entitled to them. Check the [Twelve Data WebSocket documentation](https://twelvedata.com/docs/websocket/websocket-getting-started) and [trial details](https://support.twelvedata.com/en/articles/5335783-trial).
 
@@ -413,7 +413,7 @@ Treat third-party prices as market-data references, not executable quotes. In pa
 
 ### Web terminal and API architecture
 
-The Render deployment runs the dashboard, the Node pricing endpoint and the Twelve Data equity WebSocket gateway in one persistent Node.js service. BTC uses a direct browser-to-Binance connection; it does not pass through Render's WebSocket proxy.
+The Render deployment runs the dashboard, the Node pricing endpoint and the Twelve Data equity WebSocket gateway in one persistent Node.js service. BTC uses a direct browser-to-Kraken BTC/USD connection; it does not pass through Render's WebSocket proxy.
 
 ```mermaid
 flowchart LR
@@ -428,7 +428,7 @@ flowchart LR
   CUDA --> RESULT
   RESULT --> BROWSER
 
-  BROWSER <-->|Direct public WebSocket| BINANCE["Binance Spot · BTCUSDT"]
+  BROWSER <-->|Direct public WebSocket| KRAKEN["Kraken Spot · BTC/USD"]
   BROWSER <-->|Same-origin WebSocket| NODE
   NODE <-->|Private API key| TWELVE["Twelve Data · US equities"]
 ```
@@ -486,7 +486,7 @@ Run the Node API and web-server integration tests with `npm test`. The native C+
 | `PRICING_FALLBACK_MAX_PATHS` | Optional | JavaScript CPU fallback cap; defaults to 10,000,000 paths |
 | `MARKET_DATA_MAX_CONNECTIONS` | Optional | Maximum simultaneous browser connections accepted by the market-data gateway |
 
-The Render Blueprint supplies the Node start command and free-service configuration. Binance BTC data is public and does not require a key. **Do not put provider keys in `index.html` or commit them to Git.** Render environment changes require a new deployment to take effect.
+The Render Blueprint supplies the Node start command and free-service configuration. Kraken BTC/USD public market data does not require a key. **Do not put provider keys in `index.html` or commit them to Git.** Render environment changes require a new deployment to take effect.
 
 #### Optional Vercel deployment
 
