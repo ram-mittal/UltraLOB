@@ -67,11 +67,14 @@ flowchart TB
         APP["server.js<br/>Serves index.html and /healthz"]
         PRICE["POST /api/pricing"]
         MDGW["/api/market-data<br/>HTTP health + equity WebSocket gateway"]
+        HISTORY["/api/market-history<br/>Cached historical candle API"]
         CPUJS["Built-in JavaScript Monte Carlo CPU fallback<br/>Default AUTO / CPU path"]
     end
 
     BINANCE["Binance Spot public streams<br/>BTCUSDT trade + bookTicker"]
+    BINANCE_REST["Binance Spot public klines REST"]
     TWELVE["Twelve Data WebSocket<br/>AAPL · MSFT · GOOGL"]
+    TWELVE_REST["Twelve Data time_series REST<br/>AAPL · MSFT · GOOGL"]
     
     subgraph OptionalPricing["Optional separately hosted native pricing service"]
         FASTAPI["FastAPI pricing API"]
@@ -83,9 +86,13 @@ flowchart TB
     UI -->|"HTTPS · dashboard and pricing inputs"| APP
     APP --> PRICE
     APP --> MDGW
+    APP --> HISTORY
     UI <-->|"WSS · live BTC trades and best bid/ask"| BINANCE
     UI <-->|"WSS · equity subscription and ticks"| MDGW
     MDGW <-->|"Private upstream WebSocket<br/>API key stays server-side"| TWELVE
+    UI <-->|"HTTPS · historical candles for scenario lab"| HISTORY
+    HISTORY -->|"Public klines · no key"| BINANCE_REST
+    HISTORY -->|"Private time_series request"| TWELVE_REST
 
     PRICE -->|"Default when no native service is configured"| CPUJS
     PRICE -->|"Optional PRICING_SERVICE_URL"| FASTAPI
@@ -101,7 +108,7 @@ flowchart TB
 
 **Web pricing flow:** the browser posts model inputs to the same-origin `/api/pricing` route. The built-in JavaScript CPU fallback is the default, so Monte Carlo pricing does not need a separate pricing server. When `PRICING_SERVICE_URL` is configured, the Node API can forward requests to the optional FastAPI service and its native C++ library. CUDA requires a separate NVIDIA GPU host; the Render Free instance does not provide one.
 
-**Market-data flow:** BTC/USDT connects directly from the browser to Binance's public WebSocket endpoints; the BTC stream does not pass through Render. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. Auto Monte Carlo waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
+**Market-data flow:** BTC/USDT connects directly from the browser to Binance's public WebSocket endpoints; the BTC stream does not pass through Render. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. The separate `/api/market-history` endpoint retrieves Binance public klines for BTC and Twelve Data time-series candles for equities, with short server-side caching. The Market Monte Carlo scenario lab calibrates historical return blocks from completed candles; a fresh live quote can anchor the simulated entry price. The option-pricing Auto Monte Carlo separately waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
 
 ### Standalone C++ exchange and matching engine
 
