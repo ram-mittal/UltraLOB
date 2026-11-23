@@ -1947,6 +1947,9 @@
         const expectedReturn = averageTerminal / spot - 1;
         const historicalBarsShown = candles.slice(-100);
         const intervalLabel = { "1m": "1-minute", "5m": "5-minute", "15m": "15-minute", "1h": "1-hour" }[interval];
+        if (symbol !== activeSymbol) {
+          throw new Error("Instrument changed to " + activeSymbol + " while the scenario was running. Run it again for the selected instrument.");
+        }
 
         marketMcLastResult = {
           symbol, interval, intervalLabel, provider: payload.provider,
