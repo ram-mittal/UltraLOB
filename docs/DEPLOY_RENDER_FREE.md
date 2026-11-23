@@ -38,4 +38,5 @@ The FIX order ticket remains a simulation and is not connected to a broker or ex
 
 - `/healthz` — Render process health
 - `/api/market-data` — available symbols and provider configuration
+- `/api/market-history?symbol=BTCUSDT&interval=5m&limit=250` — historical candles for scenario calibration
 - `/api/pricing` — pricing backend health
