@@ -465,6 +465,149 @@
     </div>
   </section>
 
+  <!-- MARKET MONTE CARLO SCENARIO LAB -->
+  <section id="marketMonteCarloPanel" class="bg-[#0f172a] border border-slate-800 rounded-xl p-4 mb-4">
+    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-4">
+      <div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[10px] uppercase tracking-[0.24em] text-cyan-400 font-bold">Market Scenario Analytics</span>
+          <span class="text-[9px] rounded border border-cyan-500/30 px-2 py-1 text-cyan-300">HISTORICAL BLOCK BOOTSTRAP</span>
+        </div>
+        <h2 class="text-base font-bold text-slate-100 mt-1">Market Monte Carlo Simulation</h2>
+        <p class="text-xs text-slate-400 mt-1 max-w-3xl">
+          Resamples blocks of observed market returns to visualize possible price paths. Calibrated from recent candles, not a directional forecast.
+        </p>
+      </div>
+      <div class="rounded-lg bg-slate-950/70 border border-slate-800 px-3 py-2 min-w-52">
+        <div class="text-[9px] uppercase tracking-wider text-slate-500">Scenario instrument</div>
+        <div id="marketMcSymbol" class="text-sm font-bold text-cyan-300 mt-0.5">BTCUSDT</div>
+        <div id="marketMcDataStatus" class="text-[10px] text-slate-400 mt-0.5">Historical candles not loaded</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 mb-3">
+      <label class="text-[10px] text-slate-400">Candle interval
+        <select id="marketMcInterval" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="1m">1 minute</option>
+          <option value="5m" selected>5 minutes</option>
+          <option value="15m">15 minutes</option>
+          <option value="1h">1 hour</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Lookback candles
+        <select id="marketMcLookback" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="100">100</option>
+          <option value="250" selected>250</option>
+          <option value="500">500</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Forecast horizon
+        <select id="marketMcHorizon" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="15">15 bars</option>
+          <option value="30" selected>30 bars</option>
+          <option value="60">60 bars</option>
+          <option value="120">120 bars</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Simulated paths
+        <select id="marketMcPaths" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="250">250</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1,000</option>
+          <option value="2000">2,000</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Return block
+        <select id="marketMcBlockLength" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="1">1 bar · IID</option>
+          <option value="3">3 bars</option>
+          <option value="5" selected>5 bars</option>
+          <option value="10">10 bars</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Trade direction
+        <select id="marketMcDirection" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="long" selected>Long scenario</option>
+          <option value="short">Short scenario</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Stop distance %
+        <input id="marketMcStopPct" type="number" min="0.1" max="50" step="0.1" value="2" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+      </label>
+      <label class="text-[10px] text-slate-400">Target distance %
+        <input id="marketMcTargetPct" type="number" min="0.1" max="100" step="0.1" value="3" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+      </label>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <button id="marketMcRunButton" type="button" onclick="runMarketMonteCarlo()" class="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition">
+        RUN MARKET MONTE CARLO
+      </button>
+      <label class="flex items-center gap-2 text-xs text-slate-300">
+        <input id="marketMcUseLiveSpot" type="checkbox" checked class="accent-cyan-500">
+        Anchor to fresh live quote when available
+      </label>
+      <span id="marketMcRunStatus" role="status" aria-live="polite" class="text-[10px] text-slate-400">Select an instrument and run a scenario.</span>
+    </div>
+
+    <div class="rounded-lg border border-slate-800 bg-slate-950/70 p-2 md:p-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-300">Historical price + simulated future paths</div>
+        <div class="flex flex-wrap gap-3 text-[9px] text-slate-400">
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-sky-400"></i>History</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-cyan-300"></i>Median path</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-cyan-300/30"></i>25–75% band</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-slate-400/30"></i>5–95% band</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-rose-400"></i>Stop</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-emerald-400"></i>Target</span>
+        </div>
+      </div>
+      <canvas id="marketMcCanvas" width="1200" height="360" class="w-full h-[260px] md:h-[340px]"></canvas>
+      <div id="marketMcChartEmpty" class="text-center text-xs text-slate-500 py-8">Run a scenario to load candles and draw the Monte Carlo fan.</div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Entry reference</div>
+        <div id="marketMcEntry" class="text-sm font-mono font-bold text-slate-100 mt-1">—</div>
+        <div id="marketMcEntrySource" class="text-[9px] text-slate-500 mt-1">No data</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Median terminal</div>
+        <div id="marketMcMedian" class="text-sm font-mono font-bold text-cyan-300 mt-1">—</div>
+        <div id="marketMcMedianReturn" class="text-[9px] text-slate-500 mt-1">—</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">5–95% terminal range</div>
+        <div id="marketMcRange" class="text-xs font-mono font-bold text-slate-100 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Empirical scenario percentiles</div>
+      </div>
+      <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Target before stop</div>
+        <div id="marketMcTargetFirst" class="text-sm font-mono font-bold text-emerald-300 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Path first-touch estimate</div>
+      </div>
+      <div class="rounded-lg border border-rose-500/20 bg-rose-500/[0.04] p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Stop before target</div>
+        <div id="marketMcStopFirst" class="text-sm font-mono font-bold text-rose-300 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Path first-touch estimate</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Neither touched</div>
+        <div id="marketMcNoHit" class="text-sm font-mono font-bold text-slate-100 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Within selected horizon</div>
+      </div>
+    </div>
+
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mt-3 px-1">
+      <div id="marketMcModelSummary" class="text-[10px] text-slate-400">Model calibration: waiting for historical data.</div>
+      <div id="marketMcDataTimestamp" class="text-[10px] text-slate-500">Data timestamp: —</div>
+    </div>
+    <p class="text-[9px] text-slate-500 mt-3 leading-relaxed">
+      Research tool, not a signal or execution engine. The block bootstrap resamples historical close-to-close returns; it assumes sampled blocks remain informative and cannot model sudden regime shifts, gaps, spread, slippage, fees, funding, liquidity, news or intrabar stop/target order. Scenario probabilities are conditional on the selected history, interval, block size and horizon. Validate with out-of-sample testing and paper trading before using them in a live decision.
+    </p>
+  </section>
+
   <!-- BOTTOM BAR: PERSISTENCE STORE & ACTIVE ORDERS BLOTTER -->
   <section class="grid grid-cols-12 gap-3">
     <!-- Active Orders Table -->
