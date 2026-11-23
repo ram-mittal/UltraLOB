@@ -700,7 +700,6 @@
     let liveBtcSocket = null;
     let liveBtcReconnectTimer = null;
     let liveBtcReconnectAttempt = 0;
-    let liveBtcEndpointIndex = 0;
     let liveMarketSocket = null;
     let liveMarketReconnectTimer = null;
     let liveMarketHeartbeatTimer = null;
@@ -763,7 +762,7 @@
     function selectSymbol(sym) {
       if (!LIVE_MARKET_SYMBOLS.includes(sym)) return;
       activeSymbol = sym;
-      pricingElement("pricingUnderlyingLabel").textContent = sym;
+      pricingElement("pricingUnderlyingLabel").textContent = marketDisplaySymbol(sym);
       if (window.lastMonteCarloResult && window.lastMonteCarloSymbol !== sym) {
         pricingElement("pricingRunMessage").textContent =
           "Last option-pricing result was for " + window.lastMonteCarloSymbol +
@@ -774,7 +773,7 @@
         b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
       });
       document.getElementById('tab-' + sym).className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
-      document.getElementById('bookSymbolBadge').innerText = sym;
+      document.getElementById('bookSymbolBadge').innerText = marketDisplaySymbol(sym);
       document.getElementById('bookModeLabel').textContent =
         sym === 'BTCUSDT' ? 'Live BTC Top of Book · Depth Not Loaded' : 'Simulated Level 2 Order Book';
       document.getElementById('symSpreadLabel').textContent = sym === 'BTCUSDT' ? 'LIVE SPREAD' : 'DEMO SPREAD';
@@ -1559,6 +1558,10 @@
       pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
     }
 
+    function marketDisplaySymbol(symbol) {
+      return symbol === "BTCUSDT" ? "BTC/USD" : symbol;
+    }
+
     function handleLiveMarketTick(tick) {
       const symbol = String(tick.symbol || "").toUpperCase();
       const price = Number(tick.price);
@@ -1586,13 +1589,13 @@
       if (symbol === activeSymbol) {
         if (pricingElement("marketMcRunStatus") && marketMcLastResult && marketMcLastResult.symbol === symbol) {
           pricingElement("marketMcRunStatus").textContent =
-            "New live " + symbol + " quote received · rerun the scenario to refresh its entry anchor.";
+            "New live " + marketDisplaySymbol(symbol) + " quote received · rerun the scenario to refresh its entry anchor.";
         }
         pricingElement("symLastPrice").textContent = "$" + price.toFixed(2);
         pricingElement("symLastPriceSource").textContent = "LIVE · " + quote.provider.toUpperCase();
         pricingElement("symLastPriceSource").className = "text-[9px] font-mono text-emerald-400";
         pricingElement("liveMarketLastTick").textContent =
-          symbol + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
+          marketDisplaySymbol(symbol) + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
         pricingElement("inputPrice").value = price.toFixed(4);
         if (pricingElement("autoSpotSync").checked) {
           pricingElement("pricingSpot").value = price.toFixed(4);
@@ -1628,7 +1631,7 @@
       if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
       const quote = liveMarketQuotes[activeSymbol];
       if (!quote) {
-        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + activeSymbol + " tick";
+        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + marketDisplaySymbol(activeSymbol) + " tick";
         return;
       }
       if (liveAutoPricingInFlight) {
@@ -1651,7 +1654,7 @@
         }
         liveLastAutoPricingAt = Date.now();
         pricingElement("liveAutoPricingStatus").textContent =
-          "Pricing " + activeSymbol + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
+          "Pricing " + marketDisplaySymbol(activeSymbol) + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
         await runMonteCarloPricing({ automatic: true });
       }, delay);
     }
@@ -2018,7 +2021,7 @@
 
     function renderMarketMonteCarloResults(result) {
       const percent = (count) => (100 * count / result.pathCount).toFixed(1) + "%";
-      pricingElement("marketMcSymbol").textContent = result.symbol === "BTCUSDT" ? "BTC/USD · KRAKEN" : result.symbol;
+      pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(result.symbol) + (result.symbol === "BTCUSDT" ? " · KRAKEN" : "");
       pricingElement("marketMcEntry").textContent = "$" + marketMcFormatPrice(result.spot);
       pricingElement("marketMcEntrySource").textContent = result.source + (result.symbol === "BTCUSDT" ? " · Kraken BTC/USD" : "");
       pricingElement("marketMcMedian").textContent = "$" + marketMcFormatPrice(result.terminalMedian);
@@ -2182,7 +2185,7 @@
     }
 
     function updateMarketMonteCarloSelection() {
-      pricingElement("marketMcSymbol").textContent = activeSymbol === "BTCUSDT" ? "BTC/USD · KRAKEN" : activeSymbol;
+      pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
       if (marketMcLastResult && marketMcLastResult.symbol !== activeSymbol) {
         clearMarketMonteCarloResults("Instrument changed to " + activeSymbol + " · run a new scenario to draw its path fan.");
         pricingElement("marketMcRunStatus").textContent =
@@ -2196,7 +2199,7 @@
       window.lastMonteCarloSymbol = activeSymbol;
       const call = data.call, put = data.put;
       const pricingInputs = data.inputs || readPricingInputs();
-      pricingElement("pricingUnderlyingLabel").textContent = activeSymbol === "BTCUSDT" ? "BTC/USD · KRAKEN" : activeSymbol;
+      pricingElement("pricingUnderlyingLabel").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
       pricingElement("pricingResultMeta").title =
         activeSymbol + " · Spot " + pricingInputs.spot +
         " · Strike " + pricingInputs.strike +
@@ -2276,7 +2279,7 @@
             : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.");
         if (automatic) {
           pricingElement("liveAutoPricingStatus").textContent =
-            "Last auto-price " + activeSymbol + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
+            "Last auto-price " + marketDisplaySymbol(activeSymbol) + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
         }
       } catch (error) {
         if (error.status === 413) {
@@ -2419,7 +2422,7 @@
       }
       if (marketMcLastResult) drawMarketMonteCarloChart(marketMcLastResult);
     });
-    pricingElement("marketMcSymbol").textContent = activeSymbol === "BTCUSDT" ? "BTC/USD · KRAKEN" : activeSymbol;
+    pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
     checkPricingService();
     checkLiveMarketDataConfig();
     // Start with the public BTC feed so the page demonstrates live data and
