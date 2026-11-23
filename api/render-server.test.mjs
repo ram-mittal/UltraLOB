@@ -28,6 +28,9 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     assert.match(dashboardHtml, /wss:\/\/data-stream\.binance\.vision:443/);
     assert.match(dashboardHtml, /let activeSymbol = 'BTCUSDT'/);
     assert.match(dashboardHtml, /scheduleLiveAutoPricing\(\)/);
+    assert.match(dashboardHtml, /Market Monte Carlo Simulation/);
+    assert.match(dashboardHtml, /runMarketMonteCarlo\(\)/);
+    assert.match(dashboardHtml, /api\/market-history/);
     const scriptStart = dashboardHtml.indexOf("<script>");
     const scriptEnd = dashboardHtml.indexOf("</script>", scriptStart);
     assert.ok(scriptStart >= 0 && scriptEnd > scriptStart, "dashboard inline script should be present");
