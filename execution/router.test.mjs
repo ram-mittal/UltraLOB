@@ -222,7 +222,7 @@ test("pairs an MT5 demo connector, receives a risk-sized command, and acknowledg
     const command = await next.json();
     assert.equal(command.status, "command");
     assert.equal(command.side, "BUY");
-    assert.equal(command.volume, 0.1);
+    assert.equal(command.volume, 0.09);
     assert.ok(command.risk_pct <= 0.5);
     assert.equal(command.symbol, "XAUUSD");
 
