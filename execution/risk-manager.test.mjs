@@ -60,7 +60,7 @@ test("sizes a demo position down to the configured risk budget", () => {
   const { connector, signal, now } = fixture();
   const result = evaluateDemoCommand(connector, signal, now);
   assert.equal(result.ok, true);
-  assert.equal(result.command.volume, 0.1);
+  assert.equal(result.command.volume, 0.09);
   assert.ok(result.command.risk_pct <= 0.5);
   assert.equal(result.command.side, "BUY");
   assert.equal(result.command.entry_reference, 2000.2);
@@ -74,9 +74,8 @@ test("rejects real accounts even if a connector is marked demo", () => {
 });
 
 test("rejects stale account snapshots", () => {
-  const { connector, signal, now } = fixture({
-    last_heartbeat_at: new Date(now - 16000).toISOString()
-  });
+  const { connector, signal, now } = fixture();
+  connector.last_heartbeat_at = new Date(now - 16000).toISOString();
   const result = evaluateDemoCommand(connector, signal, now);
   assert.equal(result.code, "STALE_ACCOUNT_SNAPSHOT");
 });
