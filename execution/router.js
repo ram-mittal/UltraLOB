@@ -209,6 +209,42 @@ export function createExecutionRouter({ store = null, adminKey = "", liveExecuti
     res.json({ connectors: connectors.map(sanitizeConnector) });
   });
 
+  router.patch("/connectors/:connectorId/status", requireStore, requireAdmin, async (req, res) => {
+    const connectorId = req.params.connectorId;
+    const status = cleanString(req.body?.status, 16).toUpperCase();
+    if (!UUID_PATTERN.test(connectorId)) {
+      return errorResponse(res, 400, "INVALID_CONNECTOR_ID", "Connector ID is invalid.");
+    }
+    if (!["ACTIVE", "PAUSED", "REVOKED"].includes(status)) {
+      return errorResponse(res, 400, "INVALID_CONNECTOR_STATUS", "Status must be ACTIVE, PAUSED or REVOKED.");
+    }
+    const updated = await store.setConnectorStatus(connectorId, status);
+    if (!updated) return errorResponse(res, 404, "CONNECTOR_NOT_FOUND", "Connector was not found.");
+    return res.json({ connector_id: updated.id, status: updated.status });
+  });
+
+  router.get("/commands", requireStore, requireAdmin, async (req, res) => {
+    const limit = req.query.limit == null ? 100 : Number(req.query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      return errorResponse(res, 400, "INVALID_LIMIT", "limit must be an integer between 1 and 500.");
+    }
+    const commands = await store.listCommands(limit);
+    return res.json({ commands });
+  });
+
+  router.get("/events", requireStore, requireAdmin, async (req, res) => {
+    const connectorId = req.query.connector_id ? String(req.query.connector_id) : null;
+    const limit = req.query.limit == null ? 100 : Number(req.query.limit);
+    if (connectorId && !UUID_PATTERN.test(connectorId)) {
+      return errorResponse(res, 400, "INVALID_CONNECTOR_ID", "connector_id is invalid.");
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      return errorResponse(res, 400, "INVALID_LIMIT", "limit must be an integer between 1 and 500.");
+    }
+    const events = await store.listEvents({ connectorId, limit });
+    return res.json({ events });
+  });
+
   router.post("/signals", requireStore, requireAdmin, async (req, res) => {
     const body = req.body || {};
     const signalId = cleanString(body.signal_id, 100);
