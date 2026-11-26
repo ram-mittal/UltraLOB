@@ -203,7 +203,7 @@ export class PostgresExecutionStore {
 
   async getConnectorByTokenHash(tokenHash) {
     const result = await this.pool.query(
-      "SELECT * FROM ultralob_execution_connectors WHERE token_hash=$1 AND status='ACTIVE'",
+      "SELECT * FROM ultralob_execution_connectors WHERE token_hash=$1 AND status IN ('ACTIVE','PAUSED')",
       [tokenHash]
     );
     return mapConnector(result.rows[0]);
