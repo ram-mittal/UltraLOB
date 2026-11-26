@@ -29,6 +29,14 @@ class MemoryStore {
   }
   async getConnector(id) { return this.connectors.get(id) || null; }
   async listConnectors() { return [...this.connectors.values()]; }
+  async setConnectorStatus(id, status) {
+    const item = this.connectors.get(id);
+    if (!item) return null;
+    item.status = status;
+    return { id: item.id, status: item.status };
+  }
+  async listCommands(limit = 100) { return [...this.commands.values()].slice(0, limit); }
+  async listEvents() { return []; }
   async updateHeartbeat(id, snapshot) {
     const item = this.connectors.get(id);
     if (!item) throw new Error("not found");
@@ -219,6 +227,24 @@ test("pairs an MT5 demo connector, receives a risk-sized command, and acknowledg
     );
     assert.equal(acknowledgement.status, 200);
     assert.equal((await acknowledgement.json()).command_status, "ACCEPTED");
+
+    const commandList = await fetch(ctx.url + "/commands", { headers: adminHeaders });
+    assert.equal(commandList.status, 200);
+    assert.equal((await commandList.json()).commands.length, 1);
+
+    const statusUpdate = await postJson(ctx.url + "/connectors/" + paired.connector.id + "/status", { status: "PAUSED" }, adminHeaders)
+      .then(async (response) => ({ response, body: await response.json() }));
+    assert.equal(statusUpdate.response.status, 404); // PATCH is the only status mutation method.
+
+    const pause = await fetch(ctx.url + "/connectors/" + paired.connector.id + "/status", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminHeaders },
+      body: JSON.stringify({ status: "PAUSED" })
+    });
+    assert.equal(pause.status, 200);
+    const pausedNext = await fetch(ctx.url + "/connectors/" + paired.connector.id + "/next", { headers: bearer });
+    assert.equal(pausedNext.status, 403);
+    assert.equal((await pausedNext.json()).code, "CONNECTOR_INACTIVE");
   } finally {
     await new Promise((resolve) => ctx.server.close(resolve));
   }
