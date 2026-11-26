@@ -79,6 +79,19 @@ CREATE INDEX IF NOT EXISTS idx_ultralob_execution_commands_queue
   ON ultralob_execution_commands(connector_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_ultralob_execution_commands_strategy
   ON ultralob_execution_commands(strategy_id, created_at);
+
+CREATE TABLE IF NOT EXISTS ultralob_execution_events (
+  id BIGSERIAL PRIMARY KEY,
+  connector_id UUID NOT NULL REFERENCES ultralob_execution_connectors(id),
+  command_id UUID,
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ultralob_execution_events_connector
+  ON ultralob_execution_events(connector_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ultralob_execution_events_command
+  ON ultralob_execution_events(command_id, created_at DESC);
 `;
 
 function mapConnector(row) {
@@ -117,6 +130,15 @@ function mapCommand(row) {
   };
 }
 
+async function appendEvent(client, connectorId, commandId, eventType, payload = {}) {
+  await client.query(
+    `INSERT INTO ultralob_execution_events
+     (connector_id, command_id, event_type, payload)
+     VALUES ($1,$2,$3,$4::jsonb)`,
+    [connectorId, commandId || null, eventType, JSON.stringify(payload)]
+  );
+}
+
 export class PostgresExecutionStore {
   constructor({ connectionString, ssl = false, max = 5 } = {}) {
     if (!connectionString) throw new Error("DATABASE_URL is required for execution storage.");
@@ -146,20 +168,37 @@ export class PostgresExecutionStore {
   }
 
   async createConnector(input) {
-    const result = await this.pool.query(
-      `INSERT INTO ultralob_execution_connectors
-       (id, token_hash, label, broker, environment, strategy_ids, allowed_symbols,
-        max_trade_risk_pct, max_daily_loss_pct, max_drawdown_pct, max_spread_points,
-        max_open_positions, max_deviation_points)
-       VALUES ($1,$2,$3,'MT5','DEMO',$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING *`,
-      [
-        input.id, input.token_hash, input.label, input.strategy_ids, input.allowed_symbols,
-        input.max_trade_risk_pct, input.max_daily_loss_pct, input.max_drawdown_pct,
-        input.max_spread_points, input.max_open_positions, input.max_deviation_points
-      ]
-    );
-    return mapConnector(result.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `INSERT INTO ultralob_execution_connectors
+         (id, token_hash, label, broker, environment, strategy_ids, allowed_symbols,
+          max_trade_risk_pct, max_daily_loss_pct, max_drawdown_pct, max_spread_points,
+          max_open_positions, max_deviation_points)
+         VALUES ($1,$2,$3,'MT5','DEMO',$4,$5,$6,$7,$8,$9,$10,$11)
+         RETURNING *`,
+        [
+          input.id, input.token_hash, input.label, input.strategy_ids, input.allowed_symbols,
+          input.max_trade_risk_pct, input.max_daily_loss_pct, input.max_drawdown_pct,
+          input.max_spread_points, input.max_open_positions, input.max_deviation_points
+        ]
+      );
+      await appendEvent(client, input.id, null, "CONNECTOR_CREATED", {
+        label: input.label,
+        broker: "MT5",
+        environment: "DEMO",
+        strategy_ids: input.strategy_ids,
+        allowed_symbols: input.allowed_symbols
+      });
+      await client.query("COMMIT");
+      return mapConnector(result.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getConnectorByTokenHash(tokenHash) {
@@ -271,7 +310,18 @@ export class PostgresExecutionStore {
             signal.risk_pct, signal.stop_loss, signal.take_profit, signal.expires_at
           ]
         );
-        if (result.rows[0]) commandIds.push(result.rows[0].id);
+        if (result.rows[0]) {
+          commandIds.push(result.rows[0].id);
+          await appendEvent(client, connector.id, result.rows[0].id, "SIGNAL_QUEUED", {
+            signal_id: signal.signal_id,
+            strategy_id: signal.strategy_id,
+            strategy_version: signal.strategy_version,
+            symbol: signal.symbol,
+            side: signal.side,
+            risk_pct: signal.risk_pct,
+            expires_at: signal.expires_at
+          });
+        }
       }
       await client.query("COMMIT");
       return { matched_connectors: connectors.rowCount, queued_commands: commandIds.length, command_ids: commandIds };
@@ -307,6 +357,9 @@ export class PostgresExecutionStore {
          WHERE id=$1 RETURNING *`,
         [selected.rows[0].id]
       );
+      await appendEvent(client, connectorId, selected.rows[0].id, "COMMAND_DISPATCHED", {
+        attempts: result.rows[0].attempts
+      });
       await client.query("COMMIT");
       return mapCommand(result.rows[0]);
     } catch (error) {
@@ -329,32 +382,111 @@ export class PostgresExecutionStore {
   }
 
   async rejectCommand(id, code, message) {
-    const result = await this.pool.query(
-      `UPDATE ultralob_execution_commands SET
-         status='REJECTED', error_code=$2, error_message=$3,
-         lease_expires_at=NULL, updated_at=NOW()
-       WHERE id=$1 RETURNING *`,
-      [id, code, message]
-    );
-    return mapCommand(result.rows[0]);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE ultralob_execution_commands SET
+           status='REJECTED', error_code=$2, error_message=$3,
+           lease_expires_at=NULL, updated_at=NOW()
+         WHERE id=$1 RETURNING *`,
+        [id, code, message]
+      );
+      if (result.rows[0]) {
+        await appendEvent(client, result.rows[0].connector_id, id, "RISK_REJECTED", {
+          error_code: code,
+          error_message: message
+        });
+      }
+      await client.query("COMMIT");
+      return mapCommand(result.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async acknowledgeCommand(connectorId, commandId, acknowledgement) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE ultralob_execution_commands SET
+           status=$3, broker_order_id=COALESCE($4,broker_order_id),
+           broker_deal_id=COALESCE($5,broker_deal_id),
+           broker_retcode=COALESCE($6,broker_retcode),
+           broker_comment=COALESCE($7,broker_comment),
+           error_code=$8, error_message=$9,
+           lease_expires_at=NULL, updated_at=NOW()
+         WHERE id=$1 AND connector_id=$2 AND status IN ('DISPATCHED','ACCEPTED','PARTIAL')
+         RETURNING *`,
+        [
+          commandId, connectorId, acknowledgement.status,
+          acknowledgement.broker_order_id, acknowledgement.broker_deal_id,
+          acknowledgement.broker_retcode, acknowledgement.broker_comment,
+          acknowledgement.error_code, acknowledgement.error_message
+        ]
+      );
+      if (result.rows[0]) {
+        await appendEvent(client, connectorId, commandId, "BROKER_ACKNOWLEDGEMENT", {
+          status: acknowledgement.status,
+          broker_order_id: acknowledgement.broker_order_id,
+          broker_deal_id: acknowledgement.broker_deal_id,
+          broker_retcode: acknowledgement.broker_retcode,
+          broker_comment: acknowledgement.broker_comment,
+          error_code: acknowledgement.error_code,
+          error_message: acknowledgement.error_message
+        });
+      }
+      await client.query("COMMIT");
+      return mapCommand(result.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setConnectorStatus(connectorId, status) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        "UPDATE ultralob_execution_connectors SET status=$2, updated_at=NOW() WHERE id=$1 RETURNING id,status",
+        [connectorId, status]
+      );
+      if (result.rows[0]) {
+        await appendEvent(client, connectorId, null, "CONNECTOR_STATUS_CHANGED", { status });
+      }
+      await client.query("COMMIT");
+      return result.rows[0] || null;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listCommands(limit = 100) {
     const result = await this.pool.query(
-      `UPDATE ultralob_execution_commands SET
-         status=$3, broker_order_id=$4, broker_deal_id=$5,
-         broker_retcode=$6, broker_comment=$7, error_code=$8, error_message=$9,
-         lease_expires_at=NULL, updated_at=NOW()
-       WHERE id=$1 AND connector_id=$2 AND status IN ('DISPATCHED','ACCEPTED','PARTIAL')
-       RETURNING *`,
-      [
-        commandId, connectorId, acknowledgement.status,
-        acknowledgement.broker_order_id, acknowledgement.broker_deal_id,
-        acknowledgement.broker_retcode, acknowledgement.broker_comment,
-        acknowledgement.error_code, acknowledgement.error_message
-      ]
+      `SELECT id, connector_id, signal_id, strategy_id, strategy_version, symbol,
+              side, status, volume, requested_risk_pct, risk_amount, risk_pct,
+              stop_loss, take_profit, broker_order_id, broker_deal_id,
+              broker_retcode, error_code, error_message, created_at, updated_at
+       FROM ultralob_execution_commands ORDER BY created_at DESC LIMIT $1`,
+      [limit]
     );
-    return mapCommand(result.rows[0]);
+    return result.rows.map((row) => ({
+      ...row,
+      requested_risk_pct: Number(row.requested_risk_pct),
+      risk_pct: row.risk_pct == null ? null : Number(row.risk_pct),
+      risk_amount: row.risk_amount == null ? null : Number(row.risk_amount),
+      volume: row.volume == null ? null : Number(row.volume)
+    }));
   }
 
   async close() {
