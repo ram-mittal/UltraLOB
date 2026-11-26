@@ -1,6 +1,8 @@
-# Build directories
+# Build & dependencies
 build/
 .cache/
+node_modules/
+data/runtime.json
 
 # Executables and debug symbols
 *.exe

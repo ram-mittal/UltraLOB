@@ -10,19 +10,31 @@
     },
     "api/market-history.js": {
       "maxDuration": 20
+    },
+    "api/strategies.js": {
+      "maxDuration": 10
+    },
+    "api/auth.js": {
+      "maxDuration": 10
+    },
+    "api/broker.js": {
+      "maxDuration": 15
+    },
+    "api/copy-trading.js": {
+      "maxDuration": 15
     }
   },
   "rewrites": [
     {
-      "source": "/",
-      "destination": "/index.html"
+      "source": "/public/(.*)",
+      "destination": "/public/$1"
     },
     {
-      "source": "/terminal",
-      "destination": "/index.html"
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
     },
     {
-      "source": "/fix_trading_terminal.html",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

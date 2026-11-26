@@ -1,0 +1,2439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UltraLOB — FIX 4.4 Institutional Trading Terminal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #0f172a;
+      --border: #1e293b;
+      --primary: #38bdf8;
+      --buy: #10b981;
+      --buy-bg: rgba(16, 185, 129, 0.15);
+      --sell: #f43f5e;
+      --sell-bg: rgba(244, 63, 94, 0.15);
+      --accent: #6366f1;
+    }
+    body {
+      background: #090d16;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+    .soh-tag {
+      background: #1e293b;
+      color: #94a3b8;
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 11px;
+    }
+    .soh-delim {
+      color: #38bdf8;
+      font-weight: bold;
+      margin: 0 1px;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0b1120; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    @keyframes pulse-fast {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.15); }
+    }
+    .live-dot {
+      animation: pulse-fast 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="p-3 antialiased min-h-screen flex flex-col gap-3">
+
+  <!-- TOP BAR / HEADER -->
+  <header class="bg-[#0f172a] border border-[#1e293b] rounded-lg px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <div class="w-3 h-3 rounded-full bg-emerald-500 live-dot"></div>
+        <span class="font-bold tracking-wider text-base bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
+          ULTRALOB
+        </span>
+      </div>
+      <span class="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
+        FIX 4.4 Engine
+      </span>
+      <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        SESSION: <span id="sessionStateText" class="font-bold">ACTIVE</span>
+      </span>
+    </div>
+
+    <!-- Session telemetry indicators -->
+    <div class="flex items-center gap-4 text-xs font-mono">
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Sender:</span>
+        <span class="text-sky-300 font-semibold" id="senderCompId">TRADER-1</span>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Target:</span>
+        <span class="text-sky-300 font-semibold" id="targetCompId">ULTRALOB-MOCK</span>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">OutSeq:</span>
+        <span class="text-amber-400 font-bold" id="outSeqNum">1</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">InSeq:</span>
+        <span class="text-emerald-400 font-bold" id="inSeqNum">1</span>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Heartbeat:</span>
+        <span class="text-slate-300" id="hbTimer">10s</span>
+        <div class="w-12 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+          <div id="hbBar" class="h-full bg-sky-400 transition-all duration-300" style="width: 100%"></div>
+        </div>
+      </div>
+      <div class="text-slate-600">|</div>
+      <div class="flex items-center gap-1.5">
+        <span class="text-slate-400">Engine Latency:</span>
+        <span class="text-emerald-400 font-semibold">184 ns</span>
+      </div>
+    </div>
+
+    <!-- Top Action Buttons -->
+    <div class="flex items-center gap-2">
+      <button onclick="runAutoDemo()" id="btnAutoDemo" class="px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 font-semibold text-white transition flex items-center gap-1.5 shadow">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        Run Full Demo
+      </button>
+      <button onclick="triggerSequenceGap()" class="px-2 py-1 text-xs rounded bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 border border-amber-500/40 font-mono transition" title="Injects a gap to trigger FIX ResendRequest (35=2) and SequenceReset (35=4)">
+        Simulate Gap Fill
+      </button>
+      <button onclick="resetAll()" class="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-mono transition">
+        Reset
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN GRID: 3 COLUMNS -->
+  <main class="grid grid-cols-12 gap-3 flex-1">
+
+    <!-- LEFT COLUMN: ORDER ENTRY + SYMBOL INFO (3 COLS) -->
+    <div class="col-span-12 lg:col-span-3 flex flex-col gap-3">
+      
+      <!-- Symbol Selector & Market Stats -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Instrument</label>
+          <span class="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">TRADING</span>
+        </div>
+        <div class="grid grid-cols-4 gap-1.5 mb-3">
+          <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">AAPL</button>
+          <button onclick="selectSymbol('MSFT')" id="tab-MSFT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">MSFT</button>
+          <button onclick="selectSymbol('GOOGL')" id="tab-GOOGL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">GOOGL</button>
+          <button onclick="selectSymbol('BTCUSDT')" id="tab-BTCUSDT" class="symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40">BTC/USD</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
+          <div>
+            <div class="text-[10px] text-slate-500">LAST PRICE</div>
+            <div class="text-base font-bold text-sky-400" id="symLastPrice">$150.25</div>
+            <div id="symLastPriceSource" class="text-[9px] font-mono text-amber-400">SIMULATED</div>
+          </div>
+          <div>
+            <div id="symSpreadLabel" class="text-[10px] text-slate-500">DEMO SPREAD</div>
+            <div class="text-base font-bold text-slate-300" id="symSpread">$0.05</div>
+          </div>
+          <div>
+            <div id="symBestBidLabel" class="text-[10px] text-slate-500">BEST BID (DEMO)</div>
+            <div class="text-emerald-400 font-semibold" id="symBestBid">$150.20</div>
+          </div>
+          <div>
+            <div id="symBestAskLabel" class="text-[10px] text-slate-500">BEST ASK (DEMO)</div>
+            <div class="text-rose-400 font-semibold" id="symBestAsk">$150.25</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FIX Order Entry Ticket -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex-1 flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between pb-2 mb-3 border-b border-slate-800">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+              Order Entry Ticket
+            </span>
+            <span class="text-[10px] font-mono text-amber-400">SIMULATED · NO BROKER ROUTING</span>
+          </div>
+
+          <!-- Side Toggle (Buy / Sell) -->
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <button type="button" onclick="setSide('1')" id="btnSideBuy" class="py-2 text-xs font-bold rounded bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 transition">
+              BUY (Side=1)
+            </button>
+            <button type="button" onclick="setSide('2')" id="btnSideSell" class="py-2 text-xs font-bold rounded bg-slate-800 text-slate-400 hover:text-white transition">
+              SELL (Side=2)
+            </button>
+          </div>
+
+          <!-- Order Type & TIF -->
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">OrdType (Tag 40)</label>
+              <select id="inputOrdType" class="w-full bg-slate-900 border border-slate-700 text-xs rounded px-2 py-1.5 font-mono text-slate-200 focus:outline-none focus:border-sky-500">
+                <option value="2">2 - Limit</option>
+                <option value="1">1 - Market</option>
+                <option value="3">3 - Stop</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">TIF (Tag 59)</label>
+              <select id="inputTIF" class="w-full bg-slate-900 border border-slate-700 text-xs rounded px-2 py-1.5 font-mono text-slate-200 focus:outline-none focus:border-sky-500">
+                <option value="0">0 - Day</option>
+                <option value="1">1 - GTC</option>
+                <option value="3">3 - IOC</option>
+                <option value="4">4 - FOK</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Price & Quantity -->
+          <div class="grid grid-cols-2 gap-2 mb-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">Price (Tag 44)</label>
+              <div class="relative">
+                <span class="absolute left-2.5 top-1.5 text-xs text-slate-500">$</span>
+                <input type="number" id="inputPrice" step="0.05" value="150.25" class="w-full bg-slate-900 border border-slate-700 text-xs rounded pl-6 pr-2 py-1.5 font-mono text-slate-100 focus:outline-none focus:border-sky-500">
+              </div>
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">OrderQty (Tag 38)</label>
+              <input type="number" id="inputQty" step="10" value="100" class="w-full bg-slate-900 border border-slate-700 text-xs rounded px-2 py-1.5 font-mono text-slate-100 focus:outline-none focus:border-sky-500">
+            </div>
+          </div>
+
+          <!-- ClOrdID & Account -->
+          <div class="grid grid-cols-2 gap-2 mb-4 text-xs font-mono">
+            <div>
+              <label class="block text-[11px] font-sans text-slate-400 mb-1">ClOrdID (Tag 11)</label>
+              <input type="text" id="inputClOrdID" value="ORD-001" readonly class="w-full bg-slate-900/60 border border-slate-800 text-[11px] rounded px-2 py-1 text-slate-400">
+            </div>
+            <div>
+              <label class="block text-[11px] font-sans text-slate-400 mb-1">Account (Tag 1)</label>
+              <input type="text" value="ALPHA-PRO" readonly class="w-full bg-slate-900/60 border border-slate-800 text-[11px] rounded px-2 py-1 text-slate-400">
+            </div>
+          </div>
+        </div>
+
+        <button onclick="submitManualOrder()" id="btnSubmitOrder" class="w-full py-2.5 text-xs font-bold uppercase tracking-wider rounded bg-emerald-500 hover:bg-emerald-400 text-white transition shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2">
+          <span>Submit FIX Order</span>
+          <span class="font-mono text-[11px] opacity-80">(8=FIX.4.4)</span>
+        </button>
+      </div>
+
+    </div>
+
+    <!-- MIDDLE COLUMN: LIMIT ORDER BOOK L2 DEPTH LADDER (4 COLS) -->
+    <div class="col-span-12 lg:col-span-4 flex flex-col gap-3">
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex-1 flex flex-col">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span id="bookModeLabel" class="text-xs font-bold uppercase tracking-wider text-slate-300">Simulated Level 2 Order Book</span>
+            <span id="bookSymbolBadge" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/30">AAPL</span>
+          </div>
+          <span class="text-[11px] font-mono text-slate-400">Fixed-Point Scale: 10<sup>8</sup></span>
+        </div>
+
+        <!-- Table Header -->
+        <div class="grid grid-cols-3 text-[11px] font-mono uppercase text-slate-400 pb-1.5 px-2 border-b border-slate-800">
+          <div>Price ($)</div>
+          <div class="text-right">Qty (Shares)</div>
+          <div class="text-right">Orders (Count)</div>
+        </div>
+
+        <!-- ASKS (SELL ORDERS) - RED / REVERSE ORDER -->
+        <div id="asksContainer" class="flex flex-col gap-0.5 py-1 text-xs font-mono">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- SPREAD / MID-PRICE DIVIDER -->
+        <div class="my-1.5 py-1 px-3 bg-slate-900/90 rounded border border-slate-800 flex items-center justify-between text-xs font-mono">
+          <div class="flex items-center gap-2">
+            <span class="text-slate-500 text-[10px] uppercase">Spread:</span>
+            <span id="spreadDisplay" class="text-amber-400 font-bold">$0.05</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-slate-500 text-[10px] uppercase">Mid:</span>
+            <span id="midDisplay" class="text-sky-300 font-bold">$150.225</span>
+          </div>
+        </div>
+
+        <!-- BIDS (BUY ORDERS) - GREEN -->
+        <div id="bidsContainer" class="flex flex-col gap-0.5 py-1 text-xs font-mono">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Order Book Depth Visual Bar -->
+        <div class="mt-auto pt-2 border-t border-slate-800">
+          <div class="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+            <span>BUY DEPTH: <strong id="bidDepthSum" class="text-emerald-400">620</strong></span>
+            <span>SELL DEPTH: <strong id="askDepthSum" class="text-rose-400">540</strong></span>
+          </div>
+          <div class="h-2 w-full bg-slate-800 rounded-full overflow-hidden flex">
+            <div id="bidDepthBar" class="h-full bg-emerald-500 transition-all duration-300" style="width: 53%"></div>
+            <div id="askDepthBar" class="h-full bg-rose-500 transition-all duration-300" style="width: 47%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: EXECUTION BLOTTER & FIX MESSAGE STREAM (5 COLS) -->
+    <div class="col-span-12 lg:col-span-5 flex flex-col gap-3">
+
+      <!-- FIX Message Log & Packet Inspector -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col h-72">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Live FIX 4.4 Wire Stream</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">SOH (\x01) FRAMED</span>
+          </div>
+          <button onclick="clearFixLog()" class="text-[10px] text-slate-400 hover:text-slate-200 font-mono">Clear</button>
+        </div>
+
+        <!-- Scrollable Message Stream -->
+        <div id="fixStreamContainer" class="flex-1 overflow-y-auto space-y-1.5 font-mono text-[11px] pr-1">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Execution Blotter (Trade Reports) -->
+      <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col flex-1">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Execution Blotter (Tag 35=8)</span>
+          <span class="text-[10px] font-mono text-emerald-400" id="fillCounterBadge">0 Fills</span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto">
+          <table class="w-full text-left font-mono text-[11px]">
+            <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-[#0f172a]">
+              <tr>
+                <th class="pb-1">Time</th>
+                <th class="pb-1">ClOrdID</th>
+                <th class="pb-1">Symbol</th>
+                <th class="pb-1">Side</th>
+                <th class="pb-1">Status</th>
+                <th class="pb-1 text-right">LastPx</th>
+                <th class="pb-1 text-right">LastQty</th>
+                <th class="pb-1 text-right">Leaves</th>
+              </tr>
+            </thead>
+            <tbody id="execBlotterBody" class="divide-y divide-slate-800/60">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+
+  <!-- MONTE CARLO PRICING WORKBENCH -->
+  <section id="monteCarloLab" class="bg-[#0f172a] border border-slate-800 rounded-xl p-4 lg:p-5 shadow-xl">
+    <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3 mb-4">
+      <div>
+        <div class="flex flex-wrap items-center gap-2 mb-1">
+          <span class="text-[10px] font-mono uppercase tracking-[0.22em] text-sky-400">Quantitative Analytics</span>
+          <span id="pricingBackendBadge" class="text-[10px] font-mono px-2 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">CPU FALLBACK · CUDA OPTIONAL</span>
+        </div>
+        <h2 class="text-lg font-bold text-slate-100">Monte Carlo Option Pricing</h2>
+        <p class="text-xs text-slate-400 mt-1 max-w-3xl">European exercise (exercise at expiry) call and put valuation using risk-neutral geometric Brownian motion and antithetic variates. Current underlying: <span id="pricingUnderlyingLabel" class="font-semibold text-slate-200">BTCUSDT</span>. This theoretical pricing model uses your contract assumptions; it is separate from the market-path scenario lab below.</p>
+      </div>
+      <div class="flex items-center gap-2 rounded-lg bg-slate-950/70 border border-slate-800 px-3 py-2 min-w-[250px]">
+        <span id="pricingServiceDot" class="w-2 h-2 rounded-full bg-amber-400"></span>
+        <div class="min-w-0">
+          <div id="pricingServiceStatus" class="text-[10px] uppercase font-bold tracking-wider text-amber-300">CHECKING PRICING SERVICE</div>
+          <div id="pricingServiceDetail" class="text-[10px] text-slate-500 truncate">Connecting to /api/pricing</div>
+        </div>
+        <button type="button" onclick="checkPricingService()" class="ml-auto text-[10px] text-sky-400 hover:text-sky-300 font-semibold">RECHECK</button>
+      </div>
+    </div>
+
+    <div id="liveMarketPanel" class="rounded-lg border border-slate-800 bg-slate-950/55 p-3 mb-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="liveMarketDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+        <div class="min-w-[210px] flex-1">
+          <div id="liveMarketStatus" class="text-[10px] uppercase tracking-wider font-bold text-slate-300">LIVE FEED NOT CONNECTED</div>
+          <div id="liveMarketDetail" class="text-[10px] text-slate-500">Kraken Spot · BTC/USD trades and top-of-book · Twelve Data equities</div>
+        </div>
+        <button id="liveMarketConnectButton" type="button" onclick="toggleLiveMarketData()" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold">CONNECT LIVE FEED</button>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-3 pt-3 border-t border-slate-800 text-[10px]">
+        <label class="inline-flex items-center gap-2 text-slate-300">
+          <input id="autoSpotSync" type="checkbox" checked class="accent-sky-500">
+          Sync spot to live tick
+        </label>
+        <label class="inline-flex items-center gap-2 text-slate-300">
+          <input id="autoPricingEnabled" type="checkbox" checked class="accent-emerald-500">
+          Auto Monte Carlo
+        </label>
+        <label class="inline-flex items-center gap-2 text-slate-400">
+          Reprice interval
+          <select id="autoPricingInterval" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200">
+            <option value="2">2 seconds</option>
+            <option value="5" selected>5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="30">30 seconds</option>
+          </select>
+        </label>
+        <span id="liveMarketLastTick" class="text-slate-500">No live tick received</span>
+        <span id="liveAutoPricingStatus" class="text-slate-500">Automatic pricing waits for a live tick</span>
+      </div>
+      <div class="text-[9px] text-slate-500 mt-2">Live spot reference only — not consolidated SIP/NBBO or an executable quote. Strike, volatility, rates, dividend yield and maturity remain your assumptions. The Level 2 book and bid/ask depth below are demo data.</div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-3">
+      <div class="col-span-12 xl:col-span-5 rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div class="text-xs font-bold uppercase tracking-wider text-slate-300">Simulation Parameters</div>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" onclick="setPricingPreset('atm')" class="px-2 py-1 text-[10px] rounded bg-slate-800 border border-slate-700 text-slate-300 hover:border-sky-500/60">ATM BASE</button>
+            <button type="button" onclick="setPricingPreset('stress')" class="px-2 py-1 text-[10px] rounded bg-slate-800 border border-slate-700 text-slate-300 hover:border-rose-500/60">HIGH VOL</button>
+            <button type="button" onclick="useActiveSymbolSpot()" class="px-2 py-1 text-[10px] rounded bg-sky-500/10 border border-sky-500/30 text-sky-300 hover:bg-sky-500/20">USE BOOK MID</button>
+          </div>
+        </div>
+        <form id="pricingForm" onsubmit="event.preventDefault(); runMonteCarloPricing();">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">SPOT PRICE (S₀)</span><input id="pricingSpot" type="number" min="0.000001" step="any" value="150.25" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">STRIKE (K)</span><input id="pricingStrike" type="number" min="0.000001" step="any" value="155" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">RISK-FREE RATE (r)</span><input id="pricingRate" type="number" min="-1" max="1" step="any" value="0.045" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">DIVIDEND YIELD (q)</span><input id="pricingDividend" type="number" min="-1" max="1" step="any" value="0.005" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">VOLATILITY (σ)</span><input id="pricingVol" type="number" min="0" max="5" step="any" value="0.28" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">MATURITY (YEARS)</span><input id="pricingMaturity" type="number" min="0.0001" max="100" step="any" value="0.5" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">TOTAL PATHS</span><input id="pricingPaths" type="number" min="4" max="50000000" step="2" value="2000000" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">RANDOM SEED</span><input id="pricingSeed" type="number" min="0" max="9007199254740991" step="1" value="42" required class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"></label>
+            <label class="block"><span class="block text-[10px] text-slate-400 mb-1">COMPUTE BACKEND</span><select id="pricingBackend" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-sky-500"><option value="auto">AUTO SELECT</option><option value="cpu">CPU</option><option value="cuda">NVIDIA CUDA</option></select></label>
+          </div>
+          <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-3">
+            <button id="pricingRunButton" type="submit" class="flex-1 px-4 py-2.5 rounded bg-sky-600 hover:bg-sky-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-sky-950/40">Run Monte Carlo Simulation</button>
+            <button id="pricingCompareButton" type="button" onclick="runPricingComparison()" class="px-3 py-2.5 rounded bg-indigo-600/80 hover:bg-indigo-500 disabled:bg-slate-700 text-white text-xs font-bold">COMPARE CPU / GPU</button>
+            <button type="button" onclick="resetPricingInputs()" class="px-3 py-2.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold">RESET INPUTS</button>
+          </div>
+          <p class="text-[10px] text-slate-500 mt-2">Rates and volatility use annualized decimals (0.20 = 20%). Paths must be even because simulations use antithetic pairs.</p>
+        </form>
+      </div>
+
+      <div class="col-span-12 xl:col-span-7 flex flex-col gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">Execution Backend</div><div id="pricingMetricBackend" class="text-sm font-bold text-sky-300 font-mono mt-1">—</div><div class="text-[9px] text-slate-500 mt-1">Actual selected engine</div></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">Elapsed Time</div><div id="pricingMetricTime" class="text-sm font-bold text-slate-100 font-mono mt-1">—</div><div class="text-[9px] text-slate-500 mt-1">Native pricer runtime</div></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">Path Throughput</div><div id="pricingMetricThroughput" class="text-sm font-bold text-emerald-300 font-mono mt-1">—</div><div class="text-[9px] text-slate-500 mt-1">Paths per second</div></div>
+          <div class="bg-slate-950/60 border border-slate-800 rounded-lg p-3"><div class="text-[9px] text-slate-500 uppercase tracking-wider">GPU Utilization</div><div id="pricingMetricGpu" class="text-sm font-bold text-slate-300 font-mono mt-1">Not reported</div><div class="text-[9px] text-slate-500 mt-1">Hardware telemetry unavailable</div></div>
+        </div>
+
+        <div id="pricingComparePanel" class="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-lg border border-indigo-500/20 bg-indigo-500/[0.04] p-3">
+          <div><div class="text-[9px] uppercase tracking-wider text-slate-500">CPU benchmark</div><div id="pricingCpuCompare" class="text-xs font-mono font-semibold text-slate-200 mt-1">Not run</div></div>
+          <div><div class="text-[9px] uppercase tracking-wider text-slate-500">CUDA benchmark</div><div id="pricingCudaCompare" class="text-xs font-mono font-semibold text-slate-200 mt-1">Not run</div></div>
+          <div><div class="text-[9px] uppercase tracking-wider text-slate-500">GPU speed-up</div><div id="pricingSpeedupCompare" class="text-xs font-mono font-semibold text-indigo-300 mt-1">—</div></div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.045] p-3">
+            <div class="flex items-center justify-between"><span class="text-[10px] uppercase tracking-wider font-bold text-emerald-300">European Call</span><span class="text-[9px] text-slate-500">CALL OPTION</span></div>
+            <div id="pricingCallPrice" class="text-2xl font-bold font-mono text-slate-100 mt-2">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Black–Scholes: <span id="pricingCallBS" class="text-slate-300 font-mono">—</span></div>
+            <div class="text-[10px] text-slate-500 mt-2">95% confidence interval</div><div id="pricingCallCI" class="text-[10px] font-mono text-emerald-300 mt-0.5">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Standard error: <span id="pricingCallSE" class="font-mono text-slate-300">—</span></div>
+          </div>
+          <div class="rounded-lg border border-rose-500/20 bg-rose-500/[0.045] p-3">
+            <div class="flex items-center justify-between"><span class="text-[10px] uppercase tracking-wider font-bold text-rose-300">European Put</span><span class="text-[9px] text-slate-500">PUT OPTION</span></div>
+            <div id="pricingPutPrice" class="text-2xl font-bold font-mono text-slate-100 mt-2">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Black–Scholes: <span id="pricingPutBS" class="text-slate-300 font-mono">—</span></div>
+            <div class="text-[10px] text-slate-500 mt-2">95% confidence interval</div><div id="pricingPutCI" class="text-[10px] font-mono text-rose-300 mt-0.5">—</div>
+            <div class="text-[10px] text-slate-500 mt-1">Standard error: <span id="pricingPutSE" class="font-mono text-slate-300">—</span></div>
+          </div>
+        </div>
+        <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-300">Monte Carlo vs Analytical Reference</div><div id="pricingResultMeta" class="text-[9px] font-mono text-slate-500">Awaiting first simulation</div></div>
+          <canvas id="pricingComparisonChart" height="160" class="w-full h-40"></canvas>
+          <div class="flex flex-wrap gap-4 text-[9px] text-slate-500 mt-1"><span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-sm bg-sky-400"></i>Monte Carlo</span><span class="flex items-center gap-1.5"><i class="w-2 h-2 rounded-sm bg-slate-500"></i>Black–Scholes</span></div>
+        </div>
+        <div id="pricingRunMessage" role="status" aria-live="polite" class="text-[10px] text-slate-500 min-h-4">Pricing API has not been checked yet.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MARKET MONTE CARLO SCENARIO LAB -->
+  <section id="marketMonteCarloPanel" class="bg-[#0f172a] border border-slate-800 rounded-xl p-4 mb-4">
+    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-4">
+      <div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[10px] uppercase tracking-[0.24em] text-cyan-400 font-bold">Market Scenario Analytics</span>
+          <span class="text-[9px] rounded border border-cyan-500/30 px-2 py-1 text-cyan-300">HISTORICAL BLOCK BOOTSTRAP</span>
+        </div>
+        <h2 class="text-base font-bold text-slate-100 mt-1">Market Monte Carlo Simulation</h2>
+        <p class="text-xs text-slate-400 mt-1 max-w-3xl">
+          Resamples blocks of observed market returns to visualize possible price paths. Calibrated from recent candles, not a directional forecast.
+        </p>
+      </div>
+      <div class="rounded-lg bg-slate-950/70 border border-slate-800 px-3 py-2 min-w-52">
+        <div class="text-[9px] uppercase tracking-wider text-slate-500">Scenario instrument</div>
+        <div id="marketMcSymbol" class="text-sm font-bold text-cyan-300 mt-0.5">BTCUSDT</div>
+        <div id="marketMcDataStatus" class="text-[10px] text-slate-400 mt-0.5">Historical candles not loaded</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-9 gap-2 mb-3">
+      <label class="text-[10px] text-slate-400">Candle interval
+        <select id="marketMcInterval" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="1m">1 minute</option>
+          <option value="5m" selected>5 minutes</option>
+          <option value="15m">15 minutes</option>
+          <option value="1h">1 hour</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Lookback candles
+        <select id="marketMcLookback" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="100">100</option>
+          <option value="250" selected>250</option>
+          <option value="500">500</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Forecast horizon
+        <select id="marketMcHorizon" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="15">15 bars</option>
+          <option value="30" selected>30 bars</option>
+          <option value="60">60 bars</option>
+          <option value="120">120 bars</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Simulated paths
+        <select id="marketMcPaths" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="250">250</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1,000</option>
+          <option value="2000">2,000</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Return block
+        <select id="marketMcBlockLength" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="1">1 bar · IID</option>
+          <option value="3">3 bars</option>
+          <option value="5" selected>5 bars</option>
+          <option value="10">10 bars</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Trade direction
+        <select id="marketMcDirection" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+          <option value="long" selected>Long scenario</option>
+          <option value="short">Short scenario</option>
+        </select>
+      </label>
+      <label class="text-[10px] text-slate-400">Stop distance %
+        <input id="marketMcStopPct" type="number" min="0.1" max="50" step="0.1" value="2" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+      </label>
+      <label class="text-[10px] text-slate-400">Target distance %
+        <input id="marketMcTargetPct" type="number" min="0.1" max="100" step="0.1" value="3" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+      </label>
+      <label class="text-[10px] text-slate-400">Random seed
+        <input id="marketMcSeed" type="number" min="0" max="2147483647" step="1" value="42" class="mt-1 w-full bg-slate-900 border border-slate-700 rounded px-2 py-2 text-xs text-slate-100">
+      </label>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <button id="marketMcRunButton" type="button" onclick="runMarketMonteCarlo()" class="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition">
+        RUN MARKET MONTE CARLO
+      </button>
+      <label class="flex items-center gap-2 text-xs text-slate-300">
+        <input id="marketMcUseLiveSpot" type="checkbox" checked class="accent-cyan-500">
+        Anchor to fresh live quote when available
+      </label>
+      <span id="marketMcRunStatus" role="status" aria-live="polite" class="text-[10px] text-slate-400">Select an instrument and run a scenario.</span>
+    </div>
+
+    <div class="rounded-lg border border-slate-800 bg-slate-950/70 p-2 md:p-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-300">Historical price + simulated future paths</div>
+        <div class="flex flex-wrap gap-3 text-[9px] text-slate-400">
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-sky-400"></i>History</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-cyan-300"></i>Median path</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-cyan-300/30"></i>25–75% band</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-slate-400/30"></i>5–95% band</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-rose-400"></i>Stop</span>
+          <span class="flex items-center gap-1"><i class="w-2 h-2 rounded-sm bg-emerald-400"></i>Target</span>
+        </div>
+      </div>
+      <canvas id="marketMcCanvas" width="1200" height="360" class="w-full h-[260px] md:h-[340px]"></canvas>
+      <div id="marketMcChartEmpty" class="text-center text-xs text-slate-500 py-8">Run a scenario to load candles and draw the Monte Carlo fan.</div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Entry reference</div>
+        <div id="marketMcEntry" class="text-sm font-mono font-bold text-slate-100 mt-1">—</div>
+        <div id="marketMcEntrySource" class="text-[9px] text-slate-500 mt-1">No data</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Median terminal</div>
+        <div id="marketMcMedian" class="text-sm font-mono font-bold text-cyan-300 mt-1">—</div>
+        <div id="marketMcMedianReturn" class="text-[9px] text-slate-500 mt-1">—</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">5–95% terminal range</div>
+        <div id="marketMcRange" class="text-xs font-mono font-bold text-slate-100 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Empirical scenario percentiles</div>
+      </div>
+      <div class="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Target before stop</div>
+        <div id="marketMcTargetFirst" class="text-sm font-mono font-bold text-emerald-300 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Path first-touch estimate</div>
+      </div>
+      <div class="rounded-lg border border-rose-500/20 bg-rose-500/[0.04] p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Stop before target</div>
+        <div id="marketMcStopFirst" class="text-sm font-mono font-bold text-rose-300 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Path first-touch estimate</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+        <div class="text-[9px] text-slate-500 uppercase tracking-wider">Neither touched</div>
+        <div id="marketMcNoHit" class="text-sm font-mono font-bold text-slate-100 mt-1">—</div>
+        <div class="text-[9px] text-slate-500 mt-1">Within selected horizon</div>
+      </div>
+    </div>
+
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mt-3 px-1">
+      <div id="marketMcModelSummary" class="text-[10px] text-slate-400">Model calibration: waiting for historical data.</div>
+      <div id="marketMcDataTimestamp" class="text-[10px] text-slate-500">Data timestamp: —</div>
+    </div>
+    <p class="text-[9px] text-slate-500 mt-3 leading-relaxed">
+      Research tool, not a signal or execution engine. The block bootstrap resamples historical close-to-close returns; it assumes sampled blocks remain informative and cannot model sudden regime shifts, gaps, spread, slippage, fees, funding, liquidity, news or intrabar stop/target order. Scenario probabilities are conditional on the selected history, interval, block size and horizon. Validate with out-of-sample testing and paper trading before using them in a live decision.
+    </p>
+  </section>
+
+  <!-- BOTTOM BAR: PERSISTENCE STORE & ACTIVE ORDERS BLOTTER -->
+  <section class="grid grid-cols-12 gap-3">
+    <!-- Active Orders Table -->
+    <div class="col-span-12 lg:col-span-8 bg-[#0f172a] border border-[#1e293b] rounded-lg p-3">
+      <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Working Orders Blotter</span>
+        <span class="text-[11px] font-mono text-slate-400" id="workingOrdersCount">0 Active</span>
+      </div>
+      <div class="overflow-x-auto max-h-36 overflow-y-auto">
+        <table class="w-full text-left font-mono text-[11px]">
+          <thead class="text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="pb-1">ClOrdID</th>
+              <th class="pb-1">OrigID</th>
+              <th class="pb-1">Symbol</th>
+              <th class="pb-1">Side</th>
+              <th class="pb-1">Type</th>
+              <th class="pb-1 text-right">Price</th>
+              <th class="pb-1 text-right">Qty</th>
+              <th class="pb-1 text-right">Leaves</th>
+              <th class="pb-1 text-right">Cum</th>
+              <th class="pb-1">Status</th>
+              <th class="pb-1 text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="workingOrdersBody" class="divide-y divide-slate-800/60">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Memory-Mapped Message Store Telemetry -->
+    <div class="col-span-12 lg:col-span-4 bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col justify-between">
+      <div>
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Persistent FixStore (mmap)</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">O(1) INDEX</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-900/60 p-2 rounded border border-slate-800">
+          <div>
+            <div class="text-[10px] text-slate-500">STORE FILE</div>
+            <div class="text-slate-200 truncate" title="fix_client_demo.store">fix_demo.store</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">MAP SIZE</div>
+            <div class="text-slate-200">64.0 MB</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">RECORDS LOGGED</div>
+            <div class="text-amber-400 font-bold" id="storeRecordCount">0</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-slate-500">MAX SEQUENCES</div>
+            <div class="text-slate-300">1,048,576</div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-2 text-[11px] text-slate-400 flex items-center justify-between">
+        <span>Crash Recovery Status:</span>
+        <span class="text-emerald-400 font-mono font-semibold flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+          SYNCED TO DISK
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- JAVASCRIPT ENGINE & SIMULATOR -->
+  <script>
+    // State
+    let activeSymbol = 'BTCUSDT';
+    let currentSide = '1'; // 1=Buy, 2=Sell
+    let outSeq = 1;
+    let inSeq = 1;
+    let clOrdCounter = 1;
+    let storeRecords = 0;
+    let hbSeconds = 10;
+    let workingOrders = [];
+    let fillReports = [];
+
+    // Live market data state. The browser never receives the Twelve Data API key.
+    const LIVE_MARKET_SYMBOLS = ["AAPL", "MSFT", "GOOGL", "BTCUSDT"];
+    const liveMarketQuotes = Object.create(null);
+    // BTC uses a browser-direct public Kraken stream; equities use the
+    // same-origin Twelve Data gateway so its API key stays server-side.
+    let liveBtcSocket = null;
+    let liveBtcReconnectTimer = null;
+    let liveBtcReconnectAttempt = 0;
+    let liveMarketSocket = null;
+    let liveMarketReconnectTimer = null;
+    let liveMarketHeartbeatTimer = null;
+    let liveMarketReconnectAttempt = 0;
+    let liveMarketIntentionalClose = false;
+    let twelveDataConfigured = false;
+    let liveAutoPricingTimer = null;
+    let liveLastAutoPricingAt = 0;
+    let liveAutoPricingInFlight = false;
+    let liveAutoPricingPending = false;
+    let btcModelDefaultsApplied = false;
+    let marketMcLastResult = null;
+    let marketMcRunning = false;
+
+    // Order books per symbol
+    const orderBooks = {
+      'AAPL': {
+        bids: [
+          { price: 150.20, qty: 150, orders: 2 },
+          { price: 150.15, qty: 220, orders: 4 },
+          { price: 150.10, qty: 100, orders: 1 },
+          { price: 150.05, qty: 150, orders: 3 },
+        ],
+        asks: [
+          { price: 150.40, qty: 140, orders: 2 },
+          { price: 150.35, qty: 180, orders: 3 },
+          { price: 150.30, qty: 120, orders: 2 },
+          { price: 150.25, qty: 100, orders: 1 },
+        ]
+      },
+      'MSFT': {
+        bids: [
+          { price: 310.40, qty: 100, orders: 1 },
+          { price: 310.35, qty: 250, orders: 3 },
+          { price: 310.20, qty: 150, orders: 2 },
+        ],
+        asks: [
+          { price: 310.60, qty: 120, orders: 2 },
+          { price: 310.55, qty: 200, orders: 3 },
+          { price: 310.50, qty: 80, orders: 1 },
+        ]
+      },
+      'GOOGL': {
+        bids: [
+          { price: 2799.50, qty: 80, orders: 1 },
+          { price: 2799.00, qty: 150, orders: 2 },
+        ],
+        asks: [
+          { price: 2800.50, qty: 100, orders: 1 },
+          { price: 2801.00, qty: 120, orders: 2 },
+        ]
+      }
+    };
+
+    function getTimeStr() {
+      const d = new Date();
+      return d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
+    }
+
+    function selectSymbol(sym) {
+      if (!LIVE_MARKET_SYMBOLS.includes(sym)) return;
+      activeSymbol = sym;
+      pricingElement("pricingUnderlyingLabel").textContent = marketDisplaySymbol(sym);
+      if (window.lastMonteCarloResult && window.lastMonteCarloSymbol !== sym) {
+        pricingElement("pricingRunMessage").textContent =
+          "Last option-pricing result was for " + window.lastMonteCarloSymbol +
+          ". Run the option pricer again to price " + sym + ".";
+      }
+      updateMarketMonteCarloSelection();
+      document.querySelectorAll('.symbol-tab').forEach(b => {
+        b.className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60';
+      });
+      document.getElementById('tab-' + sym).className = 'symbol-tab py-1.5 text-xs font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/40';
+      document.getElementById('bookSymbolBadge').innerText = marketDisplaySymbol(sym);
+      document.getElementById('bookModeLabel').textContent =
+        sym === 'BTCUSDT' ? 'Live BTC Top of Book · Depth Not Loaded' : 'Simulated Level 2 Order Book';
+      document.getElementById('symSpreadLabel').textContent = sym === 'BTCUSDT' ? 'LIVE SPREAD' : 'DEMO SPREAD';
+      document.getElementById('symBestBidLabel').textContent = sym === 'BTCUSDT' ? 'BEST BID (LIVE)' : 'BEST BID (DEMO)';
+      document.getElementById('symBestAskLabel').textContent = sym === 'BTCUSDT' ? 'BEST ASK (LIVE)' : 'BEST ASK (DEMO)';
+
+      const liveQuote = liveMarketQuotes[sym];
+      if (sym === 'BTCUSDT' && !btcModelDefaultsApplied) {
+        pricingElement('pricingVol').value = '0.55';
+        pricingElement('pricingDividend').value = '0';
+      }
+      if (liveQuote && Number.isFinite(Number(liveQuote.price))) {
+        document.getElementById('symLastPrice').textContent = '$' + Number(liveQuote.price).toFixed(2);
+        document.getElementById('symLastPriceSource').textContent = 'LIVE · ' + (liveQuote.provider || 'MARKET DATA').toUpperCase();
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-emerald-400';
+        document.getElementById('inputPrice').value = Number(liveQuote.price).toFixed(4);
+        if (pricingElement('autoSpotSync')?.checked) {
+          pricingElement('pricingSpot').value = Number(liveQuote.price).toFixed(4);
+        }
+      } else if (sym === 'BTCUSDT') {
+        document.getElementById('symLastPrice').textContent = '$—';
+        document.getElementById('symLastPriceSource').textContent = 'WAITING FOR KRAKEN';
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-amber-400';
+        document.getElementById('symBestBid').textContent = '$—';
+        document.getElementById('symBestAsk').textContent = '$—';
+        document.getElementById('symSpread').textContent = '—';
+        document.getElementById('inputPrice').value = '';
+      } else {
+        const demoPrices = { AAPL: '150.25', MSFT: '310.50', GOOGL: '2800.00' };
+        document.getElementById('symLastPrice').textContent = '$' + Number(demoPrices[sym]).toFixed(2);
+        document.getElementById('symLastPriceSource').textContent = 'SIMULATED';
+        document.getElementById('symLastPriceSource').className = 'text-[9px] font-mono text-amber-400';
+        document.getElementById('inputPrice').value = demoPrices[sym];
+      }
+
+      renderBook();
+      if (liveQuote && Number.isFinite(Number(liveQuote.price)) && pricingElement('autoPricingEnabled')?.checked) {
+        scheduleLiveAutoPricing();
+      }
+    }
+
+    function setSide(side) {
+      currentSide = side;
+      const buyBtn = document.getElementById('btnSideBuy');
+      const sellBtn = document.getElementById('btnSideSell');
+      const submitBtn = document.getElementById('btnSubmitOrder');
+
+      if (side === '1') {
+        buyBtn.className = 'py-2 text-xs font-bold rounded bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 transition';
+        sellBtn.className = 'py-2 text-xs font-bold rounded bg-slate-800 text-slate-400 hover:text-white transition';
+        submitBtn.className = 'w-full py-2.5 text-xs font-bold uppercase tracking-wider rounded bg-emerald-500 hover:bg-emerald-400 text-white transition shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2';
+      } else {
+        sellBtn.className = 'py-2 text-xs font-bold rounded bg-rose-500 text-white shadow-lg shadow-rose-500/20 transition';
+        buyBtn.className = 'py-2 text-xs font-bold rounded bg-slate-800 text-slate-400 hover:text-white transition';
+        submitBtn.className = 'w-full py-2.5 text-xs font-bold uppercase tracking-wider rounded bg-rose-500 hover:bg-rose-400 text-white transition shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2';
+      }
+    }
+
+    function logFixMessage(direction, type, rawMsg) {
+      const container = document.getElementById('fixStreamContainer');
+      const row = document.createElement('div');
+      row.className = 'p-1.5 rounded bg-slate-900/80 border border-slate-800/80 hover:border-slate-700 transition flex flex-col gap-1 cursor-pointer';
+      
+      const isOut = direction === 'OUT';
+      const dirBadge = isOut 
+        ? '<span class="px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 font-bold">>> OUT</span>'
+        : '<span class="px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold"><< IN</span>';
+
+      // Format SOH (\x01) with clean visual separators
+      const formatted = rawMsg.split('\x01').filter(Boolean).map(field => {
+        const [tag, val] = field.split('=');
+        if (tag === '35') return `<span class="bg-indigo-500/30 text-indigo-300 px-1 rounded font-bold">${tag}=${val}</span>`;
+        if (tag === '11') return `<span class="text-amber-300 font-semibold">${tag}=${val}</span>`;
+        if (tag === '34') return `<span class="text-sky-300">${tag}=${val}</span>`;
+        if (tag === '10') return `<span class="text-emerald-400">${tag}=${val}</span>`;
+        return `<span class="text-slate-400">${tag}=${val}</span>`;
+      }).join('<span class="soh-delim">|</span>');
+
+      row.innerHTML = `
+        <div class="flex items-center justify-between text-[10px]">
+          <div class="flex items-center gap-1.5">${dirBadge} <span class="font-bold text-slate-200">MsgType=${type}</span></div>
+          <span class="text-slate-500">${getTimeStr()}</span>
+        </div>
+        <div class="text-[10px] break-all text-slate-300 leading-tight">${formatted}</div>
+      `;
+
+      container.appendChild(row);
+      container.scrollTop = container.scrollHeight;
+
+      storeRecords++;
+      document.getElementById('storeRecordCount').innerText = storeRecords;
+    }
+
+    function renderBook() {
+      const book = orderBooks[activeSymbol];
+      const asksDiv = document.getElementById('asksContainer');
+      const bidsDiv = document.getElementById('bidsContainer');
+
+      if (!book) {
+        if (activeSymbol !== 'BTCUSDT') return;
+        const quote = liveMarketQuotes.BTCUSDT || {};
+        const bid = Number(quote.bid) || 0;
+        const ask = Number(quote.ask) || 0;
+        const spread = bid > 0 && ask > 0 ? ask - bid : 0;
+        const mid = bid > 0 && ask > 0 ? (ask + bid) / 2 : 0;
+
+        asksDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best ask appears above when received.</div>';
+        bidsDiv.innerHTML = '<div class="text-[10px] text-slate-500 px-2 py-3">Live best bid appears above when received.</div>';
+        document.getElementById('symBestBid').textContent = bid > 0 ? '$' + bid.toFixed(2) : '$—';
+        document.getElementById('symBestAsk').textContent = ask > 0 ? '$' + ask.toFixed(2) : '$—';
+        document.getElementById('symSpread').textContent = spread > 0 ? '$' + spread.toFixed(2) : '—';
+        document.getElementById('spreadDisplay').textContent = spread > 0 ? '$' + spread.toFixed(2) : '—';
+        document.getElementById('midDisplay').textContent = mid > 0 ? '$' + mid.toFixed(2) : '—';
+        document.getElementById('bidDepthSum').textContent = '—';
+        document.getElementById('askDepthSum').textContent = '—';
+        document.getElementById('bidDepthBar').style.width = '0%';
+        document.getElementById('askDepthBar').style.width = '0%';
+        if (Number.isFinite(Number(quote.price)) && Number(quote.price) > 0) {
+          document.getElementById('symLastPrice').textContent = '$' + Number(quote.price).toFixed(2);
+        }
+        return;
+      }
+
+      // Sort asks high-to-low so lowest ask is at bottom.
+      const sortedAsks = [...book.asks].sort((a,b) => b.price - a.price);
+      // Sort bids high-to-low so highest bid is at top.
+      const sortedBids = [...book.bids].sort((a,b) => b.price - a.price);
+      const maxAskQty = Math.max(...sortedAsks.map(a => a.qty), 1);
+      const maxBidQty = Math.max(...sortedBids.map(b => b.qty), 1);
+
+      asksDiv.innerHTML = sortedAsks.map(a => {
+        const pct = Math.min(100, Math.round((a.qty / maxAskQty) * 100));
+        return '<div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-rose-500/10">' +
+          '<div class="absolute right-0 top-0 bottom-0 bg-rose-500/15 rounded pointer-events-none" style="width: ' + pct + '%"></div>' +
+          '<div class="text-rose-400 font-bold z-10">$' + a.price.toFixed(2) + '</div>' +
+          '<div class="text-right text-slate-200 z-10">' + a.qty + '</div>' +
+          '<div class="text-right text-slate-400 z-10">' + a.orders + '</div></div>';
+      }).join('');
+
+      bidsDiv.innerHTML = sortedBids.map(b => {
+        const pct = Math.min(100, Math.round((b.qty / maxBidQty) * 100));
+        return '<div class="relative grid grid-cols-3 py-0.5 px-2 rounded hover:bg-emerald-500/10">' +
+          '<div class="absolute right-0 top-0 bottom-0 bg-emerald-500/15 rounded pointer-events-none" style="width: ' + pct + '%"></div>' +
+          '<div class="text-emerald-400 font-bold z-10">$' + b.price.toFixed(2) + '</div>' +
+          '<div class="text-right text-slate-200 z-10">' + b.qty + '</div>' +
+          '<div class="text-right text-slate-400 z-10">' + b.orders + '</div></div>';
+      }).join('');
+
+      const bestBid = sortedBids[0]?.price || 0;
+      const bestAsk = sortedAsks[sortedAsks.length - 1]?.price || 0;
+      const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
+      const mid = bestAsk > 0 && bestBid > 0 ? (bestAsk + bestBid) / 2 : 0;
+
+      document.getElementById('symBestBid').innerText = '$' + bestBid.toFixed(2);
+      document.getElementById('symBestAsk').innerText = '$' + bestAsk.toFixed(2);
+      document.getElementById('symLastPrice').innerText = '$' + bestAsk.toFixed(2);
+      document.getElementById('symSpread').innerText = '$' + spread.toFixed(2);
+      document.getElementById('spreadDisplay').innerText = '$' + spread.toFixed(2);
+      document.getElementById('midDisplay').innerText = '$' + mid.toFixed(3);
+
+      const totalBidQty = sortedBids.reduce((acc, b) => acc + b.qty, 0);
+      const totalAskQty = sortedAsks.reduce((acc, a) => acc + a.qty, 0);
+      const totalDepth = totalBidQty + totalAskQty || 1;
+      document.getElementById('bidDepthSum').innerText = totalBidQty;
+      document.getElementById('askDepthSum').innerText = totalAskQty;
+      document.getElementById('bidDepthBar').style.width = Math.round((totalBidQty / totalDepth) * 100) + '%';
+      document.getElementById('askDepthBar').style.width = Math.round((totalAskQty / totalDepth) * 100) + '%';
+    }
+
+    function renderWorkingOrders() {
+      const tbody = document.getElementById('workingOrdersBody');
+      tbody.innerHTML = workingOrders.map(o => {
+        const sideColor = o.side === '1' ? 'text-emerald-400' : 'text-rose-400';
+        const sideText = o.side === '1' ? 'BUY' : 'SELL';
+        return `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-1 font-bold text-slate-200">${o.clOrdId}</td>
+            <td class="py-1 text-slate-400">${o.origId || '-'}</td>
+            <td class="py-1 text-sky-400 font-semibold">${o.symbol}</td>
+            <td class="py-1 ${sideColor} font-bold">${sideText}</td>
+            <td class="py-1 text-slate-300">Limit</td>
+            <td class="py-1 text-right text-slate-200">$${o.price.toFixed(2)}</td>
+            <td class="py-1 text-right text-slate-300">${o.qty}</td>
+            <td class="py-1 text-right font-bold text-amber-300">${o.leavesQty}</td>
+            <td class="py-1 text-right text-emerald-400">${o.cumQty}</td>
+            <td class="py-1">
+              <span class="px-1.5 py-0.5 rounded text-[10px] ${o.status === 'NEW' ? 'bg-sky-500/20 text-sky-300' : 'bg-emerald-500/20 text-emerald-300'} font-bold">
+                ${o.status}
+              </span>
+            </td>
+            <td class="py-1 text-center">
+              ${o.leavesQty > 0 ? `<button onclick="cancelOrder('${o.clOrdId}')" class="px-1.5 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 text-[10px] border border-rose-500/30">Cancel</button>` : '-'}
+            </td>
+          </tr>
+        `;
+      }).join('');
+      document.getElementById('workingOrdersCount').innerText = `${workingOrders.filter(o => o.leavesQty > 0).length} Active`;
+    }
+
+    function renderExecBlotter() {
+      const tbody = document.getElementById('execBlotterBody');
+      tbody.innerHTML = fillReports.map(f => {
+        const sideColor = f.side === '1' ? 'text-emerald-400' : 'text-rose-400';
+        const sideText = f.side === '1' ? 'BUY' : 'SELL';
+        const isFill = f.execType === 'FILL';
+        return `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-1 text-slate-500">${f.time}</td>
+            <td class="py-1 font-bold text-slate-200">${f.clOrdId}</td>
+            <td class="py-1 text-sky-400 font-semibold">${f.symbol}</td>
+            <td class="py-1 ${sideColor} font-bold">${sideText}</td>
+            <td class="py-1">
+              <span class="px-1.5 py-0.5 rounded text-[10px] ${isFill ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'bg-sky-500/20 text-sky-300'}">
+                ${f.execType}
+              </span>
+            </td>
+            <td class="py-1 text-right font-bold text-slate-200">$${f.lastPx.toFixed(2)}</td>
+            <td class="py-1 text-right text-emerald-400 font-bold">${f.lastQty}</td>
+            <td class="py-1 text-right text-slate-400">${f.leavesQty}</td>
+          </tr>
+        `;
+      }).join('');
+      document.getElementById('fillCounterBadge').innerText = `${fillReports.filter(f => f.execType === 'FILL').length} Fills`;
+    }
+
+    function submitManualOrder() {
+      const price = parseFloat(document.getElementById('inputPrice').value) || 150.00;
+      const qty = parseInt(document.getElementById('inputQty').value) || 100;
+      const clOrdId = `ORD-${String(clOrdCounter++).padStart(3, '0')}`;
+      document.getElementById('inputClOrdID').value = `ORD-${String(clOrdCounter).padStart(3, '0')}`;
+
+      // 1. Build and send FIX NewOrderSingle (35=D)
+      const rawNos = `8=FIX.4.4\x019=138\x0135=D\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:00:00.000\x0111=${clOrdId}\x0155=${activeSymbol}\x0154=${currentSide}\x0140=2\x0144=${price.toFixed(2)}\x0138=${qty}\x0159=0\x0110=182\x01`;
+      logFixMessage('OUT', 'D (NewOrderSingle)', rawNos);
+      document.getElementById('outSeqNum').innerText = outSeq;
+
+      // Add to working orders
+      const orderObj = {
+        clOrdId,
+        origId: '',
+        symbol: activeSymbol,
+        side: currentSide,
+        price,
+        qty,
+        leavesQty: qty,
+        cumQty: 0,
+        status: 'NEW'
+      };
+      workingOrders.unshift(orderObj);
+      renderWorkingOrders();
+
+      // 2. Mock Server Ack (35=8 ExecType=New)
+      setTimeout(() => {
+        const rawAck = `8=FIX.4.4\x019=145\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq++}\x0152=20260712-12:00:00.050\x0137=MOCK-${1000 + inSeq}\x0117=EXEC-001\x0111=${clOrdId}\x01150=0\x0139=0\x0155=${activeSymbol}\x0154=${currentSide}\x01151=${qty}\x0114=0\x016=0.00\x0110=195\x01`;
+        logFixMessage('IN', '8 (Ack New)', rawAck);
+        document.getElementById('inSeqNum').innerText = inSeq;
+
+        fillReports.unshift({
+          time: getTimeStr(),
+          clOrdId,
+          symbol: activeSymbol,
+          side: currentSide,
+          execType: 'NEW',
+          lastPx: 0.0,
+          lastQty: 0,
+          leavesQty: qty
+        });
+        renderExecBlotter();
+      }, 80);
+
+      // 3. Mock Server Fill (35=8 ExecType=Fill)
+      setTimeout(() => {
+        const rawFill = `8=FIX.4.4\x019=162\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq++}\x0152=20260712-12:00:00.120\x0137=MOCK-${1000 + inSeq}\x0117=EXEC-002\x0111=${clOrdId}\x01150=2\x0139=2\x0155=${activeSymbol}\x0154=${currentSide}\x0132=${qty}\x0131=${price.toFixed(2)}\x01151=0\x0114=${qty}\x016=${price.toFixed(2)}\x0110=210\x01`;
+        logFixMessage('IN', '8 (Fill)', rawFill);
+        document.getElementById('inSeqNum').innerText = inSeq;
+
+        orderObj.leavesQty = 0;
+        orderObj.cumQty = qty;
+        orderObj.status = 'FILLED';
+        renderWorkingOrders();
+
+        fillReports.unshift({
+          time: getTimeStr(),
+          clOrdId,
+          symbol: activeSymbol,
+          side: currentSide,
+          execType: 'FILL',
+          lastPx: price,
+          lastQty: qty,
+          leavesQty: 0
+        });
+        renderExecBlotter();
+
+        // Update book depth visually
+        const book = orderBooks[activeSymbol];
+        if (currentSide === '1') {
+          book.bids.unshift({ price: price, qty: qty, orders: 1 });
+          if (book.bids.length > 5) book.bids.pop();
+        } else {
+          book.asks.push({ price: price, qty: qty, orders: 1 });
+          if (book.asks.length > 5) book.asks.shift();
+        }
+        renderBook();
+      }, 250);
+    }
+
+    function cancelOrder(clOrdId) {
+      const cxlId = `CXL-${String(clOrdCounter++).padStart(3, '0')}`;
+      const target = workingOrders.find(o => o.clOrdId === clOrdId);
+      if (!target) return;
+
+      const rawCxl = `8=FIX.4.4\x019=125\x0135=F\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:01:00.000\x0111=${cxlId}\x0141=${clOrdId}\x0155=${target.symbol}\x0154=${target.side}\x0110=190\x01`;
+      logFixMessage('OUT', 'F (OrderCancelRequest)', rawCxl);
+      document.getElementById('outSeqNum').innerText = outSeq;
+
+      setTimeout(() => {
+        const rawAck = `8=FIX.4.4\x019=155\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq++}\x0152=20260712-12:01:00.080\x0137=MOCK-CANCEL\x0117=EXEC-CXL\x0111=${cxlId}\x0141=${clOrdId}\x01150=4\x0139=4\x0155=${target.symbol}\x01151=0\x0114=${target.cumQty}\x0110=220\x01`;
+        logFixMessage('IN', '8 (Cancelled)', rawAck);
+        document.getElementById('inSeqNum').innerText = inSeq;
+
+        target.leavesQty = 0;
+        target.status = 'CANCELLED';
+        renderWorkingOrders();
+
+        fillReports.unshift({
+          time: getTimeStr(),
+          clOrdId: target.clOrdId,
+          symbol: target.symbol,
+          side: target.side,
+          execType: 'CANCELLED',
+          lastPx: 0.0,
+          lastQty: 0,
+          leavesQty: 0
+        });
+        renderExecBlotter();
+      }, 120);
+    }
+
+    function triggerSequenceGap() {
+      // Simulate receiving message with an intentional sequence jump to test gap detection
+      const gapSeq = inSeq + 3;
+      const rawGap = `8=FIX.4.4\x019=150\x0135=8\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${gapSeq}\x0152=20260712-12:02:00.000\x0137=GAP-MSG\x0117=EXEC-GAP\x0111=ORD-999\x01150=0\x0139=0\x0155=AAPL\x0154=1\x01151=100\x0114=0\x0110=199\x01`;
+      logFixMessage('IN', '8 (Seq Gap Detect)', rawGap);
+
+      // Session state machine automatically sends ResendRequest (35=2)
+      setTimeout(() => {
+        const resendReq = `8=FIX.4.4\x019=95\x0135=2\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:02:00.020\x017=${inSeq}\x0116=${gapSeq - 1}\x0110=178\x01`;
+        logFixMessage('OUT', '2 (ResendRequest)', resendReq);
+        document.getElementById('outSeqNum').innerText = outSeq;
+
+        // Counterparty responds with SequenceReset-GapFill (35=4)
+        setTimeout(() => {
+          const gapFill = `8=FIX.4.4\x019=108\x0135=4\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=${inSeq}\x0152=20260712-12:02:00.050\x01123=Y\x0136=${gapSeq + 1}\x0143=Y\x0110=188\x01`;
+          logFixMessage('IN', '4 (SequenceReset-GapFill)', gapFill);
+          inSeq = gapSeq + 1;
+          document.getElementById('inSeqNum').innerText = inSeq;
+        }, 150);
+      }, 100);
+    }
+
+    function runAutoDemo() {
+      // 1. Initial Logon
+      logFixMessage('OUT', 'A (Logon)', '8=FIX.4.4\x019=98\x0135=A\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=1\x0152=20260712-12:00:00.000\x0198=0\x01108=10\x0110=170\x01');
+      setTimeout(() => {
+        logFixMessage('IN', 'A (Logon Ack)', '8=FIX.4.4\x019=98\x0135=A\x0149=ULTRALOB-MOCK\x0156=TRADER-1\x0134=1\x0152=20260712-12:00:00.010\x0198=0\x01108=10\x0110=171\x01');
+        
+        // 2. Submit 3 sample orders with slight delays
+        setTimeout(() => { selectSymbol('AAPL'); submitManualOrder(); }, 200);
+        setTimeout(() => { selectSymbol('MSFT'); submitManualOrder(); }, 700);
+        setTimeout(() => { selectSymbol('GOOGL'); setSide('2'); submitManualOrder(); }, 1200);
+        // The FIX demo changes the selected symbol for its sample orders.
+        // Restore BTC so the live market feed and automatic Monte Carlo are visible.
+        setTimeout(() => selectSymbol('BTCUSDT'), 1600);
+      }, 100);
+    }
+
+    function clearFixLog() {
+      document.getElementById('fixStreamContainer').innerHTML = '';
+    }
+
+    function resetAll() {
+      outSeq = 1; inSeq = 1; clOrdCounter = 1; storeRecords = 0;
+      workingOrders = []; fillReports = [];
+      document.getElementById('outSeqNum').innerText = 1;
+      document.getElementById('inSeqNum').innerText = 1;
+      document.getElementById('storeRecordCount').innerText = 0;
+      clearFixLog();
+      renderWorkingOrders();
+      renderExecBlotter();
+      renderBook();
+    }
+
+    // Heartbeat ticker
+    setInterval(() => {
+      hbSeconds--;
+      if (hbSeconds <= 0) {
+        hbSeconds = 10;
+        // Send heartbeat
+        const hb = `8=FIX.4.4\x019=80\x0135=0\x0149=TRADER-1\x0156=ULTRALOB-MOCK\x0134=${outSeq++}\x0152=20260712-12:00:00.000\x0110=160\x01`;
+        logFixMessage('OUT', '0 (Heartbeat)', hb);
+        document.getElementById('outSeqNum').innerText = outSeq;
+      }
+      document.getElementById('hbTimer').innerText = `${hbSeconds}s`;
+      document.getElementById('hbBar').style.width = `${(hbSeconds / 10) * 100}%`;
+    }, 1000);
+
+    // Initial setup
+    renderBook();
+    runAutoDemo();
+
+    // ── Monte Carlo pricing workbench ────────────────────────────────────────
+    const PRICING_DEFAULTS = {
+      spot: 150.25, strike: 155, rate: 0.045, dividend: 0.005,
+      vol: 0.28, maturity: 0.5, paths: 2000000, seed: 42, backend: "auto"
+    };
+    function pricingElement(id) { return document.getElementById(id); }
+
+    function setLiveMarketState(state, detail) {
+      const palette = {
+        ready: ["bg-amber-400", "text-amber-300", "READY TO CONNECT"],
+        connecting: ["bg-sky-400 live-dot", "text-sky-300", "CONNECTING TO TWELVE DATA"],
+        connected: ["bg-emerald-400 live-dot", "text-emerald-300", "LIVE FEED CONNECTED"],
+        waiting: ["bg-amber-400", "text-amber-300", "CONNECTED · WAITING FOR MARKET TICK"],
+        error: ["bg-rose-400", "text-rose-300", "LIVE FEED ERROR"],
+        disconnected: ["bg-slate-500", "text-slate-400", "LIVE FEED DISCONNECTED"],
+        missing: ["bg-rose-400", "text-rose-300", "API KEY REQUIRED"],
+        reconnecting: ["bg-amber-400 live-dot", "text-amber-300", "RECONNECTING LIVE FEED"]
+      };
+      const style = palette[state] || palette.disconnected;
+      pricingElement("liveMarketDot").className = "w-2.5 h-2.5 rounded-full " + style[0];
+      pricingElement("liveMarketStatus").className = "text-[10px] uppercase tracking-wider font-bold " + style[1];
+      pricingElement("liveMarketStatus").textContent = style[2];
+      pricingElement("liveMarketDetail").textContent = detail || "";
+      const button = pricingElement("liveMarketConnectButton");
+      button.textContent = (state === "connected" || state === "waiting" || state === "connecting" || state === "reconnecting")
+        ? "DISCONNECT FEED" : "CONNECT LIVE FEED";
+      button.disabled = state === "connecting";
+    }
+
+    async function checkLiveMarketDataConfig() {
+      try {
+        const response = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Market-data gateway unavailable");
+        const equityReady = Boolean(payload.providers?.equities?.configured);
+        setLiveMarketState(
+          "ready",
+          "Kraken Spot public feed ready for BTC/USD · " +
+            (equityReady ? "Twelve Data equities also configured" : "Twelve Data key missing; equities unavailable")
+        );
+      } catch (error) {
+        setLiveMarketState("error", error.message);
+      }
+    }
+
+    function socketIsActive(socket) {
+      return Boolean(socket && (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      ));
+    }
+
+    function toggleLiveMarketData() {
+      if (socketIsActive(liveBtcSocket) || socketIsActive(liveMarketSocket)) {
+        stopLiveMarketData();
+      } else {
+        connectLiveMarketData();
+      }
+    }
+
+    // Kraken's public Spot WebSocket v2 supplies BTC/USD trades and top-of-book.
+    // BTC is kept under the existing BTCUSDT UI key for compatibility, but
+    // quotes from this source are explicitly denominated in USD.
+    function connectKrakenBrowser() {
+      if (socketIsActive(liveBtcSocket) || liveMarketIntentionalClose) return;
+      const url = "wss://ws.kraken.com/v2";
+      setLiveMarketState("connecting", "Connecting directly to Kraken Spot · BTC/USD public ticker and trade channels...");
+
+      let socket;
+      try {
+        socket = new WebSocket(url);
+      } catch (error) {
+        scheduleKrakenReconnect("Could not create Kraken WebSocket: " + error.message);
+        return;
+      }
+      liveBtcSocket = socket;
+
+      socket.onopen = function() {
+        liveBtcReconnectAttempt = 0;
+        socket.send(JSON.stringify({
+          method: "subscribe",
+          params: {
+            channel: "ticker",
+            symbol: ["BTC/USD"],
+            event_trigger: "bbo",
+            snapshot: true
+          }
+        }));
+        socket.send(JSON.stringify({
+          method: "subscribe",
+          params: {
+            channel: "trade",
+            symbol: ["BTC/USD"],
+            snapshot: false
+          }
+        }));
+        setLiveMarketState(
+          "waiting",
+          "Browser connected to Kraken Spot · subscribing to BTC/USD ticker and trades"
+        );
+      };
+
+      socket.onmessage = function(event) {
+        let message;
+        try { message = JSON.parse(event.data); }
+        catch { return; }
+
+        if (message && message.success === false) {
+          const detail = message.error || "Kraken rejected a public market-data subscription.";
+          setLiveMarketState("error", "Kraken subscription error · " + detail);
+          return;
+        }
+
+        if (!message || !Array.isArray(message.data)) return;
+        const timestamp = (value) => {
+          const parsed = Date.parse(value || "");
+          return Number.isFinite(parsed) ? parsed : Date.now();
+        };
+
+        if (message.channel === "ticker") {
+          for (const quote of message.data) {
+            if (quote.symbol !== "BTC/USD") continue;
+            const last = Number(quote.last);
+            if (Number.isFinite(last) && last > 0) {
+              handleLiveMarketTick({
+                event: "price",
+                provider: "Kraken Spot",
+                symbol: "BTCUSDT",
+                price: last,
+                currency: "USD",
+                exchange: "KRAKEN",
+                timestamp: timestamp(quote.timestamp)
+              });
+            }
+            const bid = Number(quote.bid);
+            const ask = Number(quote.ask);
+            if (bid > 0 && ask >= bid) {
+              handleLiveMarketBookTick({
+                event: "book",
+                provider: "Kraken Spot",
+                symbol: "BTCUSDT",
+                bid,
+                bid_quantity: Number(quote.bid_qty) || 0,
+                ask,
+                ask_quantity: Number(quote.ask_qty) || 0,
+                timestamp: timestamp(quote.timestamp)
+              });
+            }
+          }
+          return;
+        }
+
+        if (message.channel === "trade") {
+          for (const trade of message.data) {
+            if (trade.symbol !== "BTC/USD") continue;
+            handleLiveMarketTick({
+              event: "price",
+              provider: "Kraken Spot",
+              symbol: "BTCUSDT",
+              price: Number(trade.price),
+              currency: "USD",
+              exchange: "KRAKEN",
+              timestamp: timestamp(trade.timestamp),
+              trade_id: trade.trade_id ?? null,
+              trade_quantity: Number(trade.qty) || 0,
+              buyer_is_maker: trade.side === "sell"
+            });
+          }
+        }
+      };
+
+      socket.onerror = function() {
+        setLiveMarketState("reconnecting", "Kraken Spot WebSocket error · attempting to reconnect...");
+      };
+
+      socket.onclose = function(event) {
+        if (liveBtcSocket === socket) liveBtcSocket = null;
+        if (liveMarketIntentionalClose) return;
+        const reason = event.reason ? " · " + event.reason : "";
+        scheduleKrakenReconnect("Kraken Spot stream closed (code " + event.code + ")" + reason);
+      };
+    }
+
+    function scheduleKrakenReconnect(reason) {
+      if (liveMarketIntentionalClose) return;
+      const delay = Math.min(30000, 2000 * Math.pow(2, liveBtcReconnectAttempt));
+      liveBtcReconnectAttempt += 1;
+      setLiveMarketState(
+        "reconnecting",
+        reason + " · retrying Kraken in " + Math.round(delay / 1000) + "s"
+      );
+      clearTimeout(liveBtcReconnectTimer);
+      liveBtcReconnectTimer = setTimeout(connectKrakenBrowser, delay);
+    }
+
+    function connectTwelveDataGateway() {
+      if (!twelveDataConfigured || socketIsActive(liveMarketSocket) || liveMarketIntentionalClose) return;
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const url = protocol + "//" + window.location.host +
+        "/api/market-data?symbols=" + encodeURIComponent("AAPL,MSFT,GOOGL");
+      let socket;
+      try {
+        socket = new WebSocket(url);
+      } catch (error) {
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "error",
+          "Kraken BTC feed is independent · could not create Twelve Data gateway: " + error.message
+        );
+        return;
+      }
+      liveMarketSocket = socket;
+
+      socket.onopen = function() {
+        liveMarketReconnectAttempt = 0;
+        clearInterval(liveMarketHeartbeatTimer);
+        liveMarketHeartbeatTimer = setInterval(function() {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ event: "ping", timestamp: Date.now() }));
+          }
+        }, 60000);
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+          "Twelve Data gateway connected · awaiting AAPL, MSFT or GOOGL subscription confirmation"
+        );
+      };
+
+      socket.onmessage = function(event) {
+        let message;
+        try { message = JSON.parse(event.data); }
+        catch { return; }
+
+        if (message.event === "gateway") {
+          if (message.status === "connected") {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+              "Twelve Data gateway connected · " + (message.message || "Waiting for equity ticks")
+            );
+          } else if (message.status === "disconnected") {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "reconnecting",
+              "Twelve Data gateway disconnected · " + (message.message || "reconnecting")
+            );
+          }
+          return;
+        }
+
+        if (message.event === "subscription") {
+          const successes = Array.isArray(message.success) ? message.success : [];
+          const failures = Array.isArray(message.fails) ? message.fails : [];
+          if (failures.length) {
+            const failedSymbols = failures.map(function(item) { return item.symbol || item }).join(", ");
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+              "BTC feed runs directly from Kraken · Twelve Data rejected " + failedSymbols + ". Check plan entitlements."
+            );
+          } else {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+              "Twelve Data subscribed to " + (successes.length || 3) + " equity symbol(s)"
+            );
+          }
+          return;
+        }
+
+        if (message.event === "price") {
+          handleLiveMarketTick(message);
+          return;
+        }
+
+        if (message.event === "notice") {
+          setLiveMarketState(
+            socketIsActive(liveBtcSocket) ? "connected" : "waiting",
+            message.message || "Twelve Data is not configured; BTC remains available directly from Kraken."
+          );
+          return;
+        }
+
+        if (message.event === "provider-status") {
+          if (message.status === "disconnected") {
+            setLiveMarketState(
+              socketIsActive(liveBtcSocket) ? "connected" : "reconnecting",
+              "Twelve Data equity provider disconnected · " + (message.message || "")
+            );
+          }
+          return;
+        }
+
+        if (message.event === "error") {
+          setLiveMarketState(
+            socketIsActive(liveBtcSocket) ? "connected" : "error",
+            "Twelve Data error: " + (message.message || message.code || "provider error")
+          );
+        }
+      };
+
+      socket.onerror = function() {
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "error",
+          "Twelve Data gateway WebSocket error · check Render logs and TWELVE_DATA_API_KEY"
+        );
+      };
+
+      socket.onclose = function(event) {
+        clearInterval(liveMarketHeartbeatTimer);
+        liveMarketHeartbeatTimer = null;
+        if (liveMarketSocket === socket) liveMarketSocket = null;
+        if (liveMarketIntentionalClose) return;
+        const delay = Math.min(30000, 2000 * Math.pow(2, liveMarketReconnectAttempt));
+        liveMarketReconnectAttempt += 1;
+        const reason = event.reason ? " · " + event.reason : "";
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "reconnecting",
+          "Twelve Data gateway closed (code " + event.code + ")" + reason +
+            " · retrying in " + Math.round(delay / 1000) + "s"
+        );
+        clearTimeout(liveMarketReconnectTimer);
+        liveMarketReconnectTimer = setTimeout(connectTwelveDataGateway, delay);
+      };
+    }
+
+    async function connectLiveMarketData() {
+      if (liveMarketIntentionalClose) liveMarketIntentionalClose = false;
+      clearTimeout(liveBtcReconnectTimer);
+      clearTimeout(liveMarketReconnectTimer);
+
+      if (!socketIsActive(liveBtcSocket)) connectKrakenBrowser();
+
+      try {
+        const healthResponse = await fetch("/api/market-data", { method: "GET", cache: "no-store" });
+        const health = await healthResponse.json();
+        if (!healthResponse.ok) throw new Error(health.error || "Market-data gateway unavailable");
+
+        twelveDataConfigured = Boolean(health.providers?.equities?.configured);
+        if (twelveDataConfigured) {
+          connectTwelveDataGateway();
+        } else {
+          setLiveMarketState(
+            socketIsActive(liveBtcSocket) ? "waiting" : "connecting",
+            "BTC connects directly to Kraken · Twelve Data is not configured on Render (add TWELVE_DATA_API_KEY for equities)"
+          );
+        }
+      } catch (error) {
+        // The public BTC connection does not depend on Render's health route.
+        // Keep it running even if Render is waking or its equity gateway fails.
+        setLiveMarketState(
+          socketIsActive(liveBtcSocket) ? "connected" : "error",
+          "BTC uses a direct Kraken connection · Render equity gateway check failed: " + error.message
+        );
+      }
+    }
+
+    function stopLiveMarketData() {
+      liveMarketIntentionalClose = true;
+      clearTimeout(liveBtcReconnectTimer);
+      clearTimeout(liveMarketReconnectTimer);
+      clearInterval(liveMarketHeartbeatTimer);
+      liveMarketHeartbeatTimer = null;
+      clearTimeout(liveAutoPricingTimer);
+      liveAutoPricingPending = false;
+      if (liveBtcSocket) {
+        const socket = liveBtcSocket;
+        liveBtcSocket = null;
+        try { socket.close(1000, "User disconnected"); } catch {}
+      }
+      if (liveMarketSocket) {
+        const socket = liveMarketSocket;
+        liveMarketSocket = null;
+        try { socket.close(1000, "User disconnected"); } catch {}
+      }
+      setLiveMarketState("disconnected", "Live feed stopped. Simulated order-book data is unchanged.");
+      pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+    }
+
+    function marketDisplaySymbol(symbol) {
+      return symbol === "BTCUSDT" ? "BTC/USD" : symbol;
+    }
+
+    function handleLiveMarketTick(tick) {
+      const symbol = String(tick.symbol || "").toUpperCase();
+      const price = Number(tick.price);
+      if (!LIVE_MARKET_SYMBOLS.includes(symbol) || !Number.isFinite(price) || price <= 0) return;
+
+      const previous = liveMarketQuotes[symbol] || {};
+      const quote = {
+        ...previous,
+        price: price,
+        provider: tick.provider || previous.provider || "Market Data",
+        timestamp: Number(tick.timestamp) || Date.now(),
+        currency: tick.currency || "USD",
+        exchange: tick.exchange || null,
+        day_volume: tick.day_volume == null ? previous.day_volume ?? null : Number(tick.day_volume),
+        trade_id: tick.trade_id ?? previous.trade_id ?? null,
+        trade_quantity: tick.trade_quantity ?? previous.trade_quantity ?? null,
+        buyer_is_maker: tick.buyer_is_maker ?? previous.buyer_is_maker ?? null
+      };
+      liveMarketQuotes[symbol] = quote;
+      if (symbol === "BTCUSDT" && !btcModelDefaultsApplied) {
+        pricingElement("pricingStrike").value = price.toFixed(2);
+        btcModelDefaultsApplied = true;
+      }
+
+      if (symbol === activeSymbol) {
+        if (pricingElement("marketMcRunStatus") && marketMcLastResult && marketMcLastResult.symbol === symbol) {
+          pricingElement("marketMcRunStatus").textContent =
+            "New live " + marketDisplaySymbol(symbol) + " quote received · rerun the scenario to refresh its entry anchor.";
+        }
+        pricingElement("symLastPrice").textContent = "$" + price.toFixed(2);
+        pricingElement("symLastPriceSource").textContent = "LIVE · " + quote.provider.toUpperCase();
+        pricingElement("symLastPriceSource").className = "text-[9px] font-mono text-emerald-400";
+        pricingElement("liveMarketLastTick").textContent =
+          marketDisplaySymbol(symbol) + " " + quote.currency + " · " + new Date(quote.timestamp).toLocaleTimeString();
+        pricingElement("inputPrice").value = price.toFixed(4);
+        if (pricingElement("autoSpotSync").checked) {
+          pricingElement("pricingSpot").value = price.toFixed(4);
+        }
+        if (pricingElement("autoPricingEnabled").checked) {
+          pricingElement("liveAutoPricingStatus").textContent = "New " + symbol + " tick received · auto-repricing queued";
+          scheduleLiveAutoPricing();
+        }
+      }
+      setLiveMarketState("connected", quote.provider + " live · " + symbol + " tick received");
+    }
+
+    function handleLiveMarketBookTick(tick) {
+      if (tick.symbol !== "BTCUSDT") return;
+      const bid = Number(tick.bid);
+      const ask = Number(tick.ask);
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask < bid) return;
+      const previous = liveMarketQuotes.BTCUSDT || { provider: "Kraken Spot", currency: "USD" };
+      liveMarketQuotes.BTCUSDT = {
+        ...previous,
+        bid,
+        ask,
+        bid_quantity: Number(tick.bid_quantity) || 0,
+        ask_quantity: Number(tick.ask_quantity) || 0,
+        book_timestamp: Number(tick.timestamp) || Date.now(),
+        provider: "Kraken Spot"
+      };
+      if (activeSymbol === "BTCUSDT") renderBook();
+      setLiveMarketState("connected", "Kraken Spot live · BTC/USD trade and best-bid/ask streams active");
+    }
+
+    function scheduleLiveAutoPricing() {
+      if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
+      const quote = liveMarketQuotes[activeSymbol];
+      if (!quote) {
+        pricingElement("liveAutoPricingStatus").textContent = "Waiting for a live " + marketDisplaySymbol(activeSymbol) + " tick";
+        return;
+      }
+      if (liveAutoPricingInFlight) {
+        liveAutoPricingPending = true;
+        return;
+      }
+      clearTimeout(liveAutoPricingTimer);
+      const intervalMs = Math.max(2000, Number(pricingElement("autoPricingInterval").value || 5) * 1000);
+      const delay = Math.max(0, intervalMs - (Date.now() - liveLastAutoPricingAt));
+      liveAutoPricingTimer = setTimeout(async function() {
+        if (!pricingElement("autoPricingEnabled").checked || liveMarketIntentionalClose) return;
+        if (liveAutoPricingInFlight || pricingElement("pricingRunButton").disabled || pricingElement("pricingCompareButton").disabled) {
+          liveAutoPricingPending = true;
+          return;
+        }
+        const latestQuote = liveMarketQuotes[activeSymbol];
+        if (!latestQuote) return;
+        if (pricingElement("autoSpotSync").checked) {
+          pricingElement("pricingSpot").value = Number(latestQuote.price).toFixed(4);
+        }
+        liveLastAutoPricingAt = Date.now();
+        pricingElement("liveAutoPricingStatus").textContent =
+          "Pricing " + marketDisplaySymbol(activeSymbol) + " from live spot $" + Number(latestQuote.price).toFixed(2) + "...";
+        await runMonteCarloPricing({ automatic: true });
+      }, delay);
+    }
+
+    pricingElement("autoPricingEnabled").addEventListener("change", function() {
+      if (this.checked) {
+        scheduleLiveAutoPricing();
+      } else {
+        clearTimeout(liveAutoPricingTimer);
+        liveAutoPricingPending = false;
+        pricingElement("liveAutoPricingStatus").textContent = "Automatic pricing paused";
+      }
+    });
+    pricingElement("autoPricingInterval").addEventListener("change", scheduleLiveAutoPricing);
+    pricingElement("autoSpotSync").addEventListener("change", function() {
+      if (this.checked && liveMarketQuotes[activeSymbol]) {
+        pricingElement("pricingSpot").value = Number(liveMarketQuotes[activeSymbol].price).toFixed(4);
+      }
+    });
+
+    function setPricingServiceState(state, title, detail) {
+      const palette = {
+        online: ["bg-emerald-400", "text-emerald-300"],
+        offline: ["bg-rose-400", "text-rose-300"],
+        checking: ["bg-amber-400", "text-amber-300"],
+        running: ["bg-sky-400", "text-sky-300"]
+      };
+      const colors = palette[state] || palette.offline;
+      pricingElement("pricingServiceDot").className = "w-2 h-2 rounded-full " + colors[0] + (state === "running" ? " live-dot" : "");
+      pricingElement("pricingServiceStatus").className = "text-[10px] uppercase font-bold tracking-wider " + colors[1];
+      pricingElement("pricingServiceStatus").textContent = title;
+      pricingElement("pricingServiceDetail").textContent = detail;
+    }
+
+    async function checkPricingService() {
+      setPricingServiceState("checking", "CHECKING PRICING SERVICE", "Requesting pricing health...");
+      try {
+        const response = await fetch("/api/pricing", { method: "GET", cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || payload.status !== "ok") {
+          throw new Error(payload.hint || payload.detail || payload.error || "No pricing engine is available");
+        }
+        if (payload.fallback_enabled) {
+          const limit = formatPricingNumber(payload.fallback_max_paths, 0);
+          pricingElement("pricingBackendBadge").textContent = "CPU READY · CUDA OPTIONAL";
+          setPricingServiceState("online", "CPU FALLBACK READY", "Node.js CPU · " + limit + " path limit · CUDA host not connected");
+          pricingElement("pricingRunMessage").textContent =
+            "The built-in CPU Monte Carlo engine is ready. Choose AUTO SELECT or CPU to calculate now. CUDA requires a separate NVIDIA GPU service.";
+          return;
+        }
+        const buildLabel = payload.cuda_build_enabled ? "CUDA build enabled" : "CPU build";
+        pricingElement("pricingBackendBadge").textContent = payload.cuda_build_enabled ? "CUDA SERVICE AVAILABLE" : "REMOTE CPU SERVICE";
+        setPricingServiceState("online", "PRICING SERVICE READY", buildLabel + " · native pricing library available");
+        pricingElement("pricingRunMessage").textContent = payload.cuda_build_enabled
+          ? "CUDA is compiled into this service. A successful CUDA pricing request will verify device availability."
+          : "The native CPU pricing service is ready. Deploy its CUDA build on an NVIDIA GPU host to enable GPU pricing.";
+      } catch (error) {
+        pricingElement("pricingBackendBadge").textContent = "CPU FALLBACK · CUDA OPTIONAL";
+        setPricingServiceState("offline", "PRICING API UNAVAILABLE", error.message);
+        pricingElement("pricingRunMessage").textContent =
+          "The CPU fallback could not be reached. Check the hosting logs and the /api/pricing endpoint.";
+      }
+    }
+
+    function readPricingInputs() {
+      return {
+        spot: Number(pricingElement("pricingSpot").value),
+        strike: Number(pricingElement("pricingStrike").value),
+        risk_free_rate: Number(pricingElement("pricingRate").value),
+        dividend_yield: Number(pricingElement("pricingDividend").value),
+        volatility: Number(pricingElement("pricingVol").value),
+        maturity_years: Number(pricingElement("pricingMaturity").value),
+        paths: Number(pricingElement("pricingPaths").value),
+        seed: Number(pricingElement("pricingSeed").value),
+        backend: pricingElement("pricingBackend").value
+      };
+    }
+
+    function validatePricingInputs(p) {
+      if (!Number.isFinite(p.spot) || p.spot <= 0) return "Spot price must be greater than zero.";
+      if (!Number.isFinite(p.strike) || p.strike <= 0) return "Strike must be greater than zero.";
+      if (!Number.isFinite(p.risk_free_rate) || p.risk_free_rate < -1 || p.risk_free_rate > 1) return "Risk-free rate must be between -1 and 1.";
+      if (!Number.isFinite(p.dividend_yield) || p.dividend_yield < -1 || p.dividend_yield > 1) return "Dividend yield must be between -1 and 1.";
+      if (!Number.isFinite(p.volatility) || p.volatility < 0 || p.volatility > 5) return "Volatility must be between 0 and 5.";
+      if (!Number.isFinite(p.maturity_years) || p.maturity_years <= 0 || p.maturity_years > 100) return "Maturity must be greater than zero and at most 100 years.";
+      if (!Number.isSafeInteger(p.paths) || p.paths < 4 || p.paths > 50000000 || p.paths % 2 !== 0) return "Paths must be an even integer between 4 and 50,000,000.";
+      if (!Number.isSafeInteger(p.seed) || p.seed < 0) return "Seed must be a non-negative safe integer.";
+      return null;
+    }
+
+    function formatPricingNumber(value, digits) {
+      if (!Number.isFinite(Number(value))) return "—";
+      const precision = digits === undefined ? 4 : digits;
+      return Number(value).toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+    }
+
+    function drawPricingComparison(call, put) {
+      const canvas = pricingElement("pricingComparisonChart");
+      if (!canvas || !canvas.getContext) return;
+      const width = Math.max(canvas.clientWidth, 320), height = 160, ratio = window.devicePixelRatio || 1;
+      canvas.width = width * ratio; canvas.height = height * ratio;
+      const ctx = canvas.getContext("2d"); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, width, height);
+      const items = [
+        { label: "CALL · MC", value: call.price, color: "#38bdf8", y: 24 },
+        { label: "CALL · BS", value: call.black_scholes, color: "#64748b", y: 48 },
+        { label: "PUT · MC", value: put.price, color: "#38bdf8", y: 88 },
+        { label: "PUT · BS", value: put.black_scholes, color: "#64748b", y: 112 }
+      ];
+      const max = Math.max.apply(null, items.map(function(x) { return Math.max(x.value, 0); }).concat([1])) * 1.12;
+      const labelWidth = 78, valueWidth = 66, barSpace = Math.max(80, width - labelWidth - valueWidth - 18);
+      ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      items.forEach(function(item) {
+        ctx.fillStyle = "#94a3b8"; ctx.fillText(item.label, 2, item.y + 10);
+        ctx.fillStyle = "#1e293b"; ctx.fillRect(labelWidth, item.y, barSpace, 12);
+        ctx.fillStyle = item.color; ctx.fillRect(labelWidth, item.y, Math.max(1, Math.max(item.value, 0) / max * barSpace), 12);
+        ctx.fillStyle = "#e2e8f0"; ctx.textAlign = "right";
+        ctx.fillText("$" + formatPricingNumber(item.value, 3), width - 2, item.y + 10);
+        ctx.textAlign = "left";
+      });
+    }
+
+    function marketMcFormatPrice(value) {
+      const symbol = marketMcLastResult?.symbol || activeSymbol;
+      const digits = symbol === "BTCUSDT" ? 2 : value >= 100 ? 2 : 4;
+      return Number(value).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    }
+
+    function clearMarketMonteCarloResults(message) {
+      marketMcLastResult = null;
+      [
+        "marketMcEntry", "marketMcMedian", "marketMcMedianReturn",
+        "marketMcRange", "marketMcTargetFirst", "marketMcStopFirst", "marketMcNoHit"
+      ].forEach((id) => { pricingElement(id).textContent = "—"; });
+      pricingElement("marketMcEntrySource").textContent = "No data";
+      pricingElement("marketMcModelSummary").textContent = "Model calibration: waiting for historical data.";
+      pricingElement("marketMcDataTimestamp").textContent = "Data timestamp: —";
+      pricingElement("marketMcChartEmpty").textContent = message || "Run a scenario to load candles and draw the Monte Carlo fan.";
+      pricingElement("marketMcChartEmpty").classList.remove("hidden");
+      const canvas = pricingElement("marketMcCanvas");
+      const context = canvas?.getContext?.("2d");
+      if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function marketMcPercent(value, digits) {
+      return (Number(value) * 100).toFixed(digits === undefined ? 1 : digits) + "%";
+    }
+
+    function marketMcRandom(seed) {
+      let state = seed >>> 0;
+      return function() {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let value = state;
+        value = Math.imul(value ^ (value >>> 15), value | 1);
+        value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function marketMcQuantile(values, probability) {
+      if (!values.length) return NaN;
+      const sorted = values.slice().sort((a, b) => a - b);
+      const position = (sorted.length - 1) * probability;
+      const lower = Math.floor(position);
+      const upper = Math.ceil(position);
+      if (lower === upper) return sorted[lower];
+      const weight = position - lower;
+      return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+    }
+
+    function marketMcStandardDeviation(values) {
+      if (values.length < 2) return 0;
+      const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+      const squared = values.reduce((sum, value) => sum + (value - mean) ** 2, 0);
+      return Math.sqrt(squared / (values.length - 1));
+    }
+
+    async function runMarketMonteCarlo() {
+      if (marketMcRunning) return;
+      const button = pricingElement("marketMcRunButton");
+      const status = pricingElement("marketMcRunStatus");
+      const symbol = activeSymbol;
+      clearMarketMonteCarloResults("Loading " + symbol + " historical candles and calibrating scenarios...");
+      const interval = pricingElement("marketMcInterval").value;
+      const lookback = Number(pricingElement("marketMcLookback").value);
+      const horizon = Number(pricingElement("marketMcHorizon").value);
+      const pathCount = Number(pricingElement("marketMcPaths").value);
+      const blockLength = Number(pricingElement("marketMcBlockLength").value);
+      const direction = pricingElement("marketMcDirection").value;
+      const stopPct = Number(pricingElement("marketMcStopPct").value) / 100;
+      const targetPct = Number(pricingElement("marketMcTargetPct").value) / 100;
+      const seed = Number(pricingElement("marketMcSeed").value);
+
+      if (!Number.isFinite(stopPct) || stopPct <= 0 || stopPct > 0.5 ||
+          !Number.isFinite(targetPct) || targetPct <= 0 || targetPct > 1 ||
+          !Number.isSafeInteger(seed) || seed < 0 || seed > 2147483647) {
+        status.textContent = "Check stop, target and random-seed inputs.";
+        return;
+      }
+
+      marketMcRunning = true;
+      button.disabled = true;
+      button.textContent = "LOADING CANDLES...";
+      status.textContent = "Retrieving " + symbol + " " + interval + " historical candles...";
+      pricingElement("marketMcDataStatus").textContent = "Loading market history";
+      pricingElement("marketMcChartEmpty").classList.remove("hidden");
+
+      try {
+        const query = new URLSearchParams({
+          symbol,
+          interval,
+          limit: String(lookback)
+        });
+        const response = await fetch("/api/market-history?" + query.toString(), {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          const error = new Error(payload.hint || payload.error || "Historical data request failed");
+          error.status = response.status;
+          error.code = payload.code;
+          throw error;
+        }
+        if (!Array.isArray(payload.candles) || payload.candles.length < 21) {
+          throw new Error("At least 21 valid candles are required to calibrate the simulation.");
+        }
+
+        const referenceTime = Number(payload.fetched_at) || Date.now();
+        // Exclude the currently forming bar so calibration uses completed
+        // candles only. A fresh live quote can still anchor the entry price.
+        const candles = payload.candles.filter((candle) =>
+          Number.isFinite(Number(candle.close)) && Number(candle.close) > 0 &&
+          Number.isFinite(Number(candle.time)) &&
+          (candle.close_time == null || Number(candle.close_time) < referenceTime)
+        ).sort((a, b) => a.time - b.time);
+        if (candles.length < 21) throw new Error("Not enough valid historical candles after normalization.");
+
+        const closeReturns = [];
+        for (let i = 1; i < candles.length; i += 1) {
+          const previous = Number(candles[i - 1].close);
+          const current = Number(candles[i].close);
+          if (previous > 0 && current > 0) closeReturns.push(Math.log(current / previous));
+        }
+        if (closeReturns.length < 20) throw new Error("Not enough valid close-to-close returns for calibration.");
+
+        const historicalClose = Number(candles[candles.length - 1].close);
+        const liveQuote = liveMarketQuotes[symbol];
+        const liveAge = liveQuote ? Date.now() - Number(liveQuote.timestamp || 0) : Infinity;
+        const freshLiveQuote = Boolean(
+          pricingElement("marketMcUseLiveSpot").checked &&
+          liveQuote && Number.isFinite(Number(liveQuote.price)) &&
+          Number(liveQuote.price) > 0 && liveAge >= -5000 && liveAge <= 5 * 60 * 1000
+        );
+        const spot = freshLiveQuote ? Number(liveQuote.price) : historicalClose;
+        const source = freshLiveQuote
+          ? "Live " + (liveQuote.provider || "market") + " quote"
+          : "Latest " + interval + " historical candle";
+
+        const recentMean = closeReturns.reduce((sum, value) => sum + value, 0) / closeReturns.length;
+        const recentSigma = marketMcStandardDeviation(closeReturns);
+        const random = marketMcRandom(seed);
+        const targetPrice = direction === "long" ? spot * (1 + targetPct) : spot * (1 - targetPct);
+        const stopPrice = direction === "long" ? spot * (1 - stopPct) : spot * (1 + stopPct);
+        const paths = new Array(pathCount);
+        const terminalPrices = new Array(pathCount);
+        let targetFirstCount = 0;
+        let stopFirstCount = 0;
+        let noHitCount = 0;
+        let favorableTerminalCount = 0;
+
+        for (let pathIndex = 0; pathIndex < pathCount; pathIndex += 1) {
+          const path = new Array(horizon + 1);
+          let price = spot;
+          let step = 0;
+          let firstHit = "none";
+          path[0] = spot;
+
+          while (step < horizon) {
+            const maxStart = Math.max(0, closeReturns.length - blockLength);
+            const blockStart = Math.floor(random() * (maxStart + 1));
+            for (let blockOffset = 0; blockOffset < blockLength && step < horizon; blockOffset += 1) {
+              const sampledReturn = closeReturns[blockStart + blockOffset];
+              price *= Math.exp(sampledReturn);
+              if (!Number.isFinite(price) || price <= 0) {
+                throw new Error("A simulated path became invalid. Reduce the forecast horizon or check the source data.");
+              }
+              step += 1;
+              path[step] = price;
+              if (firstHit === "none") {
+                const targetTouched = direction === "long" ? price >= targetPrice : price <= targetPrice;
+                const stopTouched = direction === "long" ? price <= stopPrice : price >= stopPrice;
+                if (targetTouched) firstHit = "target";
+                else if (stopTouched) firstHit = "stop";
+              }
+            }
+          }
+
+          const terminal = path[horizon];
+          paths[pathIndex] = path;
+          terminalPrices[pathIndex] = terminal;
+          if (firstHit === "target") targetFirstCount += 1;
+          else if (firstHit === "stop") stopFirstCount += 1;
+          else noHitCount += 1;
+          if (direction === "long" ? terminal > spot : terminal < spot) favorableTerminalCount += 1;
+        }
+
+        const bands = {
+          p05: [], p25: [], median: [], p75: [], p95: []
+        };
+        for (let step = 0; step <= horizon; step += 1) {
+          const values = new Array(pathCount);
+          for (let pathIndex = 0; pathIndex < pathCount; pathIndex += 1) values[pathIndex] = paths[pathIndex][step];
+          bands.p05.push(marketMcQuantile(values, 0.05));
+          bands.p25.push(marketMcQuantile(values, 0.25));
+          bands.median.push(marketMcQuantile(values, 0.50));
+          bands.p75.push(marketMcQuantile(values, 0.75));
+          bands.p95.push(marketMcQuantile(values, 0.95));
+        }
+
+        const terminalP05 = marketMcQuantile(terminalPrices, 0.05);
+        const terminalP25 = marketMcQuantile(terminalPrices, 0.25);
+        const terminalMedian = marketMcQuantile(terminalPrices, 0.50);
+        const terminalP75 = marketMcQuantile(terminalPrices, 0.75);
+        const terminalP95 = marketMcQuantile(terminalPrices, 0.95);
+        const averageTerminal = terminalPrices.reduce((sum, value) => sum + value, 0) / pathCount;
+        const medianReturn = terminalMedian / spot - 1;
+        const expectedReturn = averageTerminal / spot - 1;
+        const historicalBarsShown = candles.slice(-100);
+        const intervalLabel = { "1m": "1-minute", "5m": "5-minute", "15m": "15-minute", "1h": "1-hour" }[interval];
+        if (symbol !== activeSymbol) {
+          throw new Error("Instrument changed to " + activeSymbol + " while the scenario was running. Run it again for the selected instrument.");
+        }
+
+        marketMcLastResult = {
+          symbol, interval, intervalLabel, provider: payload.provider,
+          candles: historicalBarsShown, spot, source, horizon, pathCount,
+          blockLength, direction, stopPct, targetPct, stopPrice, targetPrice,
+          seed, recentMean, recentSigma, returnsCount: closeReturns.length,
+          paths, bands, terminalP05, terminalP25, terminalMedian, terminalP75,
+          terminalP95, averageTerminal, medianReturn, expectedReturn,
+          targetFirstCount, stopFirstCount, noHitCount, favorableTerminalCount,
+          fetchedAt: Number(payload.fetched_at) || Date.now(),
+          lastCandleTime: Number(candles[candles.length - 1].time),
+          freshLiveQuote
+        };
+
+        renderMarketMonteCarloResults(marketMcLastResult);
+        status.textContent = pathCount.toLocaleString() + " paths completed · " + horizon + " future bars · " + source;
+        pricingElement("marketMcDataStatus").textContent =
+          payload.provider + " · " + candles.length + " candles · " + (payload.cached ? "cached" : "fresh response");
+      } catch (error) {
+        status.textContent = error.message || "Market Monte Carlo could not be completed.";
+        pricingElement("marketMcDataStatus").textContent =
+          error.code === "EQUITIES_KEY_MISSING" ? "Twelve Data key missing" : "History unavailable";
+        pricingElement("marketMcChartEmpty").textContent = error.message || "Historical data unavailable.";
+        pricingElement("marketMcChartEmpty").classList.remove("hidden");
+      } finally {
+        marketMcRunning = false;
+        button.disabled = false;
+        button.textContent = "RUN MARKET MONTE CARLO";
+      }
+    }
+
+    function renderMarketMonteCarloResults(result) {
+      const percent = (count) => (100 * count / result.pathCount).toFixed(1) + "%";
+      pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(result.symbol) + (result.symbol === "BTCUSDT" ? " · KRAKEN" : "");
+      pricingElement("marketMcEntry").textContent = "$" + marketMcFormatPrice(result.spot);
+      pricingElement("marketMcEntrySource").textContent = result.source + (result.symbol === "BTCUSDT" ? " · Kraken BTC/USD" : "");
+      pricingElement("marketMcMedian").textContent = "$" + marketMcFormatPrice(result.terminalMedian);
+      pricingElement("marketMcMedianReturn").textContent =
+        "Median " + (result.medianReturn >= 0 ? "+" : "") + marketMcPercent(result.medianReturn);
+      pricingElement("marketMcRange").textContent =
+        "$" + marketMcFormatPrice(result.terminalP05) + " – $" + marketMcFormatPrice(result.terminalP95);
+      pricingElement("marketMcTargetFirst").textContent = percent(result.targetFirstCount);
+      pricingElement("marketMcStopFirst").textContent = percent(result.stopFirstCount);
+      pricingElement("marketMcNoHit").textContent = percent(result.noHitCount);
+      pricingElement("marketMcModelSummary").textContent =
+        result.returnsCount + " close-to-close returns · mean/bar " +
+        (result.recentMean * 100).toFixed(4) + "% · sigma/bar " +
+        (result.recentSigma * 100).toFixed(4) + "% · " +
+        result.blockLength + "-bar historical blocks · seed " + result.seed +
+        " · favourable terminal " + percent(result.favorableTerminalCount);
+      pricingElement("marketMcDataTimestamp").textContent =
+        result.intervalLabel + " candles · last candle " +
+        new Date(result.lastCandleTime).toLocaleString() +
+        (result.freshLiveQuote ? " · live entry anchor" : " · historical close anchor");
+
+      pricingElement("marketMcChartEmpty").classList.add("hidden");
+      drawMarketMonteCarloChart(result);
+    }
+
+    function drawMarketMonteCarloChart(result) {
+      const canvas = pricingElement("marketMcCanvas");
+      if (!canvas || !canvas.getContext || !result) return;
+      const width = Math.max(canvas.clientWidth, 340);
+      const height = canvas.clientWidth < 600 ? 260 : 340;
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(width * ratio);
+      canvas.height = Math.floor(height * ratio);
+      canvas.style.height = height + "px";
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+
+      const margin = { left: 76, right: 18, top: 24, bottom: 34 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const historical = result.candles.map((candle) => Number(candle.close));
+      const historyCount = historical.length;
+      const finalXIndex = historyCount - 1 + result.horizon;
+      const allValues = historical.concat(
+        result.bands.p05, result.bands.p95,
+        [result.spot, result.stopPrice, result.targetPrice]
+      ).filter(Number.isFinite);
+      let minPrice = Math.min(...allValues);
+      let maxPrice = Math.max(...allValues);
+      if (maxPrice <= minPrice) { maxPrice = minPrice * 1.01; minPrice *= 0.99; }
+      const padding = (maxPrice - minPrice) * 0.08;
+      minPrice -= padding;
+      maxPrice += padding;
+
+      const x = (index) => margin.left + (index / Math.max(1, finalXIndex)) * plotWidth;
+      const y = (price) => margin.top + (maxPrice - price) / (maxPrice - minPrice) * plotHeight;
+      const futureX = (step) => x(historyCount - 1 + step);
+
+      ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (let line = 0; line <= 4; line += 1) {
+        const value = maxPrice - (maxPrice - minPrice) * line / 4;
+        const yy = y(value);
+        ctx.strokeStyle = "rgba(100,116,139,0.18)";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(margin.left, yy); ctx.lineTo(width - margin.right, yy); ctx.stroke();
+        ctx.fillStyle = "#94a3b8";
+        ctx.fillText("$" + marketMcFormatPrice(value), margin.left - 8, yy);
+      }
+
+      const drawBand = (lower, upper, fill) => {
+        ctx.beginPath();
+        for (let step = 0; step < lower.length; step += 1) {
+          const px = futureX(step);
+          if (step === 0) ctx.moveTo(px, y(upper[step]));
+          else ctx.lineTo(px, y(upper[step]));
+        }
+        for (let step = lower.length - 1; step >= 0; step -= 1) {
+          ctx.lineTo(futureX(step), y(lower[step]));
+        }
+        ctx.closePath();
+        ctx.fillStyle = fill;
+        ctx.fill();
+      };
+
+      drawBand(result.bands.p05, result.bands.p95, "rgba(148,163,184,0.13)");
+      drawBand(result.bands.p25, result.bands.p75, "rgba(34,211,238,0.16)");
+
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(56,189,248,0.16)";
+      const visiblePaths = result.paths.slice(0, Math.min(65, result.paths.length));
+      for (const path of visiblePaths) {
+        ctx.beginPath();
+        path.forEach((price, step) => {
+          const px = futureX(step);
+          if (step === 0) ctx.moveTo(px, y(price));
+          else ctx.lineTo(px, y(price));
+        });
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      ctx.beginPath();
+      historical.forEach((price, index) => {
+        if (index === 0) ctx.moveTo(x(index), y(price));
+        else ctx.lineTo(x(index), y(price));
+      });
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      if (historical.length) {
+        ctx.beginPath();
+        ctx.moveTo(x(historyCount - 1), y(historical[historical.length - 1]));
+        ctx.lineTo(futureX(0), y(result.spot));
+        ctx.strokeStyle = "#94a3b8";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      const drawForecastLine = (values, color, lineWidth) => {
+        ctx.beginPath();
+        values.forEach((price, step) => {
+          if (step === 0) ctx.moveTo(futureX(step), y(price));
+          else ctx.lineTo(futureX(step), y(price));
+        });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+      };
+      drawForecastLine(result.bands.median, "#67e8f9", 2.2);
+
+      const drawReference = (price, color, label) => {
+        const yy = y(price);
+        ctx.save();
+        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.25;
+        ctx.beginPath(); ctx.moveTo(margin.left, yy); ctx.lineTo(width - margin.right, yy); ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle = color;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillText(label + " $" + marketMcFormatPrice(price), margin.left + 5, yy - 2);
+      };
+      drawReference(result.stopPrice, "#fb7185", "STOP");
+      drawReference(result.targetPrice, "#34d399", "TARGET");
+      drawReference(result.spot, "#e2e8f0", "ENTRY");
+
+      ctx.fillStyle = "#94a3b8";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+      ctx.fillText("HISTORY", margin.left + 4, height - margin.bottom + 8);
+      ctx.fillText("NOW", futureX(0), height - margin.bottom + 8);
+      ctx.fillText("+" + result.horizon + " BARS", width - margin.right - 26, height - margin.bottom + 8);
+    }
+
+    function updateMarketMonteCarloSelection() {
+      pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
+      if (marketMcLastResult && marketMcLastResult.symbol !== activeSymbol) {
+        clearMarketMonteCarloResults("Instrument changed to " + activeSymbol + " · run a new scenario to draw its path fan.");
+        pricingElement("marketMcRunStatus").textContent =
+          "Instrument changed to " + activeSymbol + " · run a new scenario.";
+        pricingElement("marketMcDataStatus").textContent = "Select RUN MARKET MONTE CARLO to load this instrument.";
+      }
+    }
+
+    function renderPricingResults(data) {
+      window.lastMonteCarloResult = data;
+      window.lastMonteCarloSymbol = activeSymbol;
+      const call = data.call, put = data.put;
+      const pricingInputs = data.inputs || readPricingInputs();
+      pricingElement("pricingUnderlyingLabel").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
+      pricingElement("pricingResultMeta").title =
+        activeSymbol + " · Spot " + pricingInputs.spot +
+        " · Strike " + pricingInputs.strike +
+        " · Volatility " + pricingInputs.volatility +
+        " · Maturity " + pricingInputs.maturity_years + " years";
+      pricingElement("pricingCallPrice").textContent = "$" + formatPricingNumber(call.price, 5);
+      pricingElement("pricingCallBS").textContent = "$" + formatPricingNumber(call.black_scholes, 5);
+      pricingElement("pricingCallCI").textContent = "[$" + formatPricingNumber(call.confidence_low_95, 5) + ", $" + formatPricingNumber(call.confidence_high_95, 5) + "]";
+      pricingElement("pricingCallSE").textContent = "$" + formatPricingNumber(call.standard_error, 6);
+      pricingElement("pricingPutPrice").textContent = "$" + formatPricingNumber(put.price, 5);
+      pricingElement("pricingPutBS").textContent = "$" + formatPricingNumber(put.black_scholes, 5);
+      pricingElement("pricingPutCI").textContent = "[$" + formatPricingNumber(put.confidence_low_95, 5) + ", $" + formatPricingNumber(put.confidence_high_95, 5) + "]";
+      pricingElement("pricingPutSE").textContent = "$" + formatPricingNumber(put.standard_error, 6);
+      pricingElement("pricingMetricBackend").textContent =
+        data.execution_engine === "javascript-fallback" ? "Node.js CPU" : (data.backend || "—");
+      pricingElement("pricingMetricTime").textContent = formatPricingNumber(data.elapsed_ms, 2) + " ms";
+      pricingElement("pricingMetricThroughput").textContent = formatPricingNumber(data.paths_per_second, 0) + " /s";
+      pricingElement("pricingMetricGpu").textContent = data.gpu_utilization == null ? "Not reported" : formatPricingNumber(data.gpu_utilization, 1) + "%";
+      const executionLabel = data.execution_engine === "javascript-fallback" ? "Node.js CPU" : "native pricing service";
+      pricingElement("pricingResultMeta").textContent =
+        activeSymbol + " · S " + formatPricingNumber(pricingInputs.spot, 2) +
+        " · K " + formatPricingNumber(pricingInputs.strike, 2) +
+        " · σ " + formatPricingNumber(pricingInputs.volatility * 100, 1) + "%" +
+        " · T " + formatPricingNumber(pricingInputs.maturity_years, 2) + "y" +
+        " · " + formatPricingNumber(data.paths, 0) + " paths · seed " + data.seed +
+        " · " + executionLabel + " · " + formatPricingNumber(data.service_elapsed_ms, 1) + " ms";
+      drawPricingComparison(call, put);
+    }
+
+    async function runMonteCarloPricing(options) {
+      const automatic = Boolean(options && options.automatic);
+      const button = pricingElement("pricingRunButton");
+      if (automatic && liveAutoPricingInFlight) return;
+      if (button.disabled) {
+        if (automatic) liveAutoPricingPending = true;
+        return;
+      }
+      if (automatic) liveAutoPricingInFlight = true;
+      const payload = readPricingInputs();
+      const validationError = validatePricingInputs(payload);
+      if (validationError) {
+        pricingElement("pricingRunMessage").textContent = validationError;
+        if (automatic) {
+          liveAutoPricingInFlight = false;
+          pricingElement("liveAutoPricingStatus").textContent = "Auto-pricing paused: " + validationError;
+        }
+        return;
+      }
+      button.disabled = true;
+      button.textContent = automatic ? "AUTO PRICING..." : "SIMULATING...";
+      setPricingServiceState("running", automatic ? "LIVE MONTE CARLO RUNNING" : "MONTE CARLO RUNNING",
+        payload.backend.toUpperCase() + " requested · " + formatPricingNumber(payload.paths, 0) + " paths");
+      if (!automatic) pricingElement("pricingRunMessage").textContent = "Submitting simulation to the pricing service...";
+      try {
+        const response = await fetch("/api/pricing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify(payload), cache: "no-store"
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          const requestError = new Error(result.detail || result.hint || result.error || "Pricing request failed");
+          requestError.status = response.status;
+          throw requestError;
+        }
+        renderPricingResults(result);
+        const usedFallback = result.execution_engine === "javascript-fallback";
+        setPricingServiceState(
+          "online",
+          usedFallback ? "CPU FALLBACK COMPLETE" : "PRICING COMPLETE",
+          (usedFallback ? "Node.js CPU" : "Executed on " + result.backend) + " · " + formatPricingNumber(result.paths, 0) + " paths"
+        );
+        pricingElement("pricingRunMessage").textContent = automatic
+          ? "Automatically repriced " + activeSymbol + " using the latest live market spot. Strike, volatility, rates, dividend yield and maturity remain your assumptions."
+          : (usedFallback
+            ? "Pricing completed on the built-in built-in CPU engine. Results include Monte Carlo estimates, Black–Scholes references, standard errors, and 95% confidence intervals. CUDA requires an NVIDIA service."
+            : "Pricing complete. Compare Monte Carlo estimates with Black–Scholes and review the 95% confidence intervals.");
+        if (automatic) {
+          pricingElement("liveAutoPricingStatus").textContent =
+            "Last auto-price " + marketDisplaySymbol(activeSymbol) + " · " + new Date().toLocaleTimeString() + " · " + formatPricingNumber(result.paths, 0) + " paths";
+        }
+      } catch (error) {
+        if (error.status === 413) {
+          setPricingServiceState("online", "CPU FALLBACK READY", error.message);
+        } else if (payload.backend === "cuda" && error.status === 503) {
+          setPricingServiceState("online", "CPU READY · CUDA UNAVAILABLE", error.message);
+        } else {
+          setPricingServiceState("offline", "PRICING REQUEST FAILED", error.message);
+        }
+        pricingElement("pricingRunMessage").textContent = error.message;
+        if (automatic) pricingElement("liveAutoPricingStatus").textContent = "Auto-pricing failed: " + error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = "RUN MONTE CARLO SIMULATION";
+        if (automatic) liveAutoPricingInFlight = false;
+        if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+          liveAutoPricingPending = false;
+          scheduleLiveAutoPricing();
+        }
+      }
+    }
+
+    async function runPricingComparison() {
+      const button = pricingElement("pricingCompareButton");
+      const payload = readPricingInputs();
+      const validationError = validatePricingInputs(payload);
+      if (validationError) { pricingElement("pricingRunMessage").textContent = validationError; return; }
+
+      const runBackend = async function(backend) {
+        const response = await fetch("/api/pricing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify(Object.assign({}, payload, { backend: backend })),
+          cache: "no-store"
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          const requestError = new Error(result.detail || result.hint || result.error || (backend + " pricing failed"));
+          requestError.status = response.status;
+          throw requestError;
+        }
+        return result;
+      };
+
+      button.disabled = true;
+      button.textContent = "COMPARING...";
+      pricingElement("pricingCpuCompare").textContent = "Running...";
+      pricingElement("pricingCudaCompare").textContent = "Waiting...";
+      pricingElement("pricingSpeedupCompare").textContent = "—";
+      setPricingServiceState("running", "CPU / GPU COMPARISON", formatPricingNumber(payload.paths, 0) + " paths per backend");
+      try {
+        const cpuResult = await runBackend("cpu");
+        pricingElement("pricingCpuCompare").textContent =
+          formatPricingNumber(cpuResult.elapsed_ms, 2) + " ms · " + formatPricingNumber(cpuResult.paths_per_second, 0) + " paths/s";
+        renderPricingResults(cpuResult);
+        try {
+          const cudaResult = await runBackend("cuda");
+          pricingElement("pricingCudaCompare").textContent =
+            formatPricingNumber(cudaResult.elapsed_ms, 2) + " ms · " + formatPricingNumber(cudaResult.paths_per_second, 0) + " paths/s";
+          const comparable = cpuResult.execution_engine !== "javascript-fallback";
+          const speedup = cpuResult.elapsed_ms / cudaResult.elapsed_ms;
+          pricingElement("pricingSpeedupCompare").textContent = comparable
+            ? (Number.isFinite(speedup) ? speedup.toFixed(2) + "×" : "—") + (speedup >= 1 ? " faster" : " relative")
+            : "Not comparable";
+          renderPricingResults(cudaResult);
+          setPricingServiceState("online", "CPU / GPU COMPARISON COMPLETE", "Both backends completed " + formatPricingNumber(payload.paths, 0) + " paths");
+          pricingElement("pricingRunMessage").textContent = comparable
+            ? "Comparison complete. Both timings came from the same native pricing service process."
+            : "Both calculations completed, but the CPU used Vercel serverless while CUDA used a separate host. A speed-up ratio would not be a controlled comparison. GPU utilization is shown only when NVML is available.";
+        } catch (gpuError) {
+          pricingElement("pricingCudaCompare").textContent = "Unavailable · " + gpuError.message;
+          pricingElement("pricingSpeedupCompare").textContent = "Not measured";
+          setPricingServiceState("online", "CPU COMPLETE · CUDA UNAVAILABLE", "CPU results are ready; connect an NVIDIA GPU pricing service to enable CUDA");
+          pricingElement("pricingRunMessage").textContent =
+            "CPU benchmark completed successfully. CUDA comparison could not run: " + gpuError.message;
+        }
+      } catch (error) {
+        pricingElement("pricingCpuCompare").textContent = "Failed · " + error.message;
+        setPricingServiceState(error.status === 413 ? "online" : "offline",
+          error.status === 413 ? "CPU FALLBACK READY" : "PRICING COMPARISON FAILED", error.message);
+        pricingElement("pricingRunMessage").textContent = error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = "COMPARE CPU / GPU";
+        if (liveAutoPricingPending && pricingElement("autoPricingEnabled").checked && !liveMarketIntentionalClose) {
+          liveAutoPricingPending = false;
+          scheduleLiveAutoPricing();
+        }
+      }
+    }
+
+    function setPricingPreset(name) {
+      const p = name === "stress"
+        ? { spot: 150.25, strike: 150.25, rate: 0.045, dividend: 0.005, vol: 0.65, maturity: 1.0, paths: 4000000 }
+        : { spot: 150.25, strike: 150.25, rate: 0.045, dividend: 0.005, vol: 0.28, maturity: 0.5, paths: 2000000 };
+      pricingElement("pricingSpot").value = p.spot; pricingElement("pricingStrike").value = p.strike;
+      pricingElement("pricingRate").value = p.rate; pricingElement("pricingDividend").value = p.dividend;
+      pricingElement("pricingVol").value = p.vol; pricingElement("pricingMaturity").value = p.maturity;
+      pricingElement("pricingPaths").value = p.paths; pricingElement("pricingSeed").value = PRICING_DEFAULTS.seed;
+    }
+
+    function useActiveSymbolSpot() {
+      const liveQuote = liveMarketQuotes[activeSymbol];
+      if (liveQuote && Number.isFinite(Number(liveQuote.price)) && Number(liveQuote.price) > 0) {
+        pricingElement("pricingSpot").value = Number(liveQuote.price).toFixed(4);
+        pricingElement("pricingRunMessage").textContent =
+          "Loaded the latest " + activeSymbol + " spot from " + (liveQuote.provider || "the live feed") +
+          " at " + new Date(liveQuote.timestamp).toLocaleTimeString() + ".";
+        return;
+      }
+      if (activeSymbol === "BTCUSDT") {
+        pricingElement("pricingRunMessage").textContent = "Waiting for the first Kraken BTC/USD trade tick. No simulated BTC spot is substituted.";
+        return;
+      }
+      const book = orderBooks[activeSymbol];
+      if (!book || !book.bids.length || !book.asks.length) return;
+      const bestBid = Math.max.apply(null, book.bids.map(function(x) { return x.price; }));
+      const bestAsk = Math.min.apply(null, book.asks.map(function(x) { return x.price; }));
+      const mid = (bestBid + bestAsk) / 2;
+      pricingElement("pricingSpot").value = mid.toFixed(4);
+      pricingElement("pricingRunMessage").textContent =
+        "No live tick is available. Loaded the simulated " + activeSymbol + " order-book mid price instead.";
+    }
+
+    function resetPricingInputs() {
+      pricingElement("pricingSpot").value = PRICING_DEFAULTS.spot;
+      pricingElement("pricingStrike").value = PRICING_DEFAULTS.strike;
+      pricingElement("pricingRate").value = PRICING_DEFAULTS.rate;
+      pricingElement("pricingDividend").value = PRICING_DEFAULTS.dividend;
+      pricingElement("pricingVol").value = PRICING_DEFAULTS.vol;
+      pricingElement("pricingMaturity").value = PRICING_DEFAULTS.maturity;
+      pricingElement("pricingPaths").value = PRICING_DEFAULTS.paths;
+      pricingElement("pricingSeed").value = PRICING_DEFAULTS.seed;
+      pricingElement("pricingBackend").value = PRICING_DEFAULTS.backend;
+    }
+
+    window.addEventListener("resize", function() {
+      if (window.lastMonteCarloResult) {
+        drawPricingComparison(window.lastMonteCarloResult.call, window.lastMonteCarloResult.put);
+      }
+      if (marketMcLastResult) drawMarketMonteCarloChart(marketMcLastResult);
+    });
+    pricingElement("marketMcSymbol").textContent = marketDisplaySymbol(activeSymbol) + (activeSymbol === "BTCUSDT" ? " · KRAKEN" : "");
+    checkPricingService();
+    checkLiveMarketDataConfig();
+    // Start with the public BTC feed so the page demonstrates live data and
+    // automatic Monte Carlo immediately, without requiring a manual connect click.
+    setTimeout(function() {
+      selectSymbol("BTCUSDT");
+      connectLiveMarketData();
+    }, 1800);
+    window.addEventListener("beforeunload", stopLiveMarketData);
+
+  </script>
+</body>
+</html>
+

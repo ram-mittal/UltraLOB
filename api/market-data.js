@@ -6,6 +6,10 @@ import pricingHandler from "./pricing.js";
 import marketHistoryHandler from "./market-history.js";
 import { createExecutionRouter } from "../execution/router.js";
 import { PostgresExecutionStore } from "../execution/postgres-store.js";
+import strategiesHandler from "./strategies.js";
+import authHandler from "./auth.js";
+import brokerHandler from "./broker.js";
+import copyTradingHandler from "./copy-trading.js";
 import WebSocket, { WebSocketServer } from "ws";
 import {
   LIVE_SYMBOLS,
@@ -93,26 +97,56 @@ function sendMarketDataHealth(response) {
 }
 
 if (process.env.ULTRALOB_RENDER_MODE === "true") {
-  // This single persistent Node process serves the dashboard and both APIs.
+  // This single persistent Node process serves the SPA, APIs, and WebSocket feeds.
   app.use(express.json({ limit: "64kb" }));
-  app.all("/api/pricing", (request, response) => pricingHandler(request, response));
 
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const dashboardFile = path.join(projectRoot, "index.html");
-  app.get(["/", "/terminal", "/fix_trading_terminal.html"], (_request, response) => {
-    response.sendFile(dashboardFile);
-  });
+
+  // --- Static Assets ---
+  app.use("/public", express.static(path.join(projectRoot, "public"), {
+    maxAge: "1h",
+    immutable: false,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".js")) res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    }
+  }));
+
+  // --- API Routes ---
+  app.all("/api/pricing", (request, response) => pricingHandler(request, response));
+  app.get("/api/market-data", (_request, response) => sendMarketDataHealth(response));
+  app.get("/api/market-history", (request, response) => marketHistoryHandler(request, response));
+  app.get("/api/strategies/:id", (request, response) => strategiesHandler(request, response));
+  app.all("/api/strategies", (request, response) => strategiesHandler(request, response));
+  app.use("/api/auth", (request, response) => authHandler(request, response));
+  app.use("/api/broker", (request, response) => brokerHandler(request, response));
+  app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response));
+
+  // --- Health Check ---
   app.get("/healthz", (_request, response) => {
     response.status(200).json({ status: "ok", service: "ultralob" });
   });
-  app.get("/api/market-data", (_request, response) => sendMarketDataHealth(response));
-  app.get("/api/market-history", (request, response) => marketHistoryHandler(request, response));
+
+  // --- MT5 Execution Bridge & Risk Manager Router ---
   app.use("/api/execution", createExecutionRouter({
     store: executionStore,
     adminKey: process.env.ULTRALOB_EXECUTION_ADMIN_KEY || "",
     liveExecutionEnabled: false
   }));
-  app.use((_request, response) => response.status(404).json({ error: "Not found" }));
+
+  // --- Legacy Classic Terminal ---
+  app.get(["/legacy", "/fix_trading_terminal.html"], (_request, response) => {
+    response.sendFile(path.join(projectRoot, "terminal-legacy.html"));
+  });
+
+  // --- SPA Routes: serve index.html ---
+  const spaFile = path.join(projectRoot, "index.html");
+  app.get(["/", "/marketplace", "/dashboard", "/broker", "/terminal", "/auth", "/strategy/:id"], (_request, response) => {
+    response.sendFile(spaFile);
+  });
+
+  app.use((_request, response) => {
+    response.status(404).json({ error: "Not found" });
+  });
 } else {
   // Vercel routes this module as the /api/market-data function.
   app.use((_request, response) => sendMarketDataHealth(response));
