@@ -489,6 +489,17 @@ export class PostgresExecutionStore {
     }));
   }
 
+  async listEvents({ connectorId = null, limit = 100 } = {}) {
+    const result = await this.pool.query(
+      `SELECT id, connector_id, command_id, event_type, payload, created_at
+       FROM ultralob_execution_events
+       WHERE ($1::uuid IS NULL OR connector_id=$1)
+       ORDER BY created_at DESC LIMIT $2`,
+      [connectorId, limit]
+    );
+    return result.rows;
+  }
+
   async close() {
     await this.pool.end();
   }
