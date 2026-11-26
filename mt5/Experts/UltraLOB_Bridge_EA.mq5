@@ -313,7 +313,7 @@ void ProcessCommand(const string json)
    {
       Print("UltraLOB duplicate delivery ignored: ", commandId);
       SendAcknowledgement(commandId, "ACCEPTED", "Previously submitted; duplicate delivery ignored.",
-                          (ulong)GlobalVariableGet(dedupeKey), 0, TRADE_RETCODE_DONE);
+                          0, 0, TRADE_RETCODE_DONE);
       return;
    }
 
@@ -473,7 +473,7 @@ void ProcessCommand(const string json)
 
    // Persist the command ID locally before acknowledging; a lost HTTP ack cannot
    // make a redelivered command submit a duplicate order.
-   GlobalVariableSet(dedupeKey, (double)result.order);
+   GlobalVariableSet(dedupeKey, 1.0);
    g_activeCommandId = commandId;
    g_activeOrderTicket = result.order;
    g_expectedVolume = volume;
