@@ -15,6 +15,7 @@ input bool   InpEnableDemoExecution = false; // Must be explicitly enabled after
 input double InpMaxTradeRiskPct = 0.50;       // Local maximum risk per trade (% of equity).
 input double InpMaxSpreadPoints = 100.0;
 input int    InpMaxDeviationPoints = 20;
+input int    InpMaxOpenPositions = 2;
 input int    InpTimerSeconds = 5;
 input int    InpHttpTimeoutMs = 2500;
 input ulong  InpMagicNumber = 26052601;
@@ -371,6 +372,17 @@ void ProcessCommand(const string json)
       RejectCommand(commandId, "Broker tick, tick value or volume specification is invalid.");
       return;
    }
+   double volumeUnits = volume / volumeStep;
+   if(MathAbs(volumeUnits - MathRound(volumeUnits)) > 1e-6)
+   {
+      RejectCommand(commandId, "Server volume is not aligned to the broker's volume step.");
+      return;
+   }
+   if(PositionsTotal() >= InpMaxOpenPositions)
+   {
+      RejectCommand(commandId, "Local maximum open-position count reached.");
+      return;
+   }
    if(spreadPoints > InpMaxSpreadPoints)
    {
       RejectCommand(commandId, "Live spread exceeds the EA's local maximum.");
@@ -394,6 +406,12 @@ void ProcessCommand(const string json)
    if(side == "SELL" && !(stopLoss > price && takeProfit < price))
    {
       RejectCommand(commandId, "SELL protection prices are on the wrong side of the live quote.");
+      return;
+   }
+   long stopsLevel = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   if(MathAbs(price - stopLoss) + 1e-10 < (double)stopsLevel * point)
+   {
+      RejectCommand(commandId, "Stop-loss is inside the broker's current minimum stop distance.");
       return;
    }
 
