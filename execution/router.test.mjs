@@ -25,7 +25,7 @@ class MemoryStore {
     return connector;
   }
   async getConnectorByTokenHash(hash) {
-    return [...this.connectors.values()].find((item) => item.token_hash === hash && item.status === "ACTIVE") || null;
+    return [...this.connectors.values()].find((item) => item.token_hash === hash && ["ACTIVE", "PAUSED"].includes(item.status)) || null;
   }
   async getConnector(id) { return this.connectors.get(id) || null; }
   async listConnectors() { return [...this.connectors.values()]; }
