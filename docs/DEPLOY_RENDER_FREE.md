@@ -1,6 +1,6 @@
 # Deploy UltraLOB on Render Free
 
-This repository includes a single-service Render deployment for the dashboard, Monte Carlo pricing API, and live market-data WebSocket gateway.
+This repository includes a single-service Render deployment for the dashboard, Monte Carlo pricing API, live market-data WebSocket gateway, and a demo-only MT5 Execution API. The execution API remains disabled until PostgreSQL and an operator admin key are configured.
 
 ## Free deployment
 
@@ -25,6 +25,22 @@ The landing view selects BTC by default, starts the live gateway automatically, 
 The dashboard's separate Market Monte Carlo panel retrieves recent historical candles, calibrates close-to-close log returns, and resamples contiguous return blocks in the browser. BTCUSDT is an internal UI key for Kraken Spot BTC/USD candles; the quote currency is USD. AAPL, MSFT and GOOGL candles use the Twelve Data `time_series` API through the server; equity history requires `TWELVE_DATA_API_KEY` and consumes the plan's API credits. The endpoint caches BTC history for 15 seconds and equity history for 60 seconds per symbol/interval/lookback request.
 
 The scenario chart displays a sample of simulated paths, the median path and empirical 5–95% / 25–75% percentile fans. It reports terminal price percentiles and close-only first-touch estimates for configured stop and target levels. This is conditional scenario analysis, not a forecast, trading signal, or execution system. It omits intrabar sequence, spread, fees, slippage, liquidity, funding and regime changes.
+
+## MT5 demo execution bridge (phase 1)
+
+The MT5 demo Execution API requires a persistent PostgreSQL database. Add these variables under Render → UltraLOB → Environment:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Managed PostgreSQL connection string |
+| `DATABASE_SSL` | Optional `true` when the database provider requires TLS |
+| `ULTRALOB_EXECUTION_ADMIN_KEY` | Long random operator-only secret to create connector tokens and publish strategy signals |
+
+The service initializes the execution tables on first use. Without `DATABASE_URL`, `/api/execution/health` reports `storage: not-configured` and protected execution routes return 503. Do not use Render's ephemeral filesystem as the execution journal.
+
+The MT5 source is [`mt5/Experts/UltraLOB_Bridge_EA.mq5`](../mt5/Experts/UltraLOB_Bridge_EA.mq5). It must be compiled in MetaEditor, and the user must allow `https://ultralob.onrender.com` in MT5 WebRequest settings. The EA defaults to no execution and rejects any account that is not a demo account. Read the complete [MT5 Demo Bridge guide](MT5_DEMO_BRIDGE.md) before pairing.
+
+This is an operator-managed phase-1 integration. There is not yet a user login or self-service broker page, no Exness adapter, and no live trading mode. The REST polling bridge is not intended for high-frequency execution.
 
 ## Pricing and compute
 
