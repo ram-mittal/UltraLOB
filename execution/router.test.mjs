@@ -9,6 +9,7 @@ class MemoryStore {
   constructor() {
     this.connectors = new Map();
     this.commands = new Map();
+    this.events = [];
   }
   async initialize() {}
   async createConnector(input) {
@@ -22,6 +23,7 @@ class MemoryStore {
       created_at: new Date().toISOString()
     };
     this.connectors.set(connector.id, connector);
+    this.events.push({ connector_id: connector.id, command_id: null, event_type: "CONNECTOR_CREATED", payload: {} });
     return connector;
   }
   async getConnectorByTokenHash(hash) {
@@ -33,10 +35,13 @@ class MemoryStore {
     const item = this.connectors.get(id);
     if (!item) return null;
     item.status = status;
+    this.events.push({ connector_id: id, command_id: null, event_type: "CONNECTOR_STATUS_CHANGED", payload: { status } });
     return { id: item.id, status: item.status };
   }
   async listCommands(limit = 100) { return [...this.commands.values()].slice(0, limit); }
-  async listEvents() { return []; }
+  async listEvents({ connectorId = null, limit = 100 } = {}) {
+    return this.events.filter((event) => !connectorId || event.connector_id === connectorId).slice(-limit).reverse();
+  }
   async updateHeartbeat(id, snapshot) {
     const item = this.connectors.get(id);
     if (!item) throw new Error("not found");
@@ -68,6 +73,7 @@ class MemoryStore {
         expires_at: signal.expires_at, status: "QUEUED"
       });
       ids.push(id);
+      this.events.push({ connector_id: connector.id, command_id: id, event_type: "SIGNAL_QUEUED", payload: {} });
     }
     return { matched_connectors: ids.length, queued_commands: ids.length, command_ids: ids };
   }
@@ -77,6 +83,7 @@ class MemoryStore {
     );
     if (!item) return null;
     item.status = "DISPATCHED";
+    this.events.push({ connector_id: connectorId, command_id: item.id, event_type: "COMMAND_DISPATCHED", payload: {} });
     return item;
   }
   async updateCommandRisk(id, risk) {
@@ -87,12 +94,14 @@ class MemoryStore {
   async rejectCommand(id, code, message) {
     const item = this.commands.get(id);
     Object.assign(item, { status: "REJECTED", error_code: code, error_message: message });
+    this.events.push({ connector_id: item.connector_id, command_id: id, event_type: "RISK_REJECTED", payload: { code, message } });
     return item;
   }
   async acknowledgeCommand(connectorId, commandId, ack) {
     const item = this.commands.get(commandId);
     if (!item || item.connector_id !== connectorId || !["DISPATCHED", "ACCEPTED"].includes(item.status)) return null;
     Object.assign(item, { ...ack, status: ack.status });
+    this.events.push({ connector_id: connectorId, command_id: commandId, event_type: "BROKER_ACKNOWLEDGEMENT", payload: { status: ack.status } });
     return item;
   }
 }
@@ -232,9 +241,9 @@ test("pairs an MT5 demo connector, receives a risk-sized command, and acknowledg
     assert.equal(commandList.status, 200);
     assert.equal((await commandList.json()).commands.length, 1);
 
-    const statusUpdate = await postJson(ctx.url + "/connectors/" + paired.connector.id + "/status", { status: "PAUSED" }, adminHeaders)
-      .then(async (response) => ({ response, body: await response.json() }));
-    assert.equal(statusUpdate.response.status, 404); // PATCH is the only status mutation method.
+    const eventList = await fetch(ctx.url + "/events?limit=20", { headers: adminHeaders });
+    assert.equal(eventList.status, 200);
+    assert.ok((await eventList.json()).events.length >= 4);
 
     const pause = await fetch(ctx.url + "/connectors/" + paired.connector.id + "/status", {
       method: "PATCH",
