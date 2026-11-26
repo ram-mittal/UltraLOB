@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import pricingHandler from "./pricing.js";
 import marketHistoryHandler from "./market-history.js";
+import { createExecutionRouter } from "../execution/router.js";
+import { PostgresExecutionStore } from "../execution/postgres-store.js";
 import WebSocket, { WebSocketServer } from "ws";
 import {
   LIVE_SYMBOLS,
@@ -17,6 +19,12 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 1024 });
 const activeClients = new Set();
+const executionStore = process.env.DATABASE_URL
+  ? new PostgresExecutionStore({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DATABASE_SSL === "true"
+    })
+  : null;
 const MAX_LOCAL_CONNECTIONS = Math.max(
   1,
   Math.min(3, Number.parseInt(process.env.MARKET_DATA_MAX_CONNECTIONS || "1", 10) || 1)
@@ -99,6 +107,11 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   });
   app.get("/api/market-data", (_request, response) => sendMarketDataHealth(response));
   app.get("/api/market-history", (request, response) => marketHistoryHandler(request, response));
+  app.use("/api/execution", createExecutionRouter({
+    store: executionStore,
+    adminKey: process.env.ULTRALOB_EXECUTION_ADMIN_KEY || "",
+    liveExecutionEnabled: false
+  }));
   app.use((_request, response) => response.status(404).json({ error: "Not found" }));
 } else {
   // Vercel routes this module as the /api/market-data function.

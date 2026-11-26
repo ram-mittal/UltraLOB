@@ -6,6 +6,8 @@ import { once } from "node:events";
 process.env.ULTRALOB_RENDER_MODE = "true";
 process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS = "true";
 delete process.env.PRICING_SERVICE_URL;
+delete process.env.DATABASE_URL;
+delete process.env.ULTRALOB_EXECUTION_ADMIN_KEY;
 
 const { default: server } = await import("./market-data.js");
 
@@ -45,6 +47,18 @@ test("Render adapter serves dashboard, health checks, and pricing API", async ()
     const health = await fetch(baseUrl + "/healthz");
     assert.equal(health.status, 200);
     assert.equal((await health.json()).status, "ok");
+
+    const executionHealth = await fetch(baseUrl + "/api/execution/health");
+    const executionHealthPayload = await executionHealth.json();
+    assert.equal(executionHealth.status, 200);
+    assert.equal(executionHealthPayload.environment, "DEMO_ONLY");
+    assert.equal(executionHealthPayload.storage, "not-configured");
+    assert.equal(executionHealthPayload.live_execution_enabled, false);
+    const executionDisabled = await fetch(baseUrl + "/api/execution/connectors", {
+      headers: { "x-ultralob-admin-key": "not-configured" }
+    });
+    assert.equal(executionDisabled.status, 503);
+    assert.equal((await executionDisabled.json()).code, "EXECUTION_STORAGE_NOT_CONFIGURED");
 
     const market = await fetch(baseUrl + "/api/market-data");
     const marketPayload = await market.json();

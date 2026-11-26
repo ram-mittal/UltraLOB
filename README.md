@@ -40,6 +40,7 @@ Experience the web terminal without installing anything:
 * **Optional US equity feed**: AAPL, MSFT and GOOGL use Twelve Data through a server-side WebSocket gateway when the key and account entitlements are configured.
 * **Pricing analytics**: Risk-neutral GBM Monte Carlo, antithetic variates, Black–Scholes reference values, standard errors and 95% confidence intervals.
 * **Trading-system interface**: Order desk, simulated Level 2 books, FIX 4.4 wire inspector, working orders and execution blotter.
+* **MT5 demo execution bridge (phase 1)**: authenticated per-connector tokens, account/position heartbeats, server-side risk sizing and demo-only order instructions. The EA is off by default and refuses live/contest accounts.
 
 **Execution disclaimer:** the web terminal's FIX order ticket and sample fills are simulated. It does not route orders to a live broker or exchange. BTC shows live best bid/ask, not full market depth; the displayed equity Level 2 books are demo data.
 
@@ -68,6 +69,7 @@ flowchart TB
         PRICE["POST /api/pricing"]
         MDGW["/api/market-data<br/>HTTP health + equity WebSocket gateway"]
         HISTORY["/api/market-history<br/>Cached historical candle API"]
+        EXEC["/api/execution<br/>MT5 demo execution API"]
         CPUJS["Built-in JavaScript Monte Carlo CPU fallback<br/>Default AUTO / CPU path"]
     end
 
@@ -75,6 +77,11 @@ flowchart TB
     KRAKEN_REST["Kraken Spot public OHLC REST<br/>BTC/USD"]
     TWELVE["Twelve Data WebSocket<br/>AAPL · MSFT · GOOGL"]
     TWELVE_REST["Twelve Data time_series REST<br/>AAPL · MSFT · GOOGL"]
+    DB[("PostgreSQL<br/>Connector, signal, command and audit state")]
+    MT5EA["UltraLOB Bridge EA<br/>MQL5 · HTTPS poll / heartbeat / ack"]
+    MT5["MT5 terminal · demo account"]
+    DEMOBROKER["Broker trade server<br/>DEMO ONLY"]
+    SIGNALS["Strategy signal producer<br/>Admin-authenticated API ingress"]
     
     subgraph OptionalPricing["Optional separately hosted native pricing service"]
         FASTAPI["FastAPI pricing API"]
@@ -87,6 +94,12 @@ flowchart TB
     APP --> PRICE
     APP --> MDGW
     APP --> HISTORY
+    APP --> EXEC
+    SIGNALS -->|"POST /signals · admin key"| EXEC
+    EXEC <--> DB
+    MT5EA <-->|"HTTPS WebRequest · 5s poll"| EXEC
+    MT5EA <--> MT5
+    MT5 <-->|"OrderCheck / OrderSend · demo only"| DEMOBROKER
     UI <-->|"WSS · live BTC/USD trades and best bid/ask"| KRAKEN
     UI <-->|"WSS · equity subscription and ticks"| MDGW
     MDGW <-->|"Private upstream WebSocket<br/>API key stays server-side"| TWELVE
@@ -109,6 +122,14 @@ flowchart TB
 **Web pricing flow:** the browser posts model inputs to the same-origin `/api/pricing` route. The built-in JavaScript CPU fallback is the default, so Monte Carlo pricing does not need a separate pricing server. When `PRICING_SERVICE_URL` is configured, the Node API can forward requests to the optional FastAPI service and its native C++ library. CUDA requires a separate NVIDIA GPU host; the Render Free instance does not provide one.
 
 **Market-data flow:** BTC/USD connects directly from the browser to Kraken's public WebSocket v2 endpoints; the BTC stream does not pass through Render. The application keeps `BTCUSDT` as an internal UI key but labels the actual Kraken market as BTC/USD. AAPL/MSFT/GOOGL use the Render-hosted equity gateway, which connects to Twelve Data with `TWELVE_DATA_API_KEY` stored server-side. The separate `/api/market-history` endpoint retrieves Kraken public OHLC candles for BTC/USD and Twelve Data time-series candles for equities, with short server-side caching. The Market Monte Carlo scenario lab calibrates historical return blocks from completed candles; a fresh live quote can anchor the simulated entry price. The option-pricing Auto Monte Carlo separately waits for a live quote, synchronizes spot when enabled, and reprices using the selected interval. Other contract inputs remain user assumptions.
+
+### MT5 demo execution bridge — phase 1
+
+The first broker integration is a **single-operator MT5 demo connector**, not yet a self-service copy-trading product. An operator creates a connector through an admin-key-protected API and receives a one-time bearer token. The token hash is stored in PostgreSQL. The MT5 EA reports account, open-position and symbol-contract snapshots; the Execution API sizes each signal against the follower's own equity and broker tick/volume rules. The EA rechecks the order locally with `OrderCalcProfit` and `OrderCheck` before `OrderSend`.
+
+The connector is deliberately demo-only: it refuses real/contest accounts, connector creation only accepts `environment: DEMO`, and the execution health endpoint reports `live_execution_enabled: false`. Connector status changes, signal queueing, risk rejections, dispatches and broker acknowledgements are stored in an append-only PostgreSQL event table. An operator can pause or revoke a connector and inspect command/event history through admin-only routes. The EA's `Enable Demo Execution` input defaults to false. It polls with MQL5 `WebRequest` on a timer, so this first transport is for lower-frequency copy execution rather than tick-level/HFT routing.
+
+See [MT5 Demo Bridge setup](docs/MT5_DEMO_BRIDGE.md) for PostgreSQL configuration, connector pairing, EA installation and a controlled test signal. The API does not yet have user login/self-service account management, Exness integration, multi-strategy marketplace, billing or automated Monte Carlo-to-signal logic. The current web terminal's FIX order ticket remains a separate UI simulation.
 
 ### Standalone C++ exchange and matching engine
 
@@ -276,6 +297,9 @@ UltraLOB/
 ├── index.html                 # Web Trading Terminal (Render / Vercel)
 ├── fix_trading_terminal.html  # Standalone local trading terminal
 ├── docs/DEPLOY_RENDER_FREE.md # Render setup, market-data and pricing notes
+├── docs/MT5_DEMO_BRIDGE.md    # MT5 demo connector installation and operation
+├── execution/                 # Execution API, PostgreSQL store and pre-trade risk checks
+├── mt5/Experts/               # MT5 demo-only Bridge EA source
 ├── vercel.json                # Optional Vercel deployment configuration
 ├── CMakeLists.txt             # Modern CMake build system
 └── README.md
