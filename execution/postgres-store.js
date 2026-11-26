@@ -293,7 +293,7 @@ export class PostgresExecutionStore {
            status='QUEUED' OR (status='DISPATCHED' AND lease_expires_at < NOW())
          )
          ORDER BY created_at ASC
-         FOR UPDATE SKIP LOCKED LIMIT 1`,
+         LIMIT 1 FOR UPDATE SKIP LOCKED`,
         [connectorId]
       );
       if (!selected.rows[0]) {
