@@ -88,7 +88,7 @@ function sanitizeConnector(row) {
       equity: row.equity,
       margin: row.margin,
       margin_free: row.margin_free,
-      open_positions: Array.isArray(row.positions) ? row.positions.length : 0
+      open_positions: Number(row.open_positions_count ?? (Array.isArray(row.positions) ? row.positions.length : 0))
     } : null,
     connection: {
       connected: age !== null && age <= 15000 && row.terminal_connected === true,
