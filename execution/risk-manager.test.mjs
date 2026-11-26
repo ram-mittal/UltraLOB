@@ -126,7 +126,11 @@ test("rejects symbol and strategy outside connector subscriptions", () => {
 });
 
 test("never rounds a too-small risk budget up to broker minimum volume", () => {
-  const { connector, signal, now } = fixture({ equity: 1000 });
+  const { connector, signal, now } = fixture({
+    equity: 1000,
+    day_start_equity: 1000,
+    equity_high_water: 1000
+  });
   const result = evaluateDemoCommand(connector, {
     ...signal,
     stop_loss: 1980,
