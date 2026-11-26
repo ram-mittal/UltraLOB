@@ -455,9 +455,14 @@ void ProcessCommand(const string json)
       request.type_filling = ORDER_FILLING_RETURN;
 
    ResetLastError();
-   if(!OrderCheck(request, check))
+   bool checkPassed = OrderCheck(request, check);
+   // A true return means the request structure passed basic validation;
+   // inspect the trade-server retcode as well before submitting.
+   if(!checkPassed || check.retcode != 0)
    {
-      RejectCommand(commandId, "OrderCheck rejected request: " + check.comment);
+      string checkReason = "OrderCheck rejected request: retcode=" +
+                           IntegerToString((int)check.retcode) + " comment=" + check.comment;
+      RejectCommand(commandId, checkReason);
       return;
    }
 
