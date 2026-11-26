@@ -8,7 +8,7 @@
   "scripts": {
     "test:market-data": "node --test api/market-data.test.mjs",
     "start": "node server.js",
-    "test": "node --test api/pricing.test.mjs api/market-data.test.mjs api/render-server.test.mjs api/market-history.test.mjs execution/risk-manager.test.mjs execution/router.test.mjs"
+    "test": "node --test api/pricing.test.mjs api/market-data.test.mjs api/render-server.test.mjs api/market-history.test.mjs execution/risk-manager.test.mjs execution/router.test.mjs mt5/ea-source.test.mjs"
   },
   "dependencies": {
     "express": "^5.1.0",
