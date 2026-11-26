@@ -33,6 +33,18 @@ The admin key is an operator-only bootstrap mechanism for this phase. Do not exp
 
 The execution API requires PostgreSQL. It does **not** silently use in-memory storage or the Render instance filesystem. Without a database, `GET /api/execution/health` reports storage as not configured and protected execution routes return HTTP 503.
 
+### Free demo database recommendation: Neon
+
+For this development/demo phase, use a [Neon Free PostgreSQL project](https://neon.com/). Its currently documented free allowance includes 1 GB storage, 100 compute-hours per project per month and 5 GB public network transfer; the compute scales to zero after five minutes of inactivity. It is suitable for development and a low-volume demo connector, **not** for always-on or live-money execution. <https://github.com/neondatabase/website/blob/main/content/faqs/free-plan-limits-and-quotas.md>
+
+1. Create a Neon project and choose a region close to the Render web service.
+2. In the Neon Console, open **Connect** and enable **Connection pooling**.
+3. Copy the pooled PostgreSQL connection string. It should use a hostname containing `-pooler` and include `sslmode=require`. Keep any generated `channel_binding=require` parameter.
+4. Add the full string as Render's `DATABASE_URL` secret. Do not paste it into GitHub, this chat, browser JavaScript or the EA.
+5. Leave `DATABASE_SSL` unset for the Neon URL because the connection string already specifies TLS. Set `DATABASE_SSL=true` only for another provider where the URL itself does not carry TLS configuration and the provider requires driver-level SSL.
+
+Neon documents the pooled connection string for long-running web applications and the `-pooler` host suffix here: <https://neon.com/docs/connect/connection-pooling>.
+
 Add these environment variables to the Render UltraLOB service:
 
 | Variable | Purpose |
