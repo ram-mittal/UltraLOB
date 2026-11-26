@@ -174,12 +174,15 @@ Before sending, the EA independently verifies current prices, volume step, stop 
 | GET | `/api/execution/health` | Public | Reports storage and demo-only mode |
 | POST | `/api/execution/connectors` | Admin key | Create a demo connector and return its token once |
 | GET | `/api/execution/connectors` | Admin key | List sanitized connector and heartbeat status |
+| PATCH | `/api/execution/connectors/:id/status` | Admin key | Activate, pause or revoke a connector |
+| GET | `/api/execution/commands` | Admin key | Inspect the latest command states |
+| GET | `/api/execution/events` | Admin key | Read the append-only command and connector event trail |
 | POST | `/api/execution/signals` | Admin key | Fan out an idempotent strategy signal |
 | POST | `/api/execution/connectors/:id/heartbeat` | Connector bearer | Submit account, position and symbol snapshots |
 | GET | `/api/execution/connectors/:id/next` | Connector bearer | Long-poll/poll the next risk-approved instruction |
 | POST | `/api/execution/connectors/:id/commands/:commandId/ack` | Connector bearer | Record accepted, rejected, partial or filled status |
 
-Connector credentials are per connector. The API never asks for or stores an MT5 trading password.
+Connector credentials are per connector. The API never asks for or stores an MT5 trading password. Connector creation, signal queueing, command dispatch, risk rejections, broker acknowledgements and operator status changes are recorded in `ultralob_execution_events`. Use the connector status endpoint to pause a follower before maintenance or revoke its token if a terminal is compromised. A revoked token can no longer heartbeat or poll.
 
 ## 6. Risk and execution semantics
 
