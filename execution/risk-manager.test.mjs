@@ -88,7 +88,12 @@ test("rejects a breached daily loss limit", () => {
 });
 
 test("rejects a breached peak-to-trough drawdown limit", () => {
-  const { connector, signal, now } = fixture({ equity: 9100, equity_high_water: 10000 });
+  const { connector, signal, now } = fixture({
+    equity: 9100,
+    day_start_equity: 10000,
+    equity_high_water: 10000,
+    max_daily_loss_pct: 10
+  });
   const result = evaluateDemoCommand(connector, signal, now);
   assert.equal(result.code, "MAX_DRAWDOWN_LIMIT");
 });
