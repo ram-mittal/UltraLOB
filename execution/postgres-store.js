@@ -345,7 +345,7 @@ export class PostgresExecutionStore {
          status=$3, broker_order_id=$4, broker_deal_id=$5,
          broker_retcode=$6, broker_comment=$7, error_code=$8, error_message=$9,
          lease_expires_at=NULL, updated_at=NOW()
-       WHERE id=$1 AND connector_id=$2 AND status IN ('DISPATCHED','ACCEPTED')
+       WHERE id=$1 AND connector_id=$2 AND status IN ('DISPATCHED','ACCEPTED','PARTIAL')
        RETURNING *`,
       [
         commandId, connectorId, acknowledgement.status,
