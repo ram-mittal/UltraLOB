@@ -110,7 +110,7 @@ async function startTestServer() {
   const store = new MemoryStore();
   const app = express();
   app.use(express.json({ limit: "64kb" }));
-  app.use("/api/execution", createExecutionRouter({
+  app.use(createExecutionRouter({
     store,
     adminKey: "unit-test-admin-key",
     liveExecutionEnabled: false
