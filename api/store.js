@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { isDatabaseConfigured, initializeDatabase, query } from "../db/client.js";
+import { createDefaultRiskState } from "../risk/engine.js";
 
 export const STRATEGY_LIFECYCLE_STATUSES = Object.freeze([
   "RESEARCH",
@@ -385,6 +386,13 @@ export function getPortfolioForUser(userId = "guest") {
     memoryStore.portfolios.set(userId, createEmptyPortfolio("PAPER_SANDBOX"));
   }
   return memoryStore.portfolios.get(userId);
+}
+
+export function getRiskStateForUser(userId = "guest") {
+  if (!memoryStore.riskConfigs.has(userId)) {
+    memoryStore.riskConfigs.set(userId, createDefaultRiskState());
+  }
+  return memoryStore.riskConfigs.get(userId);
 }
 
 export function getAllStrategiesInMemory() {

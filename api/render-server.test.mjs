@@ -260,7 +260,7 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
       body: JSON.stringify({ symbol: "BTC/USD", side: "BUY", qty: 0.01, price: 97500 })
     });
     assert.equal(blockedExec.status, 403);
-    assert.equal((await blockedExec.json()).code, "KILL_SWITCH_ACTIVE");
+    assert.equal((await blockedExec.json()).code, "GLOBAL_KILL_SWITCH_ACTIVE");
 
     // 8. WebSocket heartbeat & 404
     const socketUrl = baseUrl.replace(/^http/, "ws") + "/api/market-data?symbols=BTCUSDT";
@@ -312,6 +312,52 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const btList = await fetch(baseUrl + "/api/research/backtests");
     assert.equal(btList.status, 200);
     assert.ok((await btList.json()).backtests.length >= 1);
+
+    // 10. Phase 4 Portfolio Allocation & Hierarchical Risk Governance
+    const rebal = await fetch(baseUrl + "/api/portfolio/rebalance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({
+        method: "RISK_WEIGHTED",
+        total_capital: 25000,
+        constraints: { max_allocation_per_strategy_pct: 35, max_instrument_exposure_pct: 60 }
+      })
+    });
+    assert.equal(rebal.status, 200);
+    const rebalData = await rebal.json();
+    assert.equal(rebalData.plan.method, "RISK_WEIGHTED");
+    assert.ok(rebalData.plan.allocations.length === 6);
+
+    // Strategy-scoped kill switch blocks that strategy independently
+    await fetch(baseUrl + "/api/copy-trading/risk-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ kill_switch_active: false })
+    });
+    const instKs = await fetch(baseUrl + "/api/portfolio/risk/kill-switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ scope: "INSTRUMENT", target: "XAUUSD", active: true, reason: "Volatility spike halt" })
+    });
+    assert.equal(instKs.status, 200);
+
+    const blockedGold = await fetch(baseUrl + "/api/copy-trading/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ symbol: "XAUUSD", side: "BUY", qty: 0.1, price: 2650 })
+    });
+    assert.equal(blockedGold.status, 403);
+    assert.equal((await blockedGold.json()).code, "INSTRUMENT_KILL_SWITCH_ACTIVE");
+
+    const kelly = await fetch(baseUrl + "/api/portfolio/risk/kelly-research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ win_probability: 0.6, payoff_ratio: 2.0 })
+    });
+    assert.equal(kelly.status, 200);
+    const kellyPayload = await kelly.json();
+    assert.equal(kellyPayload.classification, "SIMULATED_RESEARCH_INPUT_ONLY");
+    assert.ok(kellyPayload.hard_capped_risk_pct <= 0.5);
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

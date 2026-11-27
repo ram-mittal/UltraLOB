@@ -2,11 +2,14 @@ import crypto from "node:crypto";
 import {
   getMemoryStore,
   getPortfolioForUser,
+  getRiskStateForUser,
   getAllStrategiesInMemory,
   extractAuthContext
 } from "./store.js";
 import { getDatabaseStatus } from "../db/client.js";
 import { computeRiskNormalizedVolume } from "../execution/risk-manager.js";
+import { computePortfolioExposure } from "../portfolio/allocator.js";
+import { evaluateTradeGovernance } from "../risk/engine.js";
 
 function computePortfolioMetrics(portfolio) {
   const subs = portfolio.subscriptions || [];
@@ -27,6 +30,8 @@ function computePortfolioMetrics(portfolio) {
   const wins = closedTrades.filter((t) => (t.pnl || 0) > 0).length;
   const winRate = closedTrades.length > 0 ? Number(((wins / closedTrades.length) * 100).toFixed(1)) : null;
 
+  const exposure = computePortfolioExposure({ equity, openTrades, subscriptions: subs });
+
   return {
     data_origin: portfolio.dataOrigin || "PAPER_SANDBOX",
     balance: Number(portfolio.balance.toFixed(2)),
@@ -35,6 +40,8 @@ function computePortfolioMetrics(portfolio) {
     available_capital: availableCapital,
     margin_used: marginUsed,
     free_margin: Number(Math.max(0, equity - marginUsed).toFixed(2)),
+    gross_notional: exposure.gross_notional,
+    portfolio_leverage: exposure.portfolio_leverage,
     drawdown_pct: drawdownPct,
     unrealized_pnl: Number(unrealized.toFixed(2)),
     realized_pnl: Number(realized.toFixed(2)),
@@ -47,22 +54,13 @@ function computePortfolioMetrics(portfolio) {
   };
 }
 
-function getRiskConfig(mem, userId) {
-  if (!mem.riskConfigs.has(userId)) {
-    mem.riskConfigs.set(userId, {
-      max_risk_per_trade_pct: 0.5,
-      max_daily_loss_pct: 2.0,
-      max_weekly_loss_pct: 5.0,
-      max_monthly_loss_pct: 10.0,
-      max_drawdown_pct: 12.0,
-      max_open_positions: 5,
-      max_leverage: 20.0,
-      max_spread_points: 100.0,
-      kill_switch_active: false,
-      updated_at: new Date().toISOString()
-    });
-  }
-  return mem.riskConfigs.get(userId);
+function flattenRiskConfig(riskState) {
+  return {
+    ...riskState.limits,
+    kill_switch_active: Boolean(riskState.kill_switches.global_active),
+    kill_switches: riskState.kill_switches,
+    updated_at: riskState.updated_at
+  };
 }
 
 async function queueBrokerSignal(mem, userId, trade, executionStore = null) {
@@ -89,7 +87,6 @@ async function queueBrokerSignal(mem, userId, trade, executionStore = null) {
   mem.mt5Signals.unshift(signal);
   if (mem.mt5Signals.length > 200) mem.mt5Signals.length = 200;
 
-  // Forward into PostgreSQL /api/execution queue when stop/target protection & store exist
   if (executionStore && trade.stopPrice && trade.targetPrice) {
     try {
       await executionStore.initialize();
@@ -120,7 +117,7 @@ export default async function copyTradingHandler(request, response, { executionS
   const userId = auth.userId;
   const mem = getMemoryStore();
   const portfolio = getPortfolioForUser(userId);
-  const riskConfig = getRiskConfig(mem, userId);
+  const riskState = getRiskStateForUser(userId);
 
   // GET /api/copy-trading/portfolio
   if (request.method === "GET" && subPath === "/portfolio") {
@@ -132,7 +129,7 @@ export default async function copyTradingHandler(request, response, { executionS
       equityHistory: portfolio.equityHistory,
       mcConfig: portfolio.mcConfig,
       broker: mem.brokers.get(userId) || null,
-      riskConfig,
+      riskConfig: flattenRiskConfig(riskState),
       riskAlerts: mem.riskEvents.filter((e) => e.userId === userId).slice(0, 20),
       systemStatus: {
         database: dbStatus,
@@ -141,12 +138,12 @@ export default async function copyTradingHandler(request, response, { executionS
     });
   }
 
-  // POST /api/copy-trading/size-preview — Exact risk-normalized lot sizing calculation
+  // POST /api/copy-trading/size-preview
   if (request.method === "POST" && subPath === "/size-preview") {
     const b = request.body || {};
     const sizing = computeRiskNormalizedVolume({
       equity: Number(b.equity || portfolio.balance || 10_000),
-      riskPct: Number(b.risk_pct || riskConfig.max_risk_per_trade_pct || 0.5),
+      riskPct: Number(b.risk_pct || riskState.limits.max_risk_per_trade_pct || 0.5),
       stopDistance: Number(b.stop_distance || 5.0),
       tickSize: Number(b.tick_size || 0.01),
       tickValue: Number(b.tick_value || 1.0),
@@ -176,35 +173,38 @@ export default async function copyTradingHandler(request, response, { executionS
     });
   }
 
-  // POST /api/copy-trading/risk-config
+  // POST /api/copy-trading/risk-config (Compatible endpoint backed by canonical riskState)
   if (request.method === "POST" && subPath === "/risk-config") {
     const b = request.body || {};
-    if (b.kill_switch_active !== undefined) riskConfig.kill_switch_active = Boolean(b.kill_switch_active);
+    if (b.kill_switch_active !== undefined) {
+      riskState.kill_switches.global_active = Boolean(b.kill_switch_active);
+      riskState.kill_switches.global_reason = riskState.kill_switches.global_active ? "Toggled from Overview/Risk panel" : null;
+    }
     if (Number.isFinite(Number(b.max_risk_per_trade_pct))) {
-      riskConfig.max_risk_per_trade_pct = Math.min(2.0, Math.max(0.05, Number(b.max_risk_per_trade_pct)));
+      riskState.limits.max_risk_per_trade_pct = Math.min(2.0, Math.max(0.05, Number(b.max_risk_per_trade_pct)));
     }
     if (Number.isFinite(Number(b.max_daily_loss_pct))) {
-      riskConfig.max_daily_loss_pct = Math.min(10.0, Math.max(0.25, Number(b.max_daily_loss_pct)));
+      riskState.limits.max_daily_loss_pct = Math.min(10.0, Math.max(0.25, Number(b.max_daily_loss_pct)));
     }
     if (Number.isFinite(Number(b.max_drawdown_pct))) {
-      riskConfig.max_drawdown_pct = Math.min(25.0, Math.max(1.0, Number(b.max_drawdown_pct)));
+      riskState.limits.max_drawdown_pct = Math.min(30.0, Math.max(1.0, Number(b.max_drawdown_pct)));
     }
     if (Number.isInteger(Number(b.max_open_positions))) {
-      riskConfig.max_open_positions = Math.min(20, Math.max(1, Number(b.max_open_positions)));
+      riskState.limits.max_open_positions = Math.min(25, Math.max(1, Number(b.max_open_positions)));
     }
-    riskConfig.updated_at = new Date().toISOString();
+    riskState.updated_at = new Date().toISOString();
 
     mem.riskEvents.unshift({
       id: crypto.randomUUID().slice(0, 8),
       userId,
-      severity: riskConfig.kill_switch_active ? "KILL_SWITCH" : "INFO",
-      message: riskConfig.kill_switch_active
+      severity: riskState.kill_switches.global_active ? "KILL_SWITCH" : "INFO",
+      message: riskState.kill_switches.global_active
         ? "Global kill switch ACTIVATED — all new order execution halted."
-        : "Risk limits updated.",
-      createdAt: riskConfig.updated_at
+        : "Risk governance limits updated.",
+      createdAt: riskState.updated_at
     });
 
-    return response.status(200).json({ riskConfig });
+    return response.status(200).json({ riskConfig: flattenRiskConfig(riskState) });
   }
 
   // POST /api/copy-trading/subscribe
@@ -232,7 +232,7 @@ export default async function copyTradingHandler(request, response, { executionS
     const existing = portfolio.subscriptions.find((s) => s.strategyId === strategy.id);
     if (existing) {
       existing.allocation = allocNum;
-      existing.riskPerTradePct = Math.min(riskConfig.max_risk_per_trade_pct, Math.max(0.05, Number(riskPerTradePct) || 0.5));
+      existing.riskPerTradePct = Math.min(riskState.limits.max_risk_per_trade_pct, Math.max(0.05, Number(riskPerTradePct) || 0.5));
       existing.maxDrawdownPct = Number(maxDrawdownPct) || 10;
       existing.allocationMethod = allocationMethod;
       existing.autoMcEnabled = Boolean(autoMcEnabled);
@@ -248,7 +248,7 @@ export default async function copyTradingHandler(request, response, { executionS
         lifecycle_status: strategy.lifecycle_status,
         allocationMethod,
         allocation: allocNum,
-        riskPerTradePct: Math.min(riskConfig.max_risk_per_trade_pct, Math.max(0.05, Number(riskPerTradePct) || 0.5)),
+        riskPerTradePct: Math.min(riskState.limits.max_risk_per_trade_pct, Math.max(0.05, Number(riskPerTradePct) || 0.5)),
         maxDrawdownPct: Number(maxDrawdownPct) || 10,
         autoMcEnabled: Boolean(autoMcEnabled),
         pnl: 0,
@@ -320,6 +320,7 @@ export default async function copyTradingHandler(request, response, { executionS
       medianReturn,
       stopPrice,
       targetPrice,
+      strategyId = "mc-research-signal",
       execute = false
     } = request.body || {};
 
@@ -368,35 +369,32 @@ export default async function copyTradingHandler(request, response, { executionS
 
     let executedTrades = [];
     if (qualified && execute) {
-      if (riskConfig.kill_switch_active) {
-        return response.status(403).json({
-          error: "Kill switch is active. Execution blocked by Risk Engine.",
-          code: "KILL_SWITCH_ACTIVE",
-          evaluation
+      const metrics = computePortfolioMetrics(portfolio);
+      const effectiveRiskPct = metrics.balance > 0
+        ? Math.min(riskState.limits.max_risk_per_trade_pct, Math.max(0.05, (cfg.riskAmountUsd / metrics.balance) * 100))
+        : riskState.limits.max_risk_per_trade_pct;
+
+      const gov = evaluateTradeGovernance({
+        riskState,
+        portfolioMetrics: metrics,
+        strategyId,
+        symbol,
+        proposedRiskPct: effectiveRiskPct
+      });
+      if (!gov.approved) {
+        mem.riskEvents.unshift({
+          id: crypto.randomUUID().slice(0, 8),
+          userId,
+          severity: "BREACH",
+          message: `MC order blocked (${gov.code}): ${gov.message}`,
+          createdAt: new Date().toISOString()
         });
-      }
-      const openCount = portfolio.trades.filter((t) => t.status === "open").length;
-      if (openCount >= riskConfig.max_open_positions) {
-        return response.status(400).json({
-          error: `Max open positions limit (${riskConfig.max_open_positions}) reached.`,
-          code: "MAX_OPEN_POSITIONS",
-          evaluation
-        });
-      }
-      if (portfolio.balance <= 0) {
-        return response.status(400).json({
-          error: "Portfolio capital is $0. Fund Paper Sandbox capital or link an MT5 Demo connector before executing.",
-          code: "NO_ALLOCATED_CAPITAL",
-          evaluation
-        });
+        const status = gov.code.includes("KILL_SWITCH") ? 403 : 400;
+        return response.status(status).json({ error: gov.message, code: gov.code, evaluation });
       }
 
       const stopRef = Number(stopPrice) || spotNum * 0.98;
       const stopDistance = Math.abs(spotNum - stopRef);
-      const effectiveRiskPct = Math.min(
-        riskConfig.max_risk_per_trade_pct,
-        Math.max(0.05, (cfg.riskAmountUsd / portfolio.balance) * 100)
-      );
       const sizing = computeRiskNormalizedVolume({
         equity: portfolio.balance,
         riskPct: effectiveRiskPct,
@@ -415,7 +413,7 @@ export default async function copyTradingHandler(request, response, { executionS
         id: "tr-" + crypto.randomUUID().slice(0, 8),
         time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
         timestamp: Date.now(),
-        strategyId: "mc-research-signal",
+        strategyId,
         strategy: "MC Research Signal",
         symbol,
         side: signalSide,
@@ -440,25 +438,35 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/execute
   if (request.method === "POST" && subPath === "/execute") {
-    if (riskConfig.kill_switch_active) {
-      return response.status(403).json({
-        error: "Kill switch is active. New orders blocked by Risk Engine.",
-        code: "KILL_SWITCH_ACTIVE"
-      });
-    }
-    if (portfolio.balance <= 0) {
-      return response.status(400).json({
-        error: "Portfolio capital is $0. Fund Paper Sandbox capital before placing orders.",
-        code: "NO_ALLOCATED_CAPITAL"
-      });
-    }
-
     const { symbol = "BTC/USD", side = "BUY", qty = 0.05, price, orderType = "market", strategyId = "manual" } = request.body || {};
     const sideUpper = String(side).toUpperCase();
     const qtyNum = Number(qty);
     const priceNum = Number(price);
     if (!["BUY", "SELL"].includes(sideUpper) || !Number.isFinite(qtyNum) || qtyNum <= 0 || !Number.isFinite(priceNum) || priceNum <= 0) {
       return response.status(400).json({ error: "Valid side (BUY/SELL), qty, and price are required." });
+    }
+
+    const metrics = computePortfolioMetrics(portfolio);
+    const notional = qtyNum * priceNum;
+    const gov = evaluateTradeGovernance({
+      riskState,
+      portfolioMetrics: metrics,
+      strategyId,
+      symbol,
+      proposedRiskPct: riskState.limits.max_risk_per_trade_pct,
+      proposedNotional: notional,
+      proposedMargin: notional * 0.05
+    });
+    if (!gov.approved) {
+      mem.riskEvents.unshift({
+        id: crypto.randomUUID().slice(0, 8),
+        userId,
+        severity: "BREACH",
+        message: `Manual execution blocked (${gov.code}): ${gov.message}`,
+        createdAt: new Date().toISOString()
+      });
+      const status = gov.code.includes("KILL_SWITCH") ? 403 : 400;
+      return response.status(status).json({ error: gov.message, code: gov.code });
     }
 
     const connectedBroker = mem.brokers.get(userId);

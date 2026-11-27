@@ -10,6 +10,7 @@ import strategiesHandler from "./strategies.js";
 import authHandler from "./auth.js";
 import brokerHandler from "./broker.js";
 import copyTradingHandler from "./copy-trading.js";
+import portfolioHandler from "./portfolio.js";
 import researchHandler from "./research.js";
 import WebSocket, { WebSocketServer } from "ws";
 import { getDatabaseStatus } from "../db/client.js";
@@ -123,6 +124,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use("/api/auth", (request, response) => authHandler(request, response));
   app.use("/api/broker", (request, response) => brokerHandler(request, response, { executionStore }));
   app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response, { executionStore }));
+  app.use("/api/portfolio", (request, response) => portfolioHandler(request, response));
   app.use("/api/research", (request, response) => researchHandler(request, response));
 
   // --- Health Check & Institutional System Telemetry ---

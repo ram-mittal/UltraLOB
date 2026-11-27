@@ -34,6 +34,12 @@ export const api = {
 
   // Portfolio, Risk Engine & Copy Trading
   getPortfolio: () => request('/api/copy-trading/portfolio'),
+  getPortfolioSummary: () => request('/api/portfolio/summary'),
+  rebalancePortfolio: (payload) => request('/api/portfolio/rebalance', { method: 'POST', body: JSON.stringify(payload) }),
+  getPortfolioRisk: () => request('/api/portfolio/risk'),
+  updateRiskLimits: (limits) => request('/api/portfolio/risk/limits', { method: 'POST', body: JSON.stringify(limits) }),
+  toggleKillSwitch: (payload) => request('/api/portfolio/risk/kill-switch', { method: 'POST', body: JSON.stringify(payload) }),
+  computeKellyResearch: (payload) => request('/api/portfolio/risk/kelly-research', { method: 'POST', body: JSON.stringify(payload) }),
   fundSandboxCapital: (amount) => request('/api/copy-trading/sandbox-capital', { method: 'POST', body: JSON.stringify({ amount }) }),
   previewPositionSize: (payload) => request('/api/copy-trading/size-preview', { method: 'POST', body: JSON.stringify(payload) }),
   saveRiskConfig: (cfg) => request('/api/copy-trading/risk-config', { method: 'POST', body: JSON.stringify(cfg) }),

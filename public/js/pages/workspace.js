@@ -46,56 +46,223 @@ export async function init(route) {
       api.getExecutionHealth().catch(() => ({ status: 'disabled', storage: 'not-configured', environment: 'DEMO_ONLY' }))
     ]);
 
-    if (route.path === '/risk') {
-      const r = portfolio.riskConfig || {};
+    if (route.path === '/portfolio') {
+      const ps = await api.getPortfolioSummary();
+      const renderPlan = (plan) => {
+        if (!plan) return '<div class="text-xs text-surface-500 py-4 text-center">Click "Compute Optimal Allocation" to preview weights across allocation methods and caps.</div>';
+        return `
+          <div class="space-y-4">
+            <div class="flex flex-wrap justify-between gap-2 text-xs">
+              <span class="text-surface-400">Method: <strong class="text-white font-mono">${plan.method}</strong> • Investable: <strong class="text-profit font-mono">$${plan.investable_capital.toLocaleString()}</strong> • Cash Reserve: <strong class="text-white font-mono">$${plan.cash_reserve_usd.toLocaleString()}</strong></span>
+            </div>
+            ${plan.warnings?.length ? `<div class="p-3 rounded bg-warn-bg border border-warn/30 text-xs text-warn">${plan.warnings.join(' • ')}</div>` : ''}
+            <table class="w-full text-xs">
+              <thead><tr class="border-b border-surface-800 text-surface-500">
+                <th class="text-left pb-2">Strategy</th><th class="text-left pb-2">Instrument</th><th class="text-left pb-2">Stage</th>
+                <th class="text-right pb-2">Weight %</th><th class="text-right pb-2">Allocated USD</th><th class="text-right pb-2">Vol Source</th>
+              </tr></thead>
+              <tbody>
+                ${plan.allocations.map(a => `
+                  <tr class="border-b border-surface-800/50">
+                    <td class="py-2 text-white font-medium">${a.name}</td>
+                    <td class="py-2 font-mono text-surface-300">${a.instrument}</td>
+                    <td class="py-2"><span class="chip chip-yellow text-[10px]">${a.lifecycle_status}</span></td>
+                    <td class="py-2 text-right font-mono text-brand-300">${a.weight_pct}%</td>
+                    <td class="py-2 text-right font-mono text-white">$${a.allocated_usd.toLocaleString()}</td>
+                    <td class="py-2 text-right font-mono text-surface-400">${a.vol_source}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`;
+      };
+
+      const exp = ps.exposure || { gross_notional: 0, portfolio_leverage: 0, instruments: [] };
+      const corr = ps.correlations || { has_empirical_data: false, data_origin: 'AWAITING_BACKTEST_OVERLAP' };
+
       body.innerHTML = `
-        <div class="grid md:grid-cols-2 gap-6">
-          <div class="glass-card rounded-xl p-6">
-            <h3 class="text-sm font-semibold text-white mb-4">Hard Risk Limits (Enforced Independent of AI)</h3>
-            <form id="risk-form" onsubmit="return false;" class="space-y-3 text-xs">
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="text-surface-400 block mb-1">Max Risk / Trade (%)</label>
-                  <input name="max_risk_per_trade_pct" type="number" step="0.05" value="${r.max_risk_per_trade_pct ?? 0.5}" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
-                </div>
-                <div>
-                  <label class="text-surface-400 block mb-1">Max Daily Loss (%)</label>
-                  <input name="max_daily_loss_pct" type="number" step="0.25" value="${r.max_daily_loss_pct ?? 2.0}" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
-                </div>
-                <div>
-                  <label class="text-surface-400 block mb-1">Max Drawdown (%)</label>
-                  <input name="max_drawdown_pct" type="number" step="0.5" value="${r.max_drawdown_pct ?? 12.0}" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
-                </div>
-                <div>
-                  <label class="text-surface-400 block mb-1">Max Open Positions</label>
-                  <input name="max_open_positions" type="number" value="${r.max_open_positions ?? 5}" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
-                </div>
+        <div class="grid sm:grid-cols-4 gap-4 mb-6 text-xs">
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Portfolio Equity (${ps.data_origin})</span><strong class="text-white font-mono text-base">$${ps.equity.toLocaleString()}</strong></div>
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Gross Notional Exposure</span><strong class="text-white font-mono text-base">$${exp.gross_notional.toLocaleString()}</strong></div>
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Portfolio Leverage</span><strong class="text-brand-400 font-mono text-base">${exp.portfolio_leverage}x</strong></div>
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Correlation Matrix Status</span><strong class="text-warn font-mono text-xs">${corr.data_origin}</strong></div>
+        </div>
+
+        <div class="glass-card rounded-xl p-6 mb-6">
+          <h3 class="text-sm font-semibold text-white mb-4">Institutional Capital Allocation Optimizer</h3>
+          <form id="rebalance-form" onsubmit="return false;" class="space-y-4 text-xs mb-6">
+            <div class="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div>
+                <label class="text-surface-400 block mb-1">Allocation Method</label>
+                <select name="method" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white">
+                  <option value="RISK_WEIGHTED">Risk-Weighted</option>
+                  <option value="VOLATILITY_ADJUSTED">Volatility-Adjusted (1/σ)</option>
+                  <option value="EQUAL_RISK_CONTRIBUTION">Equal Risk Contribution (ERC)</option>
+                  <option value="FIXED">Fixed Weight</option>
+                  <option value="FRACTIONAL">Fractional Equal</option>
+                </select>
               </div>
-              <button type="submit" class="btn-primary px-4 py-2 rounded-lg text-white font-semibold">Update Hard Limits</button>
-            </form>
+              <div><label class="text-surface-400 block mb-1">Capital Base ($)</label><input name="total_capital" type="number" value="${ps.equity > 0 ? ps.equity : 25000}" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono"></div>
+              <div><label class="text-surface-400 block mb-1">Max Strategy %</label><input name="max_allocation_per_strategy_pct" type="number" value="35" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono"></div>
+              <div><label class="text-surface-400 block mb-1">Max Instrument %</label><input name="max_instrument_exposure_pct" type="number" value="60" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono"></div>
+              <div><label class="text-surface-400 block mb-1">Cash Reserve Floor %</label><input name="cash_reserve_floor_pct" type="number" value="10" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono"></div>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <label class="flex items-center gap-2 text-surface-300"><input type="checkbox" name="apply" class="rounded bg-surface-800 border-surface-700"> Apply allocation plan to portfolio mandates</label>
+              <button type="submit" class="btn-primary px-4 py-2 rounded-lg text-white font-semibold">Compute Optimal Allocation</button>
+            </div>
+          </form>
+          <div id="rebalance-out">${renderPlan(null)}</div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6 text-xs">
+          <div class="glass-card rounded-xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-3">Instrument Exposure Breakdown</h3>
+            ${exp.instruments.length ? `
+              <table class="w-full">
+                <thead><tr class="border-b border-surface-800 text-surface-500"><th class="text-left pb-2">Instrument</th><th class="text-right pb-2">Net Notional</th><th class="text-right pb-2">Mandate $</th><th class="text-right pb-2">% Equity</th></tr></thead>
+                <tbody>
+                  ${exp.instruments.map(i => `<tr class="border-b border-surface-800/50"><td class="py-2 font-mono text-white">${i.symbol}</td><td class="py-2 text-right font-mono">$${i.net_notional.toLocaleString()}</td><td class="py-2 text-right font-mono">$${i.allocated_mandate_usd.toLocaleString()}</td><td class="py-2 text-right font-mono">${i.exposure_pct_of_equity}%</td></tr>`).join('')}
+                </tbody>
+              </table>` : '<div class="text-surface-500 py-4">No active positions or strategy mandates yet.</div>'}
           </div>
           <div class="glass-card rounded-xl p-6">
-            <h3 class="text-sm font-semibold text-white mb-3">Execution Kill Switch & Stress Tools</h3>
-            <p class="text-xs text-surface-400 mb-4">When active, all outbound signals, Monte Carlo auto-trades, and copy executions are rejected immediately.</p>
-            <button id="ws-kill-btn" class="px-4 py-2.5 rounded-lg text-xs font-semibold border ${r.kill_switch_active ? 'bg-loss text-white border-loss' : 'bg-loss-bg text-loss border-loss/40'}">
-              ${r.kill_switch_active ? '🛑 KILL SWITCH ACTIVE — Click to Disarm' : '⚠️ Activate Global Kill Switch'}
+            <h3 class="text-sm font-semibold text-white mb-3">Pairwise Strategy Correlation Matrix</h3>
+            ${corr.has_empirical_data
+              ? `<div class="text-profit">Empirical overlap computed from backtest return vectors.</div>`
+              : `<div class="p-4 rounded border border-dashed border-surface-700 text-surface-400">Awaiting empirical return series overlap across 2+ backtested strategies. UltraLOB never fabricates assumed correlations.</div>`}
+          </div>
+        </div>`;
+
+      document.getElementById('rebalance-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        const res = await api.rebalancePortfolio({
+          method: f.method,
+          total_capital: Number(f.total_capital),
+          apply: Boolean(e.target.apply?.checked),
+          constraints: {
+            max_allocation_per_strategy_pct: Number(f.max_allocation_per_strategy_pct),
+            max_instrument_exposure_pct: Number(f.max_instrument_exposure_pct),
+            cash_reserve_floor_pct: Number(f.cash_reserve_floor_pct)
+          }
+        });
+        document.getElementById('rebalance-out').innerHTML = renderPlan(res.plan);
+        showToast(res.applied ? 'Portfolio mandates rebalanced.' : 'Preview computed.', 'success');
+      });
+      return;
+    }
+
+    if (route.path === '/risk') {
+      const riskData = await api.getPortfolioRisk();
+      const l = riskData.limits || {};
+      const ks = riskData.kill_switches || { global_active: false, strategies: {}, instruments: {} };
+      const audits = riskData.audit_history || [];
+
+      body.innerHTML = `
+        <div class="mb-6 p-4 rounded-xl bg-brand-500/10 border border-brand-500/30 text-xs text-surface-200">
+          <strong class="text-white">Independent Risk Authority:</strong> ${riskData.governance_note}
+        </div>
+        <div class="grid lg:grid-cols-3 gap-6 mb-6">
+          <div class="glass-card rounded-xl p-6 lg:col-span-2">
+            <h3 class="text-sm font-semibold text-white mb-4">Multi-Horizon Hard Risk Limits</h3>
+            <form id="risk-form" onsubmit="return false;" class="space-y-4 text-xs">
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <div><label class="text-surface-400 block mb-1">Risk / Trade %</label><input name="max_risk_per_trade_pct" type="number" step="0.05" value="${l.max_risk_per_trade_pct}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Daily Loss %</label><input name="max_daily_loss_pct" type="number" step="0.25" value="${l.max_daily_loss_pct}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Weekly Loss %</label><input name="max_weekly_loss_pct" type="number" step="0.5" value="${l.max_weekly_loss_pct}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Monthly Loss %</label><input name="max_monthly_loss_pct" type="number" step="0.5" value="${l.max_monthly_loss_pct}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Max Drawdown %</label><input name="max_drawdown_pct" type="number" step="0.5" value="${l.max_drawdown_pct}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Max Positions</label><input name="max_open_positions" type="number" value="${l.max_open_positions}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Max Leverage (x)</label><input name="max_leverage" type="number" step="1" value="${l.max_leverage}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Max Margin %</label><input name="max_margin_usage_pct" type="number" step="5" value="${l.max_margin_usage_pct}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Max Spread (pts)</label><input name="max_spread_points" type="number" value="${l.max_spread_points}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Max Slippage (pts)</label><input name="max_slippage_points" type="number" value="${l.max_slippage_points}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono"></div>
+              </div>
+              <button type="submit" class="btn-primary px-5 py-2 rounded-lg text-white font-semibold">Save & Audit Hard Limits</button>
+            </form>
+          </div>
+
+          <div class="glass-card rounded-xl p-6 space-y-4">
+            <h3 class="text-sm font-semibold text-white">Hierarchical Kill Switches</h3>
+            <p class="text-[11px] text-surface-400">Blocks ALL new order execution cleanly without silently liquidating existing positions.</p>
+            <button id="ws-kill-btn" class="w-full py-2.5 rounded-lg text-xs font-semibold border ${ks.global_active ? 'bg-loss text-white border-loss' : 'bg-loss-bg text-loss border-loss/40'}">
+              ${ks.global_active ? '🛑 GLOBAL HALT ACTIVE — Click to Clear' : '⚠️ Activate Global Kill Switch'}
             </button>
-            <div class="mt-5 pt-4 border-t border-surface-800 flex gap-3">
-              <a href="#/terminal" class="btn-outline px-3 py-2 rounded-lg text-xs text-brand-300">Open Monte Carlo Simulator</a>
+            <form id="scope-ks-form" onsubmit="return false;" class="space-y-2 text-xs pt-2 border-t border-surface-800">
+              <div class="flex gap-2">
+                <select name="scope" class="bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white">
+                  <option value="STRATEGY">Strategy Halt</option>
+                  <option value="INSTRUMENT">Instrument Halt</option>
+                </select>
+                <input name="target" placeholder="ul-01-gold-trend / XAUUSD" required class="flex-1 bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white font-mono">
+              </div>
+              <div class="flex gap-2">
+                <button type="submit" data-active="true" class="flex-1 py-1.5 rounded bg-loss/20 border border-loss/40 text-loss font-semibold">Halt Scope</button>
+                <button type="button" id="clear-scope-ks" class="flex-1 py-1.5 rounded bg-surface-800 border border-surface-700 text-surface-300">Clear Scope</button>
+              </div>
+            </form>
+            <div class="text-[11px] text-surface-400">
+              Halted Strategies: <span class="text-loss font-mono">${Object.keys(ks.strategies || {}).join(', ') || 'None'}</span><br>
+              Halted Instruments: <span class="text-loss font-mono">${Object.keys(ks.instruments || {}).join(', ') || 'None'}</span>
             </div>
+          </div>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+          <div class="glass-card rounded-xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-2">Bounded Kelly Research Calculator</h3>
+            <p class="text-[11px] text-warn mb-3">Research input only — hard-capped by Max Risk/Trade (${l.max_risk_per_trade_pct}%).</p>
+            <form id="kelly-form" onsubmit="return false;" class="space-y-2.5 text-xs">
+              <div class="grid grid-cols-3 gap-2">
+                <div><label class="text-surface-400 block mb-1">Win Prob</label><input name="win_probability" type="number" step="0.01" value="0.55" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Payoff (R)</label><input name="payoff_ratio" type="number" step="0.1" value="1.8" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Mult</label><input name="kelly_fraction" type="number" step="0.1" value="0.5" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+              </div>
+              <button type="submit" class="btn-outline w-full py-2 rounded-lg text-brand-300 font-semibold">Compute Bounded Kelly</button>
+              <div id="kelly-out" class="p-2.5 rounded bg-surface-900/70 border border-surface-800 font-mono text-surface-400">Awaiting research inputs.</div>
+            </form>
+          </div>
+          <div class="glass-card rounded-xl p-6 lg:col-span-2">
+            <h3 class="text-sm font-semibold text-white mb-3">Immutable Risk Configuration Audit Log</h3>
+            ${audits.length ? `
+              <div class="space-y-2 max-h-56 overflow-y-auto text-xs font-mono">
+                ${audits.map(a => `<div class="p-2 rounded bg-surface-900/70 border border-surface-800 text-surface-300">[${new Date(a.createdAt).toLocaleTimeString()}] <strong class="text-brand-300">${a.action}</strong> (${a.actor}) • ${JSON.stringify(a.details)}</div>`).join('')}
+              </div>` : '<div class="text-xs text-surface-500">No risk limit changes or kill switch events audited yet.</div>'}
           </div>
         </div>`;
 
       document.getElementById('risk-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const data = Object.fromEntries(new FormData(e.target));
-        await api.saveRiskConfig(data);
-        showToast('Hard risk limits updated.', 'success');
+        await api.updateRiskLimits(data);
+        showToast('Hard risk limits updated & audited.', 'success');
+        location.reload();
       });
       document.getElementById('ws-kill-btn')?.addEventListener('click', async () => {
-        await api.saveRiskConfig({ kill_switch_active: !r.kill_switch_active });
-        showToast('Kill switch state toggled.', 'warning');
+        await api.toggleKillSwitch({ scope: 'GLOBAL', active: !ks.global_active, reason: 'Toggled in Risk Governance UI' });
+        showToast('Global kill switch toggled.', 'warning');
         location.reload();
+      });
+      document.getElementById('scope-ks-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        await api.toggleKillSwitch({ scope: f.scope, target: f.target, active: true, reason: 'Targeted risk halt' });
+        showToast(`${f.scope} kill switch halted.`, 'warning');
+        location.reload();
+      });
+      document.getElementById('clear-scope-ks')?.addEventListener('click', async () => {
+        const form = document.getElementById('scope-ks-form');
+        const f = Object.fromEntries(new FormData(form));
+        if (!f.target) return;
+        await api.toggleKillSwitch({ scope: f.scope, target: f.target, active: false, reason: 'Cleared by operator' });
+        showToast(`${f.scope} kill switch cleared.`, 'info');
+        location.reload();
+      });
+      document.getElementById('kelly-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        const res = await api.computeKellyResearch(f);
+        document.getElementById('kelly-out').innerHTML = `Full Kelly: ${res.full_kelly_pct}% • Half: ${res.fractional_kelly_pct}% • <strong class="text-profit">Hard Capped: ${res.hard_capped_risk_pct}%</strong>`;
       });
       return;
     }
