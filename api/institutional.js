@@ -3,7 +3,9 @@ import {
   ensureDbReady,
   resolveAuthContext,
   getMemoryStore,
-  getPortfolioForUser,
+  hydrateUserPortfolio,
+  listRiskEventsForUser,
+  listAuditLogsForUser,
   sha256Hex,
   query
 } from "./store.js";
@@ -45,11 +47,17 @@ export default async function institutionalHandler(request, response, { executio
     });
     if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
 
-    const portfolio = getPortfolioForUser(userId);
-    const mandate = getMandateForUser(mem, userId);
+    const portfolio = await hydrateUserPortfolio(userId, dbAvailable);
+    let mandate = getMandateForUser(mem, userId);
+    if (dbAvailable && /^[0-9a-f-]{36}$/i.test(userId)) {
+      const mRes = await query(`SELECT * FROM investor_profiles WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] }));
+      if (mRes.rows[0]) mandate = mRes.rows[0];
+    }
     const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
-    const riskEvents = mem.riskEvents.filter((e) => e.userId === userId);
-    const auditLogs = mem.auditLogs.filter((a) => a.userId === userId);
+    const [riskEvents, auditLogs] = await Promise.all([
+      listRiskEventsForUser(userId, { mem, dbAvailable, limit: 100 }),
+      listAuditLogsForUser(userId, { mem, dbAvailable, limit: 100 })
+    ]);
 
     const statement = generateInstitutionalStatement({
       user: { name: auth.name, email: auth.email, role: auth.role, org_name: auth.orgId },

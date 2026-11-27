@@ -25,16 +25,26 @@ export function getDatabaseStatus() {
     configured: isDatabaseConfigured(),
     ready: dbReady,
     error: dbError ? dbError.message : null,
-    mode: isDatabaseConfigured() ? (dbReady ? "postgresql" : "postgresql-error") : "memory-sandbox"
+    mode: isDatabaseConfigured() ? (dbReady ? "postgresql" : "postgresql-error") : "memory-sandbox",
+    require_database: process.env.ULTRALOB_REQUIRE_DATABASE === "true"
   };
 }
 
 export function getPool() {
   if (!isDatabaseConfigured()) return null;
   if (!sharedPool) {
+    const rawUrl = String(process.env.DATABASE_URL || "");
+    const sslModeExplicit = process.env.DATABASE_SSL;
+    const sslConfig = sslModeExplicit === "true"
+      ? { rejectUnauthorized: true }
+      : sslModeExplicit === "false"
+        ? undefined
+        : /sslmode=require/i.test(rawUrl)
+          ? { rejectUnauthorized: true }
+          : undefined;
     sharedPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: true } : undefined,
+      connectionString: rawUrl,
+      ssl: sslConfig,
       max: Number.parseInt(process.env.PG_POOL_MAX || "10", 10) || 10,
       connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 30000,
@@ -132,6 +142,31 @@ export async function query(text, params = []) {
     await initializeDatabase();
   }
   return pool.query(text, params);
+}
+
+export async function recordRiskEvent({
+  scopeType = "USER",
+  scopeId,
+  eventType = "RISK_EVENT",
+  severity = "INFO",
+  message,
+  details = {}
+}) {
+  if (!isDatabaseConfigured() || !dbReady || !scopeId) return null;
+  try {
+    const allowedSeverity = ["INFO", "WARNING", "BREACH", "KILL_SWITCH"].includes(String(severity).toUpperCase())
+      ? String(severity).toUpperCase()
+      : "INFO";
+    const res = await query(
+      `INSERT INTO risk_events (scope_type, scope_id, event_type, severity, message, details)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING id, created_at`,
+      [scopeType, String(scopeId), eventType, allowedSeverity, String(message || ""), JSON.stringify(details)]
+    );
+    return res.rows[0];
+  } catch (err) {
+    console.warn("[risk] failed to persist risk event:", err.message);
+    return null;
+  }
 }
 
 export async function recordAuditLog({

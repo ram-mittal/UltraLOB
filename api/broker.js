@@ -163,35 +163,45 @@ export default async function brokerHandler(request, response, { executionStore 
   const userId = auth.userId;
   const mem = getMemoryStore();
 
-  // Public MT5 EA Signal Queue Polling endpoint (authenticated by secret bridgeToken)
+  // MT5 EA Signal Queue Polling endpoint (authenticated by secret bridgeToken; requires PostgreSQL)
   if (request.method === "GET" && subPath === "/mt5/signals") {
+    if (!dbAvailable || !executionStore) {
+      return response.status(503).json({
+        error: "The MT5 Execution Bridge requires persistent PostgreSQL storage (DATABASE_URL). Configure DATABASE_URL before polling bridge signals.",
+        code: "EXECUTION_STORAGE_NOT_CONFIGURED",
+        requires_postgresql: true
+      });
+    }
     const token = String(request.query?.token || request.headers["x-bridge-token"] || "").trim();
     if (!token) {
       return response.status(401).json({ error: "Bridge token is required." });
     }
-    let validBridge = [...mem.brokers.values()].some((b) => b.bridgeToken === token);
-    if (!validBridge && dbAvailable) {
-      const res = await query(
-        `SELECT id FROM broker_integrations WHERE bridge_token_hash = $1 AND status NOT IN ('DISCONNECTED','REVOKED') LIMIT 1`,
-        [sha256Hex(token)]
-      ).catch(() => ({ rows: [] }));
-      validBridge = res.rows.length > 0;
-    }
-    if (!validBridge) {
+    const integRes = await query(
+      `SELECT id, execution_connector_id
+       FROM broker_integrations
+       WHERE bridge_token_hash = $1 AND status NOT IN ('DISCONNECTED','REVOKED')
+       LIMIT 1`,
+      [sha256Hex(token)]
+    ).catch(() => ({ rows: [] }));
+    const integ = integRes.rows[0];
+    if (!integ || !integ.execution_connector_id) {
       return response.status(401).json({ error: "Invalid or revoked bridge token.", code: "INVALID_BRIDGE_TOKEN" });
     }
-    const matchingSignals = mem.mt5Signals.filter(
-      (s) => s.bridgeToken === token && s.status === "pending"
+    await executionStore.initialize();
+    const cmdRes = await query(
+      `SELECT id, signal_id, strategy_id, symbol, side, risk_pct, requested_risk_pct,
+              stop_loss, take_profit, status, created_at
+       FROM ultralob_execution_commands
+       WHERE connector_id = $1 AND status = 'QUEUED'
+       ORDER BY created_at ASC LIMIT 25`,
+      [integ.execution_connector_id]
     );
-    const ack = String(request.query?.ack || "false") === "true";
-    if (ack && matchingSignals.length > 0) {
-      for (const sig of matchingSignals) sig.status = "dispatched";
-    }
     return response.status(200).json({
       status: "ok",
+      storage: "postgresql",
       environment: "DEMO_ONLY",
-      count: matchingSignals.length,
-      signals: matchingSignals,
+      count: cmdRes.rows.length,
+      signals: cmdRes.rows,
       timestamp: Date.now()
     });
   }
@@ -246,6 +256,9 @@ export default async function brokerHandler(request, response, { executionStore 
       broker: status.broker,
       execution_bridge: {
         postgres_configured: dbStatus.configured,
+        postgres_ready: dbStatus.ready,
+        requires_postgresql: true,
+        storage: dbStatus.ready && executionStore ? "postgresql" : "not-configured",
         endpoint: "/api/execution",
         environment: "DEMO_ONLY",
         connectors_count: executionConnectors.length
@@ -372,6 +385,17 @@ export default async function brokerHandler(request, response, { executionStore 
         });
       }
     } else if (reqMode === "ea_bridge" || reqMode === "mt5_bridge") {
+      if (!dbAvailable || !executionStore) {
+        return response.status(503).json({
+          connected: false,
+          paired: false,
+          upstreamVerified: false,
+          verification_status: "DATABASE_REQUIRED",
+          code: "EXECUTION_STORAGE_NOT_CONFIGURED",
+          error:
+            "The MT5 EA Bridge requires persistent PostgreSQL storage (DATABASE_URL). Configure DATABASE_URL in private deployment environment variables before provisioning MT5 connectors."
+        });
+      }
       if (!accountLabel) {
         return response.status(400).json({
           connected: false,
@@ -383,7 +407,7 @@ export default async function brokerHandler(request, response, { executionStore 
       upstreamVerified = false;
       verificationStatus = "PENDING_EA_HEARTBEAT";
       verificationNote =
-        "EA Bridge connector provisioned. Status remains PENDING until UltraLOB_Bridge_EA.mq5 sends a verified DEMO heartbeat.";
+        "EA Bridge connector provisioned in PostgreSQL. Status remains PENDING until UltraLOB_Bridge_EA.mq5 sends a verified DEMO heartbeat.";
     } else {
       return response.status(400).json({
         connected: false,
@@ -396,7 +420,7 @@ export default async function brokerHandler(request, response, { executionStore 
     let executionConnectorId = null;
     let executionAccessToken = null;
 
-    if (connectionMode === "ea_bridge" && executionStore) {
+    if (connectionMode === "ea_bridge") {
       try {
         await executionStore.initialize();
         executionConnectorId = crypto.randomUUID();
@@ -417,9 +441,15 @@ export default async function brokerHandler(request, response, { executionStore 
           max_deviation_points: 20
         });
       } catch (err) {
-        console.warn("[broker] execution store connector creation skipped:", err.message);
-        executionConnectorId = null;
-        executionAccessToken = null;
+        console.error("[broker] execution store connector creation failed:", err.message);
+        return response.status(503).json({
+          connected: false,
+          paired: false,
+          upstreamVerified: false,
+          verification_status: "DATABASE_UNAVAILABLE",
+          code: "EXECUTION_STORAGE_UNAVAILABLE",
+          error: `Could not persist MT5 bridge connector to PostgreSQL (${err.message}).`
+        });
       }
     }
 

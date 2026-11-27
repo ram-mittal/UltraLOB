@@ -12,8 +12,9 @@ Create a `.env` file locally or set these variables in Render Dashboard → Envi
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PORT` | No (default `10000`) | HTTP/WS port for `server.js` |
-| `DATABASE_URL` | **Yes (Prod)** | PostgreSQL connection string (`postgresql://user:pass@host/db?sslmode=require`) |
-| `DATABASE_SSL` | Conditional | Set `"true"` if Postgres requires TLS with verified cert (e.g. Neon) |
+| `DATABASE_URL` | **Yes (Prod / MT5)** | PostgreSQL connection string via private env var (`postgresql://user:pass@host/db?sslmode=require`). Without it, MT5 Bridge returns `503` and non-MT5 state uses ephemeral in-memory storage. |
+| `DATABASE_SSL` | Conditional | Set `"true"` if Postgres requires TLS with verified cert (`rejectUnauthorized: true`) |
+| `ULTRALOB_REQUIRE_DATABASE` | Optional | Set `"true"` to abort startup if `DATABASE_URL` is absent or unreachable |
 | `ULTRALOB_JWT_SECRET` | **Yes (Prod)** | Required >=32-char cryptographically random secret for signing JWT access & HMAC-binding refresh tokens. Production startup fails cleanly if missing or set to a placeholder; rotating this secret invalidates all active sessions. |
 | `ULTRALOB_EXECUTION_ADMIN_KEY` | **Yes (Execution)** | Admin key sent in `x-ultralob-admin-key` for `/api/execution` management |
 | `TWELVE_DATA_API_KEY` | Optional | Twelve Data API key for US equity ticks & history |
@@ -43,4 +44,4 @@ npm test
 npm start
 ```
 
-> **Note on Sandbox / Unconfigured Environments:** When `DATABASE_URL` is omitted (such as isolated CI test runs), UltraLOB operates in ephemeral in-memory mode for user sessions and marks execution storage (`EXECUTION_STORAGE_NOT_CONFIGURED`) as awaiting configuration. No fake performance statistics are fabricated in either mode.
+> **Note on Fallback Storage & Separate C++ Runtime:** When `DATABASE_URL` is omitted, auth sessions, custom strategies, Paper Sandbox portfolios/allocations, risk limits/kill switches, research backtests, AI decisions, and mandates operate in ephemeral in-memory fallback storage, while the **MT5 Execution Bridge strictly requires PostgreSQL** and returns HTTP `503 EXECUTION_STORAGE_NOT_CONFIGURED`. Separately, the standalone C++20 FIX 4.4 / binary matching engine (`server/main.cpp`) is a native process not connected to the hosted web terminal, and the hosted `/legacy` FIX order ticket is explicitly simulated in-browser.

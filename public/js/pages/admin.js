@@ -136,12 +136,19 @@ export async function init({ showToast }) {
     const sysEl = document.getElementById("ad-sys-box");
     if (sysEl) {
       const u = state.user;
+      const pgReady = Boolean(sysRes?.database?.ready);
+      const fallbackList = sysRes?.persistence?.in_memory_fallback_components || [];
       sysEl.innerHTML = `
         <div class="grid grid-cols-2 gap-2 font-mono text-[11px]">
           <div class="panel-elevated p-2"><div class="text-[10px] text-[#64748b]">OPERATOR</div><div class="text-[#e6edf6] truncate">${esc(u ? (u.name || u.email) : "Anonymous Sandbox")}</div></div>
           <div class="panel-elevated p-2"><div class="text-[10px] text-[#64748b]">RBAC ROLE</div><div class="text-[#93c5fd]">${esc((u?.role || "guest").toUpperCase())}</div></div>
-          <div class="panel-elevated p-2"><div class="text-[10px] text-[#64748b]">POSTGRESQL</div><div>${statusBadge(sysRes?.database?.ready ? "READY" : "IN_MEMORY")}</div></div>
-          <div class="panel-elevated p-2"><div class="text-[10px] text-[#64748b]">XAUUSD FEED</div><div class="text-[#e6edf6]">${esc(sysRes?.market_feeds?.xauusd?.status || "AWAITING")}</div></div>
+          <div class="panel-elevated p-2"><div class="text-[10px] text-[#64748b]">POSTGRESQL</div><div>${statusBadge(pgReady ? "READY" : "IN_MEMORY_FALLBACK")}</div></div>
+          <div class="panel-elevated p-2"><div class="text-[10px] text-[#64748b]">MT5 BRIDGE</div><div>${statusBadge(sysRes?.execution?.postgres_configured ? "CONFIGURED" : "DB_REQUIRED")}</div></div>
+        </div>
+        <div class="panel-elevated p-2.5 text-[11px] space-y-1">
+          <div class="font-mono text-[#e6edf6]">${pgReady ? "Persistent Storage: PostgreSQL active across all modules." : "In-Memory Fallback Active (DATABASE_URL not set):"}</div>
+          ${!pgReady && fallbackList.length ? `<div class="text-[10px] font-mono text-[#fde047]">Ephemeral components: ${esc(fallbackList.join(", "))}</div>` : ""}
+          <div class="text-[10px] text-[#94a3b8]">${esc(sysRes?.runtimes?.cpp_matching_engine?.note || "C++ matching engine is a separate runtime; /legacy FIX ticket is simulated in-browser.")}</div>
         </div>
         <div class="text-[11px] text-[#64748b]">${esc(sysRes?.platform || "UltraLOB Infrastructure")}</div>
       `;

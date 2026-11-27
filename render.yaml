@@ -14,3 +14,14 @@ services:
         value: "1"
       - key: PRICING_FALLBACK_MAX_PATHS
         value: "10000000"
+      # Private deployment secrets & managed PostgreSQL (set values in Render Dashboard -> Environment)
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        sync: false
+      - key: ULTRALOB_JWT_SECRET
+        sync: false
+      - key: ULTRALOB_EXECUTION_ADMIN_KEY
+        sync: false
+      - key: TWELVE_DATA_API_KEY
+        sync: false

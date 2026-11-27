@@ -19,6 +19,8 @@ export function render() {
         </div>
       </div>
 
+      <div id="ex-db-banner"></div>
+
       <div id="ex-kpi-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
 
       <!-- Filter Bar -->
@@ -207,9 +209,21 @@ export async function init() {
     const nowIso = new Date().toISOString();
     const errCount = allRows.filter((r) => ["REJECTED", "FAILED", "ERROR"].includes(r.state)).length;
 
+    const exDbBanner = document.getElementById("ex-db-banner");
+    if (exDbBanner) {
+      exDbBanner.innerHTML = (!execAuthDenied && execRes.configured === false)
+        ? stateBanner({
+            kind: "empty",
+            title: "MT5 Execution Bridge Storage Not Configured",
+            message: "The MT5 bridge requires persistent PostgreSQL storage (DATABASE_URL). Below shows only ephemeral Paper Sandbox fills when DATABASE_URL is unset.",
+            actionHtml: `<a href="#/broker" class="btn-secondary font-mono text-[11px]">Inspect Broker Setup</a>`
+          })
+        : "";
+    }
+
     document.getElementById("ex-kpi-grid").innerHTML = [
       metricTile({ label: "Total Recorded Orders", value: String(allRows.length), subtext: `MT5: ${cmdRows.length} | Sandbox: ${paperRows.length}`, origin: "DEMO", updatedAt: nowIso }),
-      metricTile({ label: "MT5 Active Connectors", value: String(connectors.filter((c) => c.status === "ACTIVE").length), subtext: `Storage: ${execRes.storage || "memory"}`, origin: "DEMO_BROKER", updatedAt: nowIso }),
+      metricTile({ label: "MT5 Active Connectors", value: String(connectors.filter((c) => c.status === "ACTIVE").length), subtext: `Storage: ${execRes.storage || "not-configured"}`, origin: "DEMO_BROKER", updatedAt: nowIso }),
       metricTile({ label: "Queued / Open State", value: String(allRows.filter((r) => ["QUEUED", "OPEN", "PENDING"].includes(r.state)).length), origin: "DEMO", updatedAt: nowIso }),
       metricTile({ label: "Execution Errors / Rejects", value: String(errCount), tone: errCount > 0 ? "loss" : "gain", origin: "DEMO", updatedAt: nowIso })
     ].join("");

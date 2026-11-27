@@ -6,8 +6,10 @@ import {
   createEmptyPortfolio,
   getAllStrategiesInMemory,
   getMemoryStore,
-  getPortfolioForUser,
-  getRiskStateForUser,
+  hydrateUserPortfolio,
+  hydrateUserRiskState,
+  listRiskEventsForUser,
+  listAuditLogsForUser,
   syncPgRiskState,
   syncPgPortfolio
 } from "./store.js";
@@ -20,7 +22,7 @@ import {
   computeStrategyCorrelationMatrix
 } from "../portfolio/allocator.js";
 import { computeBoundedKelly, computePortfolioRiskAnalytics, runPortfolioStressTest } from "../risk/engine.js";
-import { recordAuditLog } from "../db/client.js";
+import { recordAuditLog, recordRiskEvent } from "../db/client.js";
 
 function appendRiskAudit(mem, userId, actor, action, details) {
   const entry = {
@@ -90,8 +92,8 @@ export default async function portfolioHandler(request, response) {
     });
     if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
 
-    const targetPortfolio = getPortfolioForUser(scope.targetUserId);
-    const targetRisk = getRiskStateForUser(scope.targetUserId);
+    const targetPortfolio = await hydrateUserPortfolio(scope.targetUserId, dbAvailable);
+    const targetRisk = await hydrateUserRiskState(scope.targetUserId, dbAvailable);
     const openTrades = (targetPortfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
     const equity = Number((targetPortfolio.balance + unrealized).toFixed(2));
@@ -128,8 +130,8 @@ export default async function portfolioHandler(request, response) {
     const gate = authorizeRequest(auth, "allocations:manage", { isMutation: true });
     if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
 
-    const portfolio = getPortfolioForUser(userId);
-    const riskState = getRiskStateForUser(userId);
+    const portfolio = await hydrateUserPortfolio(userId, dbAvailable);
+    const riskState = await hydrateUserRiskState(userId, dbAvailable);
     const body = request.body || {};
     const method = String(body.method || "RISK_WEIGHTED").toUpperCase();
     const apply = Boolean(body.apply);
@@ -193,11 +195,22 @@ export default async function portfolioHandler(request, response) {
             });
           }
         }
+        await syncPgPortfolio(userId, portfolio, dbAvailable);
         appendRiskAudit(mem, userId, auth, "PORTFOLIO_REBALANCED", {
           method: plan.method,
           total_capital: plan.total_capital,
           allocations: plan.allocations.length
         });
+        if (dbAvailable) {
+          await recordAuditLog({
+            actorUserId: auth.userId,
+            actorRole: auth.role,
+            action: "PORTFOLIO_REBALANCED",
+            targetType: "portfolio",
+            targetId: userId,
+            details: { method: plan.method, total_capital: plan.total_capital, allocations: plan.allocations.length }
+          });
+        }
       }
 
       return response.status(200).json({ applied: apply, plan });
@@ -235,8 +248,8 @@ export default async function portfolioHandler(request, response) {
     });
     if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
     const targetId = scope.targetUserId;
-    const targetPortfolio = getPortfolioForUser(targetId);
-    const targetRisk = getRiskStateForUser(targetId);
+    const targetPortfolio = await hydrateUserPortfolio(targetId, dbAvailable);
+    const targetRisk = await hydrateUserRiskState(targetId, dbAvailable);
 
     const openTrades = (targetPortfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
@@ -253,14 +266,19 @@ export default async function portfolioHandler(request, response) {
       riskLimits: targetRisk.limits
     });
 
+    const [events, auditHistory] = await Promise.all([
+      listRiskEventsForUser(targetId, { mem, dbAvailable, limit: 50 }),
+      listAuditLogsForUser(targetId, { mem, dbAvailable, limit: 50 })
+    ]);
+
     return response.status(200).json({
       limits: targetRisk.limits,
       kill_switches: targetRisk.kill_switches,
       updated_at: targetRisk.updated_at,
       analytics,
       stress_preview: stress,
-      events: mem.riskEvents.filter((e) => e.userId === targetId).slice(0, 50),
-      audit_history: mem.auditLogs.filter((a) => a.userId === targetId).slice(0, 50),
+      events,
+      audit_history: auditHistory,
       governance_note: "Independent hard limits are enforced before any execution. UltraLOB AI cannot bypass these limits."
     });
   }
@@ -273,8 +291,8 @@ export default async function portfolioHandler(request, response) {
     });
     if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
 
-    const portfolio = getPortfolioForUser(userId);
-    const riskState = getRiskStateForUser(userId);
+    const portfolio = await hydrateUserPortfolio(userId, dbAvailable);
+    const riskState = await hydrateUserRiskState(userId, dbAvailable);
     const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
     const eq = Number(request.body?.equity_override || (portfolio.balance + unrealized) || 0);
@@ -301,7 +319,7 @@ export default async function portfolioHandler(request, response) {
     if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
 
     const targetId = scope.targetUserId;
-    const riskState = getRiskStateForUser(targetId);
+    const riskState = await hydrateUserRiskState(targetId, dbAvailable);
     const prevLimits = { ...riskState.limits };
 
     const clamp = (val, min, max, fallback) => {
@@ -330,6 +348,14 @@ export default async function portfolioHandler(request, response) {
     appendRiskEvent(mem, targetId, "INFO", "Hard risk governance limits updated.", riskState.limits);
     await syncPgRiskState(targetId, riskState, dbAvailable);
     if (dbAvailable) {
+      await recordRiskEvent({
+        scopeType: "USER",
+        scopeId: targetId,
+        eventType: "RISK_LIMITS_UPDATED",
+        severity: "INFO",
+        message: "Hard risk governance limits updated.",
+        details: riskState.limits
+      });
       await recordAuditLog({
         actorUserId: auth.userId,
         actorRole: auth.role,
@@ -356,7 +382,7 @@ export default async function portfolioHandler(request, response) {
     if (!scopeCheck.ok) return response.status(scopeCheck.status).json({ error: scopeCheck.error, code: scopeCheck.code });
 
     const targetUserId = scopeCheck.targetUserId;
-    const riskState = getRiskStateForUser(targetUserId);
+    const riskState = await hydrateUserRiskState(targetUserId, dbAvailable);
     const scope = String(b.scope || "GLOBAL").toUpperCase();
     const target = String(b.target || "").trim();
     const active = Boolean(b.active);
@@ -397,12 +423,31 @@ export default async function portfolioHandler(request, response) {
     riskState.updated_at = new Date().toISOString();
     await syncPgRiskState(targetUserId, riskState, dbAvailable);
     appendRiskAudit(mem, targetUserId, auth, "KILL_SWITCH_TOGGLED", { scope, target: target || "ALL", active, reason });
+    const ksMsg = `${scope} kill switch ${active ? "ACTIVATED" : "CLEARED"}${target ? " (" + target + ")" : ""}: ${reason}`;
     appendRiskEvent(
       mem,
       targetUserId,
       active ? "KILL_SWITCH" : "INFO",
-      `${scope} kill switch ${active ? "ACTIVATED" : "CLEARED"}${target ? " (" + target + ")" : ""}: ${reason}`
+      ksMsg
     );
+    if (dbAvailable) {
+      await recordRiskEvent({
+        scopeType: "USER",
+        scopeId: targetUserId,
+        eventType: "KILL_SWITCH_TOGGLED",
+        severity: active ? "KILL_SWITCH" : "INFO",
+        message: ksMsg,
+        details: { scope, target: target || "ALL", active, reason }
+      });
+      await recordAuditLog({
+        actorUserId: auth.userId,
+        actorRole: auth.role,
+        action: "KILL_SWITCH_TOGGLED",
+        targetType: "portfolio_risk",
+        targetId: targetUserId,
+        details: { scope, target: target || "ALL", active, reason }
+      });
+    }
 
     return response.status(200).json({
       kill_switches: riskState.kill_switches,
@@ -419,7 +464,7 @@ export default async function portfolioHandler(request, response) {
     if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
 
     const b = request.body || {};
-    const riskState = getRiskStateForUser(userId);
+    const riskState = await hydrateUserRiskState(userId, dbAvailable);
     const calc = computeBoundedKelly({
       winProbability: b.win_probability,
       payoffRatio: b.payoff_ratio,

@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { isDatabaseConfigured, initializeDatabase, query } from "../db/client.js";
+import { isDatabaseConfigured, initializeDatabase, query, recordRiskEvent } from "../db/client.js";
 import { createDefaultRiskState } from "../risk/engine.js";
 
 export const STRATEGY_LIFECYCLE_STATUSES = Object.freeze([
@@ -707,20 +707,162 @@ export async function resolveAuthContext(request, dbAvailable = false) {
   return ctx;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export async function hydrateUserRiskState(userId, dbAvailable = false) {
+  const riskState = getRiskStateForUser(userId);
+  if (!dbAvailable || !UUID_REGEX.test(userId || "") || riskState._hydratedFromDb) {
+    return riskState;
+  }
+  try {
+    const res = await query(
+      `SELECT * FROM risk_configs WHERE scope_type = 'USER' AND scope_id = $1 LIMIT 1`,
+      [userId]
+    );
+    if (res.rows[0]) {
+      const r = res.rows[0];
+      riskState.limits = {
+        ...riskState.limits,
+        max_risk_per_trade_pct: Number(r.max_risk_per_trade_pct ?? riskState.limits.max_risk_per_trade_pct),
+        max_daily_loss_pct: Number(r.max_daily_loss_pct ?? riskState.limits.max_daily_loss_pct),
+        max_weekly_loss_pct: Number(r.max_weekly_loss_pct ?? riskState.limits.max_weekly_loss_pct),
+        max_monthly_loss_pct: Number(r.max_monthly_loss_pct ?? riskState.limits.max_monthly_loss_pct),
+        max_drawdown_pct: Number(r.max_drawdown_pct ?? riskState.limits.max_drawdown_pct),
+        max_open_positions: Number(r.max_open_positions ?? riskState.limits.max_open_positions),
+        max_leverage: Number(r.max_leverage ?? riskState.limits.max_leverage),
+        max_margin_usage_pct: Number(r.max_margin_usage_pct ?? riskState.limits.max_margin_usage_pct),
+        max_spread_points: Number(r.max_spread_points ?? riskState.limits.max_spread_points),
+        max_slippage_points: Number(r.max_slippage_points ?? riskState.limits.max_slippage_points)
+      };
+      const ks = r.kill_switches && typeof r.kill_switches === "object" ? r.kill_switches : {};
+      riskState.kill_switches = {
+        global_active: Boolean(ks.global_active ?? r.kill_switch_active),
+        global_reason: ks.global_reason || null,
+        strategies: ks.strategies && typeof ks.strategies === "object" ? ks.strategies : {},
+        instruments: ks.instruments && typeof ks.instruments === "object" ? ks.instruments : {}
+      };
+      riskState.updated_at = r.updated_at ? new Date(r.updated_at).toISOString() : riskState.updated_at;
+    }
+    riskState._hydratedFromDb = true;
+  } catch (err) {
+    console.warn("[store] non-fatal risk_configs hydrate warning:", err.message);
+  }
+  return riskState;
+}
+
+export async function hydrateUserPortfolio(userId, dbAvailable = false) {
+  const portfolio = getPortfolioForUser(userId);
+  if (!dbAvailable || !UUID_REGEX.test(userId || "") || portfolio._hydratedFromDb) {
+    return portfolio;
+  }
+  try {
+    const res = await query(
+      `SELECT * FROM portfolios WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (res.rows[0]) {
+      const p = res.rows[0];
+      const paper = p.paper_state && typeof p.paper_state === "object" ? p.paper_state : {};
+      portfolio.dataOrigin = p.environment || portfolio.dataOrigin || "PAPER_SANDBOX";
+      portfolio.balance = Number(p.balance ?? 0);
+      portfolio.equity = Number(p.equity ?? portfolio.balance);
+      portfolio.margin_used = Number(p.margin_used ?? 0);
+      portfolio.equity_high_water = Number(p.equity_high_water ?? portfolio.balance);
+      if (p.mc_config && typeof p.mc_config === "object") {
+        portfolio.mcConfig = { ...portfolio.mcConfig, ...p.mc_config };
+      }
+      if (Array.isArray(paper.trades)) portfolio.trades = paper.trades;
+      if (Array.isArray(paper.equityHistory)) portfolio.equityHistory = paper.equityHistory;
+
+      const allocRes = await query(
+        `SELECT a.*, s.code, s.name, s.instrument, s.lifecycle_status
+         FROM allocations a
+         JOIN strategies s ON s.id = a.strategy_id
+         WHERE a.portfolio_id = $1
+         ORDER BY a.started_at DESC`,
+        [p.id]
+      );
+      if (allocRes.rows.length > 0) {
+        portfolio.subscriptions = allocRes.rows.map((a) => ({
+          strategyId: a.strategy_id,
+          code: a.code,
+          strategyName: a.name,
+          instrument: a.instrument,
+          lifecycle_status: a.lifecycle_status,
+          allocationMethod: a.allocation_method,
+          allocation: Number(a.allocated_capital ?? 0),
+          riskPerTradePct: Number(a.risk_per_trade_pct ?? 0.5),
+          maxDrawdownPct: Number(a.max_drawdown_pct ?? 10),
+          autoMcEnabled: Boolean(a.auto_mc_enabled),
+          pnl: 0,
+          pnl_pct: 0,
+          trades: 0,
+          status: a.lifecycle_status === "RESEARCH" && a.status === "ACTIVE" ? "research_watch" : String(a.status || "active").toLowerCase(),
+          startedAt: a.started_at ? new Date(a.started_at).toISOString() : new Date().toISOString()
+        }));
+      } else if (Array.isArray(paper.subscriptions)) {
+        portfolio.subscriptions = paper.subscriptions;
+      }
+    }
+    portfolio._hydratedFromDb = true;
+  } catch (err) {
+    console.warn("[store] non-fatal portfolio hydrate warning:", err.message);
+  }
+  return portfolio;
+}
+
+export async function listRiskEventsForUser(userId, { mem, dbAvailable = false, limit = 50 } = {}) {
+  if (dbAvailable && UUID_REGEX.test(userId || "")) {
+    try {
+      const res = await query(
+        `SELECT id, scope_id AS "userId", event_type AS "eventType", severity, message, details, created_at AS "createdAt"
+         FROM risk_events
+         WHERE scope_type = 'USER' AND scope_id = $1
+         ORDER BY created_at DESC LIMIT $2`,
+        [userId, limit]
+      );
+      return res.rows;
+    } catch (err) {
+      console.warn("[store] risk_events read warning:", err.message);
+    }
+  }
+  return (mem?.riskEvents || []).filter((e) => e.userId === userId).slice(0, limit);
+}
+
+export async function listAuditLogsForUser(userId, { mem, dbAvailable = false, limit = 50 } = {}) {
+  if (dbAvailable && UUID_REGEX.test(userId || "")) {
+    try {
+      const res = await query(
+        `SELECT id, actor_user_id AS "userId", actor_role AS role, action, target_type, target_id, details, created_at AS "createdAt"
+         FROM audit_logs
+         WHERE actor_user_id = $1 OR target_id = $1
+         ORDER BY created_at DESC LIMIT $2`,
+        [userId, limit]
+      );
+      return res.rows;
+    } catch (err) {
+      console.warn("[store] audit_logs read warning:", err.message);
+    }
+  }
+  return (mem?.auditLogs || []).filter((a) => a.userId === userId).slice(0, limit);
+}
+
 export async function syncPgRiskState(userId, riskState, dbAvailable = false) {
-  if (!dbAvailable || !/^[0-9a-f-]{36}$/i.test(userId || "")) return;
+  if (!dbAvailable || !UUID_REGEX.test(userId || "")) return;
   try {
     const l = riskState.limits;
+    const ks = riskState.kill_switches || {};
     await query(
       `INSERT INTO risk_configs
        (scope_type, scope_id, max_risk_per_trade_pct, max_daily_loss_pct, max_weekly_loss_pct,
         max_monthly_loss_pct, max_drawdown_pct, max_open_positions, max_leverage,
-        max_spread_points, kill_switch_active, updated_by, updated_at)
-       VALUES ('USER',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$1,NOW())
+        max_margin_usage_pct, max_spread_points, max_slippage_points, kill_switch_active, kill_switches, updated_by, updated_at)
+       VALUES ('USER',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$1,NOW())
        ON CONFLICT (scope_type, scope_id) DO UPDATE SET
          max_risk_per_trade_pct=$2, max_daily_loss_pct=$3, max_weekly_loss_pct=$4,
          max_monthly_loss_pct=$5, max_drawdown_pct=$6, max_open_positions=$7,
-         max_leverage=$8, max_spread_points=$9, kill_switch_active=$10, updated_at=NOW()`,
+         max_leverage=$8, max_margin_usage_pct=$9, max_spread_points=$10,
+         max_slippage_points=$11, kill_switch_active=$12, kill_switches=$13::jsonb, updated_at=NOW()`,
       [
         userId,
         l.max_risk_per_trade_pct,
@@ -730,8 +872,11 @@ export async function syncPgRiskState(userId, riskState, dbAvailable = false) {
         l.max_drawdown_pct,
         l.max_open_positions,
         l.max_leverage,
+        l.max_margin_usage_pct ?? 80,
         l.max_spread_points,
-        Boolean(riskState.kill_switches.global_active)
+        l.max_slippage_points ?? 30,
+        Boolean(ks.global_active),
+        JSON.stringify(ks)
       ]
     );
   } catch (err) {
@@ -740,13 +885,18 @@ export async function syncPgRiskState(userId, riskState, dbAvailable = false) {
 }
 
 export async function syncPgPortfolio(userId, portfolio, dbAvailable = false) {
-  if (!dbAvailable || !/^[0-9a-f-]{36}$/i.test(userId || "")) return;
+  if (!dbAvailable || !UUID_REGEX.test(userId || "")) return;
   try {
-    await query(
-      `INSERT INTO portfolios (user_id, environment, balance, equity, margin_used, equity_high_water, mc_config, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,NOW())
+    const paperState = {
+      trades: Array.isArray(portfolio.trades) ? portfolio.trades.slice(0, 200) : [],
+      equityHistory: Array.isArray(portfolio.equityHistory) ? portfolio.equityHistory.slice(-200) : []
+    };
+    const pRes = await query(
+      `INSERT INTO portfolios (user_id, environment, balance, equity, margin_used, equity_high_water, mc_config, paper_state, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,NOW())
        ON CONFLICT (user_id, environment) DO UPDATE SET
-         balance=$3, equity=$4, margin_used=$5, equity_high_water=$6, mc_config=$7::jsonb, updated_at=NOW()`,
+         balance=$3, equity=$4, margin_used=$5, equity_high_water=$6, mc_config=$7::jsonb, paper_state=$8::jsonb, updated_at=NOW()
+       RETURNING id`,
       [
         userId,
         portfolio.dataOrigin || "PAPER_SANDBOX",
@@ -754,13 +904,60 @@ export async function syncPgPortfolio(userId, portfolio, dbAvailable = false) {
         portfolio.equity,
         portfolio.margin_used || 0,
         portfolio.equity_high_water || portfolio.balance,
-        JSON.stringify(portfolio.mcConfig || {})
+        JSON.stringify(portfolio.mcConfig || {}),
+        JSON.stringify(paperState)
       ]
     );
+    const portfolioId = pRes.rows[0]?.id;
+    if (!portfolioId) return;
+
+    const subs = Array.isArray(portfolio.subscriptions) ? portfolio.subscriptions : [];
+    const stratIds = subs.map((s) => s.strategyId).filter(Boolean);
+    if (stratIds.length === 0) {
+      await query(`DELETE FROM allocations WHERE portfolio_id = $1`, [portfolioId]);
+      return;
+    }
+
+    const existingStrats = await query(`SELECT id FROM strategies WHERE id = ANY($1::text[])`, [stratIds]);
+    const validIds = existingStrats.rows.map((r) => r.id);
+    const validSet = new Set(validIds);
+
+    await query(`DELETE FROM allocations WHERE portfolio_id = $1 AND NOT (strategy_id = ANY($2::text[]))`, [
+      portfolioId,
+      validIds.length ? validIds : [""]
+    ]);
+
+    for (const s of subs) {
+      if (!validSet.has(s.strategyId)) continue;
+      const dbAllocStatus = s.status === "paused" ? "PAUSED" : s.status === "stopped" ? "STOPPED" : "ACTIVE";
+      const dbMethod = ["FIXED", "RISK_NORMALIZED", "VOLATILITY_ADJUSTED", "EQUAL_RISK_CONTRIBUTION", "FRACTIONAL"].includes(s.allocationMethod)
+        ? s.allocationMethod
+        : "RISK_NORMALIZED";
+      await query(
+        `INSERT INTO allocations
+         (portfolio_id, strategy_id, allocation_method, allocated_capital, risk_per_trade_pct, max_drawdown_pct, auto_mc_enabled, status, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+         ON CONFLICT (portfolio_id, strategy_id) DO UPDATE SET
+           allocation_method=$3, allocated_capital=$4, risk_per_trade_pct=$5,
+           max_drawdown_pct=$6, auto_mc_enabled=$7, status=$8, updated_at=NOW()`,
+        [
+          portfolioId,
+          s.strategyId,
+          dbMethod,
+          Number(s.allocation || 0),
+          Number(s.riskPerTradePct || 0.5),
+          Number(s.maxDrawdownPct || 10),
+          Boolean(s.autoMcEnabled),
+          dbAllocStatus
+        ]
+      );
+    }
   } catch (err) {
     console.warn("[store] non-fatal portfolios sync warning:", err.message);
   }
 }
+
+export { recordRiskEvent };
 
 export function extractUserId(request) {
   return extractAuthContext(request).userId;

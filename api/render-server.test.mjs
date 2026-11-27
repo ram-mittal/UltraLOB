@@ -56,13 +56,17 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(appJs.status, 200);
     assert.match(appJs.headers.get("content-type") || "", /javascript/);
 
-    // 2. Classic FIX / Market Monte Carlo terminal preserved at /legacy
+    // 2. Classic FIX simulated terminal preserved at /legacy with explicit C++ disconnection banner
     const legacy = await fetch(baseUrl + "/legacy");
     assert.equal(legacy.status, 200);
     const legacyHtml = await legacy.text();
     assert.match(legacyHtml, /wss:\/\/ws\.kraken\.com\/v2/);
     assert.match(legacyHtml, /Market Monte Carlo Simulation/);
     assert.match(legacyHtml, /runMarketMonteCarlo\(\)/);
+    assert.match(legacyHtml, /SIMULATED FIX 4\.4 SANDBOX/);
+    assert.match(legacyHtml, /EXPLICITLY SIMULATED FIX TICKET/);
+    assert.match(legacyHtml, /DISCONNECTED RUNTIME/);
+    assert.ok(!legacyHtml.includes("184 ns"), "Legacy simulated FIX page must not report fake live 184 ns engine latency");
     const scriptStart = legacyHtml.indexOf("<script>");
     const scriptEnd = legacyHtml.indexOf("</script>", scriptStart);
     assert.ok(scriptStart >= 0 && scriptEnd > scriptStart, "legacy inline script should be present");
@@ -78,6 +82,13 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const sysPayload = await sysStatus.json();
     assert.equal(sysPayload.execution.environment, "DEMO_ONLY");
     assert.equal(sysPayload.execution.live_execution_enabled, false);
+    assert.equal(sysPayload.execution.postgres_configured, false);
+    assert.equal(sysPayload.persistence.in_memory_fallback_active, true);
+    assert.ok(sysPayload.persistence.postgresql_required_components.includes("mt5_execution_bridge"));
+    assert.ok(sysPayload.persistence.in_memory_fallback_components.includes("portfolios_and_allocations"));
+    assert.equal(sysPayload.runtimes.cpp_matching_engine.connected_to_web_terminal, false);
+    assert.equal(sysPayload.runtimes.fix_order_ticket.mode, "SIMULATED_IN_BROWSER");
+    assert.equal(sysPayload.runtimes.fix_order_ticket.connected_to_matching_engine, false);
     assert.equal(sysPayload.market_feeds.xauusd.origin, "AWAITING_DATA");
 
     const executionHealth = await fetch(baseUrl + "/api/execution/health");
@@ -290,7 +301,7 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(unimplPayload.connected, false);
     assert.equal(unimplPayload.upstreamVerified, false);
 
-    // Provision non-custodial EA bridge (no password): strictly connected:false + upstreamVerified:false until EA heartbeat
+    // MT5 EA Bridge strictly requires persistent PostgreSQL storage (503 without DATABASE_URL)
     const conn = await fetch(baseUrl + "/api/broker/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
@@ -302,14 +313,13 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
         account_id: "19283746"
       })
     });
-    assert.equal(conn.status, 202);
+    assert.equal(conn.status, 503);
     const connData = await conn.json();
     assert.equal(connData.connected, false);
-    assert.equal(connData.paired, true);
+    assert.equal(connData.paired, false);
     assert.equal(connData.upstreamVerified, false);
-    assert.equal(connData.verification_status, "PENDING_EA_HEARTBEAT");
-    assert.equal(connData.broker.environment, "DEMO");
-    assert.ok(connData.broker.bridgeToken);
+    assert.equal(connData.code, "EXECUTION_STORAGE_NOT_CONFIGURED");
+    assert.equal(connData.verification_status, "DATABASE_REQUIRED");
 
     const statusCheck = await fetch(baseUrl + "/api/broker/status", {
       headers: { Authorization: `Bearer ${invData.token}` }
@@ -318,7 +328,9 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const statusData = await statusCheck.json();
     assert.equal(statusData.connected, false);
     assert.equal(statusData.upstreamVerified, false);
-    assert.equal(statusData.verification_status, "PENDING_EA_HEARTBEAT");
+    assert.equal(statusData.verification_status, "DISCONNECTED");
+    assert.equal(statusData.execution_bridge.requires_postgresql, true);
+    assert.equal(statusData.execution_bridge.storage, "not-configured");
 
     // Unverified MetaApi upstream failure must NOT store or return connected:true
     const origFetch = globalThis.fetch;
@@ -432,13 +444,13 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(mcData.evaluation.qualified, true);
     assert.equal(mcData.executedTrades.length, 1);
 
+    // MT5 bridge signal polling also requires PostgreSQL storage (503 without DATABASE_URL)
     const signals = await fetch(
-      baseUrl + `/api/broker/mt5/signals?token=${encodeURIComponent(connData.broker.bridgeToken)}`
+      baseUrl + `/api/broker/mt5/signals?token=dummy-token`
     );
-    assert.equal(signals.status, 200);
+    assert.equal(signals.status, 503);
     const sigPayload = await signals.json();
-    assert.equal(sigPayload.count, 1);
-    assert.equal(sigPayload.signals[0].side, "BUY");
+    assert.equal(sigPayload.code, "EXECUTION_STORAGE_NOT_CONFIGURED");
 
     // RBAC forbids investor from modifying hard risk policy or global kill switches
     const invBlockedRisk = await fetch(baseUrl + "/api/copy-trading/risk-config", {

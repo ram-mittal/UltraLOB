@@ -21,9 +21,11 @@ export function render() {
 
       <!-- Safety Lock Notice -->
       <div class="rounded border border-[#eab308]/40 bg-[#eab308]/5 px-4 py-2.5 text-xs text-[#fde047] flex flex-wrap items-center justify-between gap-2">
-        <span><strong>DEMO-ONLY EXECUTION BUILD:</strong> Live real-money broker routing is locked. Direct MT5 passwords and Exness REST API credentials are rejected unless verified through an implemented adapter.</span>
+        <span><strong>DEMO-ONLY EXECUTION BUILD:</strong> Live real-money broker routing is locked. The MT5 EA Bridge requires persistent PostgreSQL storage (<code class="font-mono">DATABASE_URL</code>); direct MT5 passwords and Exness REST API credentials are rejected unless verified through an implemented adapter.</span>
         ${originBadge("DEMO_ONLY")}
       </div>
+
+      <div id="bk-db-banner"></div>
 
       <div id="bk-kpi-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
 
@@ -126,12 +128,26 @@ export async function init({ showToast }) {
   const maBox = document.getElementById("bk-metaapi-fields");
   const subBtn = document.getElementById("bk-submit-btn");
 
-  modeSel?.addEventListener("change", () => {
-    const isMeta = modeSel.value === "metaapi_demo";
+  let pgExecutionReady = true;
+
+  function syncModeButtonState() {
+    const isMeta = modeSel?.value === "metaapi_demo";
     eaBox?.classList.toggle("hidden", isMeta);
     maBox?.classList.toggle("hidden", !isMeta);
-    if (subBtn) subBtn.textContent = isMeta ? "Verify MetaApi Demo Upstream" : "Provision EA Bridge Connector";
-  });
+    if (subBtn) {
+      if (!isMeta && !pgExecutionReady) {
+        subBtn.disabled = true;
+        subBtn.className = "btn-secondary opacity-60 cursor-not-allowed w-full font-mono";
+        subBtn.textContent = "EA Bridge Requires PostgreSQL (DATABASE_URL)";
+      } else {
+        subBtn.disabled = false;
+        subBtn.className = "btn-primary w-full font-mono";
+        subBtn.textContent = isMeta ? "Verify MetaApi Demo Upstream" : "Provision EA Bridge Connector";
+      }
+    }
+  }
+
+  modeSel?.addEventListener("change", syncModeButtonState);
 
   async function refresh() {
     const [statusRes, monitorRes, healthRes] = await Promise.all([
@@ -139,6 +155,21 @@ export async function init({ showToast }) {
       api.getExecutionMonitor().catch(() => ({ connectors: [] })),
       api.getExecutionHealth().catch(() => null)
     ]);
+
+    pgExecutionReady = Boolean(
+      healthRes?.storage === "postgresql" || statusRes?.execution_bridge?.postgres_configured
+    );
+    const dbBanner = document.getElementById("bk-db-banner");
+    if (dbBanner) {
+      dbBanner.innerHTML = pgExecutionReady
+        ? ""
+        : stateBanner({
+            kind: "error",
+            title: "MT5 Bridge Requires Persistent PostgreSQL Storage",
+            message: "DATABASE_URL is not configured in deployment environment variables. MT5 EA Bridge provisioning and /api/execution routes return HTTP 503 until PostgreSQL is attached."
+          });
+    }
+    syncModeButtonState();
 
     const broker = statusRes?.broker || null;
     const verifiedConnected = Boolean(statusRes?.connected && statusRes?.upstreamVerified);

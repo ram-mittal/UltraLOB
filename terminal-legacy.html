@@ -59,12 +59,12 @@
           ULTRALOB
         </span>
       </div>
-      <span class="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
-        FIX 4.4 Engine
+      <span class="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+        SIMULATED FIX 4.4 SANDBOX
       </span>
-      <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-        SESSION: <span id="sessionStateText" class="font-bold">ACTIVE</span>
+      <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-amber-300 border border-amber-500/30 font-mono flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+        SESSION: <span id="sessionStateText" class="font-bold">SIMULATED (IN-BROWSER)</span>
       </span>
     </div>
 
@@ -98,8 +98,8 @@
       </div>
       <div class="text-slate-600">|</div>
       <div class="flex items-center gap-1.5">
-        <span class="text-slate-400">Engine Latency:</span>
-        <span class="text-emerald-400 font-semibold">184 ns</span>
+        <span class="text-slate-400">C++ Engine:</span>
+        <span class="text-amber-400 font-semibold">DISCONNECTED RUNTIME</span>
       </div>
     </div>
 
@@ -118,6 +118,11 @@
     </div>
   </header>
 
+  <div class="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-2 font-mono">
+    <span><strong>EXPLICITLY SIMULATED FIX TICKET:</strong> FIX 4.4 order messages (35=D / 35=8 / 35=F, TargetCompID=<code class="text-amber-300">ULTRALOB-MOCK</code>) and L2 order book depth on this page are simulated strictly in browser JavaScript. The standalone C++ matching engine (<code class="text-amber-300">server/main.cpp</code>) is a separate runtime and is NOT connected to this web terminal.</span>
+    <a href="/#/terminal" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 shrink-0">Back to Institutional Terminal</a>
+  </div>
+
   <!-- MAIN GRID: 3 COLUMNS -->
   <main class="grid grid-cols-12 gap-3 flex-1">
 
@@ -128,7 +133,7 @@
       <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3">
         <div class="flex items-center justify-between mb-2">
           <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Active Instrument</label>
-          <span class="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">TRADING</span>
+          <span class="text-[11px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">SIMULATED TICKET</span>
         </div>
         <div class="grid grid-cols-4 gap-1.5 mb-3">
           <button onclick="selectSymbol('AAPL')" id="tab-AAPL" class="symbol-tab py-1.5 text-xs font-bold rounded bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-slate-700/60">AAPL</button>
@@ -296,7 +301,7 @@
       <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-3 flex flex-col h-72">
         <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
           <div class="flex items-center gap-2">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Live FIX 4.4 Wire Stream</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Simulated FIX 4.4 Wire Stream (ULTRALOB-MOCK)</span>
             <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300">SOH (\x01) FRAMED</span>
           </div>
           <button onclick="clearFixLog()" class="text-[10px] text-slate-400 hover:text-slate-200 font-mono">Clear</button>

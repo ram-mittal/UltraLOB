@@ -45,6 +45,20 @@ test("server.js fails production startup when ULTRALOB_JWT_SECRET is missing or 
   });
   assert.notEqual(shortRun.status, 0);
   assert.match(shortRun.stderr, /at least 32 characters/i);
+
+  const requireDbEnv = {
+    ...cleanEnv,
+    ULTRALOB_JWT_SECRET: crypto.randomBytes(32).toString("hex"),
+    ULTRALOB_REQUIRE_DATABASE: "true"
+  };
+  delete requireDbEnv.DATABASE_URL;
+  const missingDbRun = spawnSync(process.execPath, [path.join(PROJECT_ROOT, "server.js")], {
+    env: requireDbEnv,
+    encoding: "utf8",
+    timeout: 5000
+  });
+  assert.notEqual(missingDbRun.status, 0);
+  assert.match(missingDbRun.stderr, /DATABASE_URL is not configured/i);
 });
 
 test("assertJwtSecretConfigured rejects legacy fallback and enforces length under strict mode", () => {

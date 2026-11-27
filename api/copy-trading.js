@@ -2,14 +2,18 @@ import crypto from "node:crypto";
 import {
   ensureDbReady,
   getMemoryStore,
-  getPortfolioForUser,
   getRiskStateForUser,
+  hydrateUserPortfolio,
+  hydrateUserRiskState,
+  listRiskEventsForUser,
   getAllStrategiesInMemory,
   resolveAuthContext,
   resolveManagedUserScope,
   createEmptyPortfolio,
   syncPgPortfolio,
-  syncPgRiskState
+  syncPgRiskState,
+  recordRiskEvent,
+  query
 } from "./store.js";
 import { authorizeRequest } from "./security.js";
 import { getDatabaseStatus } from "../db/client.js";
@@ -171,9 +175,10 @@ export default async function copyTradingHandler(request, response, { executionS
     if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
 
     const targetId = scope.targetUserId;
-    const targetPortfolio = getPortfolioForUser(targetId);
-    const targetRisk = getRiskStateForUser(targetId);
+    const targetPortfolio = await hydrateUserPortfolio(targetId, dbAvailable);
+    const targetRisk = await hydrateUserRiskState(targetId, dbAvailable);
     const brokerState = await resolveUserBrokerStatus(targetId, { executionStore, dbAvailable });
+    const riskAlerts = await listRiskEventsForUser(targetId, { mem, dbAvailable, limit: 20 });
 
     return response.status(200).json({
       summary: computePortfolioMetrics(targetPortfolio),
@@ -189,7 +194,7 @@ export default async function copyTradingHandler(request, response, { executionS
         verification_status: brokerState.verification_status
       },
       riskConfig: flattenRiskConfig(targetRisk),
-      riskAlerts: mem.riskEvents.filter((e) => e.userId === targetId).slice(0, 20),
+      riskAlerts,
       systemStatus: {
         database: dbStatus,
         executionEnvironment: "DEMO_ONLY"
@@ -200,8 +205,8 @@ export default async function copyTradingHandler(request, response, { executionS
   // POST /api/copy-trading/size-preview — Stateless risk-normalized position size preview
   if (request.method === "POST" && subPath === "/size-preview") {
     const b = request.body || {};
-    const ownEquity = auth.authenticated ? getPortfolioForUser(userId).balance : 0;
-    const ownMaxRisk = auth.authenticated ? getRiskStateForUser(userId).limits.max_risk_per_trade_pct : 0.5;
+    const ownEquity = auth.authenticated ? (await hydrateUserPortfolio(userId, dbAvailable)).balance : 0;
+    const ownMaxRisk = auth.authenticated ? (await hydrateUserRiskState(userId, dbAvailable)).limits.max_risk_per_trade_pct : 0.5;
     const sizing = computeRiskNormalizedVolume({
       equity: Number(b.equity || ownEquity || 10_000),
       riskPct: Number(b.risk_pct || ownMaxRisk || 0.5),
@@ -216,8 +221,8 @@ export default async function copyTradingHandler(request, response, { executionS
   }
 
   // Require authentication on all portfolio & copy-trading mutations below
-  const portfolio = getPortfolioForUser(userId);
-  const riskState = getRiskStateForUser(userId);
+  const portfolio = await hydrateUserPortfolio(userId, dbAvailable);
+  const riskState = await hydrateUserRiskState(userId, dbAvailable);
 
   // POST /api/copy-trading/sandbox-capital
   if (request.method === "POST" && subPath === "/sandbox-capital") {
@@ -253,7 +258,7 @@ export default async function copyTradingHandler(request, response, { executionS
       allowSameOrgRoles: ["risk_manager"]
     });
     if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
-    const targetRisk = getRiskStateForUser(scope.targetUserId);
+    const targetRisk = await hydrateUserRiskState(scope.targetUserId, dbAvailable);
 
     if (b.kill_switch_active !== undefined) {
       targetRisk.kill_switches.global_active = Boolean(b.kill_switch_active);
@@ -273,16 +278,24 @@ export default async function copyTradingHandler(request, response, { executionS
     }
     targetRisk.updated_at = new Date().toISOString();
 
+    const riskMsg = targetRisk.kill_switches.global_active
+      ? "Global kill switch ACTIVATED — all new order execution halted."
+      : "Risk governance limits updated.";
     mem.riskEvents.unshift({
       id: crypto.randomUUID().slice(0, 8),
       userId: scope.targetUserId,
       severity: targetRisk.kill_switches.global_active ? "KILL_SWITCH" : "INFO",
-      message: targetRisk.kill_switches.global_active
-        ? "Global kill switch ACTIVATED — all new order execution halted."
-        : "Risk governance limits updated.",
+      message: riskMsg,
       createdAt: targetRisk.updated_at
     });
     await syncPgRiskState(scope.targetUserId, targetRisk, dbAvailable);
+    await recordRiskEvent({
+      scopeType: "USER",
+      scopeId: scope.targetUserId,
+      eventType: "RISK_CONFIG_UPDATED",
+      severity: targetRisk.kill_switches.global_active ? "KILL_SWITCH" : "INFO",
+      message: riskMsg
+    });
 
     return response.status(200).json({ riskConfig: flattenRiskConfig(targetRisk) });
   }
@@ -308,7 +321,11 @@ export default async function copyTradingHandler(request, response, { executionS
       return response.status(400).json({ error: `Minimum capital for ${strategy.name} is $${strategy.min_capital}.` });
     }
 
-    const userMandate = mem.mandates?.get(userId) || createDefaultMandate();
+    let userMandate = mem.mandates?.get(userId) || createDefaultMandate();
+    if (dbAvailable && /^[0-9a-f-]{36}$/i.test(userId || "")) {
+      const mRes = await query(`SELECT * FROM investor_profiles WHERE user_id = $1 LIMIT 1`, [userId]).catch(() => ({ rows: [] }));
+      if (mRes.rows[0]) userMandate = mRes.rows[0];
+    }
     const mandateCheck = validateAgainstMandate({
       mandate: userMandate,
       strategy,
@@ -351,6 +368,8 @@ export default async function copyTradingHandler(request, response, { executionS
       });
     }
 
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
+
     return response.status(200).json({
       status: isResearchOnly ? "subscribed_research_watch" : "subscribed",
       warning: isResearchOnly
@@ -368,6 +387,7 @@ export default async function copyTradingHandler(request, response, { executionS
     const idx = portfolio.subscriptions.findIndex((s) => s.strategyId === strategyId);
     if (idx === -1) return response.status(404).json({ error: "Subscription not found." });
     portfolio.subscriptions.splice(idx, 1);
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
     return response.status(200).json({ status: "unsubscribed", subscriptions: portfolio.subscriptions });
   }
 
@@ -385,6 +405,7 @@ export default async function copyTradingHandler(request, response, { executionS
       });
     }
     sub.status = sub.status === "active" ? "paused" : "active";
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
     return response.status(200).json({ status: sub.status, subscription: sub });
   }
 
@@ -403,6 +424,7 @@ export default async function copyTradingHandler(request, response, { executionS
         : portfolio.mcConfig.minExpectedReturnPct,
       riskAmountUsd: Math.max(10, Number(cfg.riskAmountUsd) || portfolio.mcConfig.riskAmountUsd)
     };
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
     return response.status(200).json({ mcConfig: portfolio.mcConfig });
   }
 
@@ -531,8 +553,11 @@ export default async function copyTradingHandler(request, response, { executionS
         source: "Monte Carlo Signal"
       };
       portfolio.trades.unshift(mainTrade);
+      await syncPgPortfolio(userId, portfolio, dbAvailable);
       const brokerSignal = await queueBrokerSignal(mem, userId, mainTrade, executionStore, brokerState);
       executedTrades.push({ trade: mainTrade, brokerSignal });
+    } else {
+      await syncPgPortfolio(userId, portfolio, dbAvailable);
     }
 
     return response.status(200).json({ evaluation, executedTrades });
@@ -597,6 +622,7 @@ export default async function copyTradingHandler(request, response, { executionS
     };
 
     portfolio.trades.unshift(trade);
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
     const brokerSignal = await queueBrokerSignal(mem, userId, trade, executionStore, brokerState);
 
     return response.status(201).json({ trade, brokerSignal });
@@ -622,6 +648,7 @@ export default async function copyTradingHandler(request, response, { executionS
       label: new Date().toLocaleTimeString("en-GB", { hour12: false }),
       value: portfolio.balance
     });
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
 
     return response.status(200).json({ trade, balance: portfolio.balance });
   }

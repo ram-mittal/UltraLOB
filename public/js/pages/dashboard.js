@@ -121,11 +121,12 @@ export async function init({ showToast, navigate }) {
   if (!isBrowser()) return;
 
   async function refresh() {
-    const [portRes, sumRes, riskRes, execRes] = await Promise.all([
+    const [portRes, sumRes, riskRes, execRes, sysRes] = await Promise.all([
       api.getPortfolio().catch((e) => ({ _err: e.message })),
       api.getPortfolioSummary().catch(() => null),
       api.getPortfolioRisk().catch(() => null),
-      api.getExecutionMonitor().catch(() => null)
+      api.getExecutionMonitor().catch(() => null),
+      api.getSystemStatus().catch(() => null)
     ]);
 
     if (portRes?._err) {
@@ -148,10 +149,18 @@ export async function init({ showToast, navigate }) {
     const origin = portRes.data_origin || metrics.data_origin || "PAPER_SANDBOX";
     const nowIso = new Date().toISOString();
 
-    // Kill switch / unfunded alert banner
+    // Kill switch / persistence / unfunded alert banner
     const alertStrip = document.getElementById("ov-alerts-strip");
     if (alertStrip) {
       const banners = [];
+      if (sysRes?.persistence?.in_memory_fallback_active) {
+        banners.push(stateBanner({
+          kind: "empty",
+          title: "In-Memory Fallback Storage Active (DATABASE_URL Unconfigured)",
+          message: "Without private DATABASE_URL configuration, sessions, sandbox portfolios, risk rules, backtests, and AI decisions reside in ephemeral memory. MT5 Execution Bridge endpoints require PostgreSQL (503).",
+          actionHtml: `<a href="#/admin" class="btn-secondary font-mono text-[11px]">Inspect Storage Status</a>`
+        }));
+      }
       if (killSwitches.global_active) {
         banners.push(stateBanner({
           kind: "error",

@@ -1,4 +1,4 @@
-// FIX & Live Market Terminal — Real-Market Chart, Risk-Sized Order Ticket & Open Blotter
+// Live Market & Paper Sandbox Order Terminal — Real-Market Chart, Risk-Sized Order Ticket & Open Blotter
 import { api } from "../api.js";
 import { createEquityCurve } from "../components/charts.js";
 import {
@@ -11,13 +11,18 @@ export function render() {
     <div class="space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 class="text-base font-semibold tracking-tight text-[#e6edf6]">Live Market &amp; Risk-Sized Order Terminal</h1>
-          <p class="text-xs text-[#94a3b8]">Real Twelve Data (XAU/USD, equities) and Kraken Spot (BTC/USD) historical feeds paired with deterministic Risk-Normalized Order Execution.</p>
+          <h1 class="text-base font-semibold tracking-tight text-[#e6edf6]">Market Feed &amp; Paper Order Terminal</h1>
+          <p class="text-xs text-[#94a3b8]">Real Twelve Data (XAU/USD, equities) and Kraken Spot (BTC/USD) historical feeds paired with Risk-Normalized Paper Sandbox / MT5 Demo Bridge execution.</p>
         </div>
         <div class="flex items-center gap-2">
           <span id="tm-feed-badge">${originBadge("REAL_MARKET")}</span>
-          <a href="/legacy" class="btn-secondary font-mono text-[11px]">Classic FIX View</a>
+          <a href="/legacy" class="btn-secondary font-mono text-[11px]">Simulated FIX 4.4 Sandbox (/legacy)</a>
         </div>
+      </div>
+
+      <div class="rounded border border-[#3b82f6]/30 bg-[#1c2330]/60 px-3.5 py-2 text-[11px] text-[#cbd5e1] flex flex-wrap items-center justify-between gap-2">
+        <span><strong>RUNTIME SEPARATION:</strong> This web ticket executes against Paper Sandbox / MT5 Demo Bridge (<code class="font-mono">/api/copy-trading/execute</code>). The standalone C++20 FIX 4.4 / binary matching engine (<code class="font-mono">server/main.cpp</code>) is a separate runtime and is not connected to the web terminal or hosted FIX view.</span>
+        ${originBadge("PAPER_SANDBOX")}
       </div>
 
       <!-- Instrument & Interval Selector Bar -->

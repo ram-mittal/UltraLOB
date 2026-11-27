@@ -4,8 +4,8 @@ import {
   resolveAuthContext,
   getAllStrategiesInMemory,
   getMemoryStore,
-  getPortfolioForUser,
-  getRiskStateForUser,
+  hydrateUserPortfolio,
+  hydrateUserRiskState,
   query
 } from "./store.js";
 import { authorizeRequest, authorizeOwnership } from "./security.js";
@@ -129,8 +129,8 @@ export default async function aiHandler(request, response, { executionStore = nu
     const strategy = getAllStrategiesInMemory().find((s) => s.id === strategyId || s.code === strategyId);
     if (!strategy) return response.status(404).json({ error: "Strategy not found." });
 
-    const portfolio = getPortfolioForUser(userId);
-    const riskState = getRiskStateForUser(userId);
+    const portfolio = await hydrateUserPortfolio(userId, dbAvailable);
+    const riskState = await hydrateUserRiskState(userId, dbAvailable);
     const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
     const equity = Number((portfolio.balance + unrealized).toFixed(2));
@@ -259,8 +259,8 @@ export default async function aiHandler(request, response, { executionStore = nu
 
     if (approve) {
       // Independent Risk Engine MUST still pass at time of authorization!
-      const portfolio = getPortfolioForUser(userId);
-      const riskState = getRiskStateForUser(userId);
+      const portfolio = await hydrateUserPortfolio(userId, dbAvailable);
+      const riskState = await hydrateUserRiskState(userId, dbAvailable);
       const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
       const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
       const equity = Number((portfolio.balance + unrealized).toFixed(2));

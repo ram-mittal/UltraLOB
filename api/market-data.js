@@ -196,10 +196,50 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
       platform: "UltraLOB — Institutional Strategy Allocation & Risk Infrastructure",
       phase: "Phases 1–6 Complete (Quant Registry, Research Backtester, MT5 Demo Bridge, Portfolio/Risk Engine, 7-Engine AI, Institutional Governance)",
       database: db,
+      persistence: {
+        mode: db.mode,
+        postgresql_configured: db.configured,
+        postgresql_ready: db.ready,
+        in_memory_fallback_active: !db.ready,
+        postgresql_required_components: ["mt5_execution_bridge", "mt5_ea_connectors", "mt5_execution_commands"],
+        in_memory_fallback_components: db.ready
+          ? []
+          : [
+              "auth_sessions_and_users",
+              "custom_strategies",
+              "portfolios_and_allocations",
+              "risk_limits_and_kill_switches",
+              "research_backtests",
+              "ai_decisions",
+              "investor_mandates_and_api_keys"
+            ]
+      },
       execution: {
         environment: "DEMO_ONLY",
         live_execution_enabled: false,
-        postgres_configured: Boolean(executionStore)
+        postgres_configured: Boolean(executionStore),
+        postgres_ready: Boolean(executionStore && db.ready)
+      },
+      runtimes: {
+        cpp_matching_engine: {
+          runtime: "standalone_cpp20",
+          entrypoint: "server/main.cpp",
+          connected_to_web_terminal: false,
+          note: "Standalone C++20 FIX 4.4 / binary matching engine is a separate runtime and is NOT connected to the web terminal or hosted on Render."
+        },
+        fix_order_ticket: {
+          mode: "SIMULATED_IN_BROWSER",
+          route: "/legacy",
+          target_comp_id: "ULTRALOB-MOCK",
+          connected_to_matching_engine: false,
+          connected_to_broker: false,
+          note: "The hosted /legacy FIX order ticket, acks, fills, and L2 depth are explicitly simulated in browser JavaScript."
+        },
+        mt5_demo_bridge: {
+          requires_postgresql: true,
+          configured: Boolean(executionStore && db.configured),
+          environment: "DEMO_ONLY"
+        }
       },
       market_feeds: {
         btc_usd: { provider: "Kraken Spot", status: "LIVE", origin: "REAL_MARKET" },

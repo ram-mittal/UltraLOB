@@ -91,7 +91,7 @@ export function render(currentPath = "/overview") {
       </nav>
 
       <div class="border-t border-[#232a37] p-2 space-y-1 shrink-0">
-        <a href="#/terminal" title="FIX & Live Market Terminal" class="flex items-center gap-2.5 px-3 py-1.5 rounded text-xs font-medium ${terminalActive ? "bg-[#1c2330] text-[#e6edf6] border-l-2 border-[#3b82f6]" : "text-[#94a3b8] hover:text-[#e6edf6] hover:bg-[#161b25] border-l-2 border-transparent"}">
+        <a href="#/terminal" title="Market &amp; Paper Order Terminal" class="flex items-center gap-2.5 px-3 py-1.5 rounded text-xs font-medium ${terminalActive ? "bg-[#1c2330] text-[#e6edf6] border-l-2 border-[#3b82f6]" : "text-[#94a3b8] hover:text-[#e6edf6] hover:bg-[#161b25] border-l-2 border-transparent"}">
           <span class="text-[#3b82f6]">${svgIcon("terminal")}</span>
           <span class="sidebar-label truncate">Market Terminal</span>
         </a>

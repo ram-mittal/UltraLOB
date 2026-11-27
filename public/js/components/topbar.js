@@ -16,7 +16,7 @@ const ROUTE_TITLES = [
   { prefix: "/reports", title: "Institutional Statements & Fees" },
   { prefix: "/admin", title: "Administration & Governance" },
   { prefix: "/settings", title: "Administration & Governance" },
-  { prefix: "/terminal", title: "FIX & Live Market Terminal" },
+  { prefix: "/terminal", title: "Market & Paper Order Terminal" },
   { prefix: "/markets", title: "Live Market Feed" },
   { prefix: "/auth", title: "Institutional Operator Authentication" }
 ];
@@ -53,12 +53,17 @@ export function render(currentPath = "/overview") {
         </div>
       </div>
 
-      <!-- Right: Env Indicator, Market Status, Notifications, Profile -->
+      <!-- Right: Env Indicator, Storage Mode, Market Status, Notifications, Profile -->
       <div class="flex items-center gap-2 shrink-0">
         <span id="topbar-env-badge" title="Environment Execution Mode" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[10px] font-mono font-semibold uppercase tracking-wider ${envCls}">
           <span class="w-1.5 h-1.5 rounded-full ${envIsLive ? "bg-[#22c55e]" : "bg-[#eab308]"}"></span>
           ${envIsLive ? "LIVE" : "DEMO"}
         </span>
+
+        <a href="#/admin" id="topbar-storage-pill" title="Persistence Backend Status" class="hidden xl:inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-[#232a37] bg-[#0b0e13] text-[10px] font-mono text-[#94a3b8] hover:border-[#2e3748]">
+          <span id="topbar-storage-dot" class="w-1.5 h-1.5 rounded-full bg-[#64748b]"></span>
+          <span id="topbar-storage-text">STORAGE: CHECKING</span>
+        </a>
 
         <a href="#/terminal" id="topbar-market-pill" class="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-[#232a37] bg-[#0b0e13] text-[10px] font-mono text-[#94a3b8] hover:border-[#2e3748]" title="Live Market Infrastructure Status">
           <span id="topbar-market-dot" class="w-1.5 h-1.5 rounded-full bg-[#64748b]"></span>
@@ -131,6 +136,18 @@ async function hydrateTopbarStatus() {
       const td = sys.market_feeds?.xauusd?.status === "CONFIGURED" || sys.market_feeds?.us_equities?.configured;
       mDot.className = `w-1.5 h-1.5 rounded-full ${td ? "bg-[#22c55e]" : "bg-[#eab308]"}`;
       mText.textContent = td ? "FEED: XAUUSD + BTC LIVE" : "FEED: KRAKEN BTC / DEMO";
+    }
+
+    const sPill = document.getElementById("topbar-storage-pill");
+    const sDot = document.getElementById("topbar-storage-dot");
+    const sText = document.getElementById("topbar-storage-text");
+    if (sys && sPill && sDot && sText) {
+      const pgReady = Boolean(sys.database?.ready);
+      sDot.className = `w-1.5 h-1.5 rounded-full ${pgReady ? "bg-[#22c55e]" : "bg-[#eab308]"}`;
+      sText.textContent = pgReady ? "DB: POSTGRESQL" : "STORAGE: MEMORY FALLBACK";
+      sPill.title = pgReady
+        ? "PostgreSQL connected (MT5 Execution Bridge enabled)"
+        : "DATABASE_URL unconfigured — non-MT5 components use ephemeral in-memory fallback; MT5 Bridge disabled (503)";
     }
 
     const events = Array.isArray(riskRes?.events) ? riskRes.events : [];

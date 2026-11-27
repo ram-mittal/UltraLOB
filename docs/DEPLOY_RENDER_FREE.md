@@ -26,29 +26,37 @@ The dashboard's separate Market Monte Carlo panel retrieves recent historical ca
 
 The scenario chart displays a sample of simulated paths, the median path and empirical 5–95% / 25–75% percentile fans. It reports terminal price percentiles and close-only first-touch estimates for configured stop and target levels. This is conditional scenario analysis, not a forecast, trading signal, or execution system. It omits intrabar sequence, spread, fees, slippage, liquidity, funding and regime changes.
 
+## PostgreSQL & Environment Secrets (Required for Persistent & MT5 Bridge)
+
+PostgreSQL and application secrets must be configured exclusively through **Render Dashboard → Service → Environment** private environment variables (`sync: false` in `render.yaml`, never committed to git):
+
+| Variable | Requirement | Purpose |
+|---|---|---|
+| `ULTRALOB_JWT_SECRET` | **Required (Prod)** | Cryptographically random >=32-char JWT signing & refresh-token HMAC secret (production startup aborts cleanly if missing) |
+| `DATABASE_URL` | **Required for MT5 Bridge & persistence** | Managed PostgreSQL connection string (`postgresql://...?sslmode=require`) |
+| `DATABASE_SSL` | Conditional | Set `true` when the database provider requires driver-level TLS (`rejectUnauthorized: true`) |
+| `ULTRALOB_EXECUTION_ADMIN_KEY` | **Yes (MT5 Bridge Admin)** | Long random operator-only secret to manage `/api/execution` connectors and strategy signals |
+| `ULTRALOB_REQUIRE_DATABASE` | Optional | Set `true` to abort production startup immediately if `DATABASE_URL` is missing/unreachable |
+
+Without `DATABASE_URL`, authentication sessions, custom strategies, Paper Sandbox portfolios, risk limits/kill switches, research backtests, AI decisions, and mandates fall back to **ephemeral in-memory storage** (lost on deploy/restart), and **the MT5 Execution Bridge refuses provisioning/polling with HTTP `503 EXECUTION_STORAGE_NOT_CONFIGURED`**.
+
 ## MT5 demo execution bridge (phase 1)
 
-The MT5 demo Execution API requires a persistent PostgreSQL database. Add these variables under Render → UltraLOB → Environment:
+The MT5 demo Execution API and `/api/broker/connect` EA Bridge strictly require persistent PostgreSQL storage (`DATABASE_URL`). Do not use Render's ephemeral filesystem as the execution journal.
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Managed PostgreSQL connection string |
-| `DATABASE_SSL` | Optional `true` when the database provider requires TLS |
-| `ULTRALOB_EXECUTION_ADMIN_KEY` | Long random operator-only secret to create connector tokens and publish strategy signals |
-
-The service initializes the execution tables on first use. Without `DATABASE_URL`, `/api/execution/health` reports `storage: not-configured` and protected execution routes return 503. Do not use Render's ephemeral filesystem as the execution journal.
+The service initializes the execution tables and SQL migrations on first use. Without `DATABASE_URL`, `/api/execution/health` reports `storage: not-configured`, `/api/broker/connect` (`mode=ea_bridge`) and `/api/broker/mt5/signals` return HTTP `503`, and protected `/api/execution/*` routes return `503`.
 
 The MT5 source is [`mt5/Experts/UltraLOB_Bridge_EA.mq5`](../mt5/Experts/UltraLOB_Bridge_EA.mq5). It must be compiled in MetaEditor, and the user must allow `https://ultralob.onrender.com` in MT5 WebRequest settings. The EA defaults to no execution and rejects any account that is not a demo account. Read the complete [MT5 Demo Bridge guide](MT5_DEMO_BRIDGE.md) before pairing.
 
-This is an operator-managed phase-1 integration. There is not yet a user login or self-service broker page, no Exness adapter, and no live trading mode. The REST polling bridge is not intended for high-frequency execution.
+This is an operator-managed phase-1 integration with verified MetaApi Cloud demo verification or non-custodial EA bridge connectors. There is no raw MT5 password storage, no Exness REST adapter, and no live real-money trading mode.
 
-## Pricing and compute
+## Pricing, C++ Runtime Separation & Simulated FIX
 
 The built-in JavaScript Monte Carlo CPU fallback runs on the Render service. The default fallback cap is 10 million paths and can be changed with `PRICING_FALLBACK_MAX_PATHS`.
 
 CUDA is not included in this free deployment. Selecting CUDA returns an explicit unavailable response rather than silently running on CPU. A separate GPU host is required for the CUDA pricing container.
 
-The FIX order ticket remains a simulation and is not connected to a broker or exchange. Live market quotes and Monte Carlo estimates do not constitute trade execution.
+**Standalone C++ Matching Engine vs. Web Terminal:** The C++20 FIX 4.4 / binary matching engine (`server/main.cpp`) is a separate native runtime and is **not connected** to the hosted web terminal on Render. The hosted `/legacy` FIX 4.4 order ticket (`TargetCompID=ULTRALOB-MOCK`), acks/fills, and L2 depth ladder are explicitly **simulated in browser JavaScript** and do not route to a broker, exchange, or C++ matching engine.
 
 ## Health checks
 
