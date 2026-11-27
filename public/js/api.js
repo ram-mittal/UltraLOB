@@ -35,6 +35,7 @@ export const api = {
   // Portfolio, Risk Engine & Copy Trading
   getPortfolio: () => request('/api/copy-trading/portfolio'),
   fundSandboxCapital: (amount) => request('/api/copy-trading/sandbox-capital', { method: 'POST', body: JSON.stringify({ amount }) }),
+  previewPositionSize: (payload) => request('/api/copy-trading/size-preview', { method: 'POST', body: JSON.stringify(payload) }),
   saveRiskConfig: (cfg) => request('/api/copy-trading/risk-config', { method: 'POST', body: JSON.stringify(cfg) }),
   subscribe: (payload) => request('/api/copy-trading/subscribe', { method: 'POST', body: JSON.stringify(typeof payload === 'string' ? { strategyId: payload } : payload) }),
   unsubscribe: (strategyId) => request('/api/copy-trading/unsubscribe', { method: 'POST', body: JSON.stringify({ strategyId }) }),
@@ -57,6 +58,7 @@ export const api = {
   getBrokerStatus: () => request('/api/broker/status'),
   getMt5Signals: (token) => request(`/api/broker/mt5/signals?token=${encodeURIComponent(token)}`),
   getExecutionHealth: () => request('/api/execution/health'),
+  getExecutionMonitor: () => request('/api/execution/monitor'),
 
   // Market data
   getMarketData: () => request('/api/market-data'),

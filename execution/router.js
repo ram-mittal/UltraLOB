@@ -148,9 +148,43 @@ export function createExecutionRouter({ store = null, adminKey = "", liveExecuti
       storage: store ? "postgresql" : "not-configured",
       broker: "MT5",
       environment: "DEMO_ONLY",
+      ea_min_version: "0.2.0",
       live_execution_enabled: Boolean(liveExecutionEnabled),
       note: "Live-account execution is disabled in this build."
     });
+  });
+
+  // Authenticated UI monitor summary (falls back cleanly when Postgres storage is disabled)
+  router.get("/monitor", async (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!store) {
+      return res.status(200).json({
+        configured: false,
+        storage: "not-configured",
+        environment: "DEMO_ONLY",
+        connectors: [],
+        commands: [],
+        events: []
+      });
+    }
+    try {
+      await store.initialize();
+      const [connectors, commands, events] = await Promise.all([
+        store.listConnectors(),
+        store.listCommands(100),
+        store.listEvents({ limit: 100 })
+      ]);
+      return res.status(200).json({
+        configured: true,
+        storage: "postgresql",
+        environment: "DEMO_ONLY",
+        connectors: connectors.map(sanitizeConnector),
+        commands,
+        events
+      });
+    } catch (error) {
+      return errorResponse(res, 503, "EXECUTION_STORAGE_UNAVAILABLE", error.message);
+    }
   });
 
   router.post("/connectors", requireStore, requireAdmin, async (req, res) => {

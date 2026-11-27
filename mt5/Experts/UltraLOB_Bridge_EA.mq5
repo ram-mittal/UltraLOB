@@ -1,11 +1,13 @@
 //+------------------------------------------------------------------+
 //| UltraLOB Bridge EA - MT5 Demo Connector                          |
-//| Phase 1: account heartbeat, risk-sized demo commands and acks.    |
-//| LIVE ACCOUNTS ARE REJECTED BY DESIGN IN THIS BUILD.               |
+//| Phase 3: account heartbeat, risk-sized demo commands and acks.   |
+//| LIVE ACCOUNTS ARE REJECTED BY DESIGN IN THIS BUILD.              |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "0.1.0"
+#property version   "0.2.0"
 #property description "UltraLOB MT5 demo-only connector. Live execution is disabled."
+
+#define ULTRALOB_EA_VERSION "0.2.0"
 
 input string InpApiBaseUrl = "https://ultralob.onrender.com";
 input string InpConnectorId = "";
@@ -256,7 +258,9 @@ bool IsSuccessfulRetcode(const uint retcode)
 bool SendHeartbeat()
 {
    string body = "{";
-   body += "\"login\":\"" + StringFormat("%I64d", AccountInfoInteger(ACCOUNT_LOGIN)) + "\"";
+   body += "\"ea_version\":\"" + ULTRALOB_EA_VERSION + "\"";
+   body += ",\"terminal_build\":" + IntegerToString((int)TerminalInfoInteger(TERMINAL_BUILD));
+   body += ",\"login\":\"" + StringFormat("%I64d", AccountInfoInteger(ACCOUNT_LOGIN)) + "\"";
    body += ",\"server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\"";
    body += ",\"company\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\"";
    body += ",\"currency\":\"" + JsonEscape(AccountInfoString(ACCOUNT_CURRENCY)) + "\"";
@@ -428,6 +432,13 @@ void ProcessCommand(const string json)
    if(actualRisk <= 0 || actualRisk > localRiskCap + 0.01)
    {
       RejectCommand(commandId, "Broker-calculated loss at stop exceeds the local account risk cap.");
+      return;
+   }
+   double requiredMargin = 0.0;
+   if(OrderCalcMargin(orderType, symbol, volume, price, requiredMargin) &&
+      requiredMargin > AccountInfoDouble(ACCOUNT_MARGIN_FREE))
+   {
+      RejectCommand(commandId, "Insufficient free margin for risk-sized volume.");
       return;
    }
 

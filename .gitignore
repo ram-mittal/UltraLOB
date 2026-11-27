@@ -3,6 +3,9 @@ build/
 .cache/
 node_modules/
 data/runtime.json
+__pycache__/
+*.pyc
+.pytest_cache/
 
 # Executables and debug symbols
 *.exe

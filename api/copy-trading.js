@@ -6,6 +6,7 @@ import {
   extractAuthContext
 } from "./store.js";
 import { getDatabaseStatus } from "../db/client.js";
+import { computeRiskNormalizedVolume } from "../execution/risk-manager.js";
 
 function computePortfolioMetrics(portfolio) {
   const subs = portfolio.subscriptions || [];
@@ -64,16 +65,18 @@ function getRiskConfig(mem, userId) {
   return mem.riskConfigs.get(userId);
 }
 
-function queueBrokerSignal(mem, userId, trade) {
+async function queueBrokerSignal(mem, userId, trade, executionStore = null) {
   const broker = mem.brokers.get(userId);
   if (!broker) return null;
+
+  const cleanSymbol = trade.symbol.replace("/", "").toUpperCase();
   const signal = {
     id: "sig-" + crypto.randomUUID().slice(0, 8),
     bridgeToken: broker.bridgeToken,
     brokerType: broker.type,
     environment: "DEMO",
     account: broker.account,
-    symbol: trade.symbol.replace("/", ""),
+    symbol: cleanSymbol,
     side: trade.side,
     volume: trade.qty,
     entryPrice: trade.price,
@@ -85,10 +88,32 @@ function queueBrokerSignal(mem, userId, trade) {
   };
   mem.mt5Signals.unshift(signal);
   if (mem.mt5Signals.length > 200) mem.mt5Signals.length = 200;
+
+  // Forward into PostgreSQL /api/execution queue when stop/target protection & store exist
+  if (executionStore && trade.stopPrice && trade.targetPrice) {
+    try {
+      await executionStore.initialize();
+      await executionStore.enqueueSignal({
+        signal_id: signal.id,
+        strategy_id: trade.strategyId || "ul-01-gold-trend",
+        strategy_version: "1.0.0",
+        symbol: cleanSymbol,
+        side: trade.side,
+        risk_pct: Math.min(1.0, Math.max(0.05, Number(trade.riskPct || 0.5))),
+        stop_loss: Number(trade.stopPrice),
+        take_profit: Number(trade.targetPrice),
+        expires_at: new Date(Date.now() + 120_000).toISOString(),
+        command_id_factory: () => crypto.randomUUID()
+      });
+    } catch (err) {
+      console.warn("[copy-trading] executionStore enqueue skipped:", err.message);
+    }
+  }
+
   return signal;
 }
 
-export default function copyTradingHandler(request, response) {
+export default async function copyTradingHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/copy-trading/, "").split("?")[0];
   const auth = extractAuthContext(request);
@@ -116,7 +141,23 @@ export default function copyTradingHandler(request, response) {
     });
   }
 
-  // POST /api/copy-trading/sandbox-capital — Explicitly fund Paper Sandbox capital (never fabricated silently)
+  // POST /api/copy-trading/size-preview — Exact risk-normalized lot sizing calculation
+  if (request.method === "POST" && subPath === "/size-preview") {
+    const b = request.body || {};
+    const sizing = computeRiskNormalizedVolume({
+      equity: Number(b.equity || portfolio.balance || 10_000),
+      riskPct: Number(b.risk_pct || riskConfig.max_risk_per_trade_pct || 0.5),
+      stopDistance: Number(b.stop_distance || 5.0),
+      tickSize: Number(b.tick_size || 0.01),
+      tickValue: Number(b.tick_value || 1.0),
+      volumeMin: Number(b.volume_min || 0.01),
+      volumeMax: Number(b.volume_max || 50.0),
+      volumeStep: Number(b.volume_step || 0.01)
+    });
+    return response.status(sizing.ok ? 200 : 400).json(sizing);
+  }
+
+  // POST /api/copy-trading/sandbox-capital
   if (request.method === "POST" && subPath === "/sandbox-capital") {
     const amount = Number(request.body?.amount);
     if (!Number.isFinite(amount) || amount < 100 || amount > 10_000_000) {
@@ -135,7 +176,7 @@ export default function copyTradingHandler(request, response) {
     });
   }
 
-  // POST /api/copy-trading/risk-config — Update independent hard risk limits / kill switch
+  // POST /api/copy-trading/risk-config
   if (request.method === "POST" && subPath === "/risk-config") {
     const b = request.body || {};
     if (b.kill_switch_active !== undefined) riskConfig.kill_switch_active = Boolean(b.kill_switch_active);
@@ -350,10 +391,23 @@ export default function copyTradingHandler(request, response) {
         });
       }
 
-      const stopDist = Math.abs(spotNum - (Number(stopPrice) || spotNum * 0.98)) / spotNum;
-      const riskCapUsd = Math.min(cfg.riskAmountUsd, (portfolio.balance * riskConfig.max_risk_per_trade_pct) / 100);
-      const notional = stopDist > 0 ? Math.min(portfolio.balance * 0.5, riskCapUsd / stopDist) : riskCapUsd * 5;
-      const qty = Number(Math.max(0.001, notional / spotNum).toFixed(4));
+      const stopRef = Number(stopPrice) || spotNum * 0.98;
+      const stopDistance = Math.abs(spotNum - stopRef);
+      const effectiveRiskPct = Math.min(
+        riskConfig.max_risk_per_trade_pct,
+        Math.max(0.05, (cfg.riskAmountUsd / portfolio.balance) * 100)
+      );
+      const sizing = computeRiskNormalizedVolume({
+        equity: portfolio.balance,
+        riskPct: effectiveRiskPct,
+        stopDistance: Math.max(0.01, stopDistance),
+        tickSize: 0.01,
+        tickValue: 0.01,
+        volumeMin: 0.001,
+        volumeMax: 10.0,
+        volumeStep: 0.001
+      });
+      const qty = sizing.ok ? sizing.volume : 0.001;
       const connectedBroker = mem.brokers.get(userId);
       const brokerName = connectedBroker ? connectedBroker.name : "Paper Sandbox Engine";
 
@@ -366,6 +420,7 @@ export default function copyTradingHandler(request, response) {
         symbol,
         side: signalSide,
         qty,
+        riskPct: effectiveRiskPct,
         price: Number(spotNum.toFixed(2)),
         stopPrice: Number(stopPrice) ? Number(Number(stopPrice).toFixed(2)) : null,
         targetPrice: Number(targetPrice) ? Number(Number(targetPrice).toFixed(2)) : null,
@@ -376,14 +431,14 @@ export default function copyTradingHandler(request, response) {
         source: "Monte Carlo Signal"
       };
       portfolio.trades.unshift(mainTrade);
-      const brokerSignal = queueBrokerSignal(mem, userId, mainTrade);
+      const brokerSignal = await queueBrokerSignal(mem, userId, mainTrade, executionStore);
       executedTrades.push({ trade: mainTrade, brokerSignal });
     }
 
     return response.status(200).json({ evaluation, executedTrades });
   }
 
-  // POST /api/copy-trading/execute (Manual order from terminal + mirror to connected demo broker)
+  // POST /api/copy-trading/execute
   if (request.method === "POST" && subPath === "/execute") {
     if (riskConfig.kill_switch_active) {
       return response.status(403).json({
@@ -428,7 +483,7 @@ export default function copyTradingHandler(request, response) {
     };
 
     portfolio.trades.unshift(trade);
-    const brokerSignal = queueBrokerSignal(mem, userId, trade);
+    const brokerSignal = await queueBrokerSignal(mem, userId, trade, executionStore);
 
     return response.status(201).json({ trade, brokerSignal });
   }

@@ -48,10 +48,10 @@ export function render() {
       <div class="flex items-start gap-3">
         <span class="text-xl flex-shrink-0">🔒</span>
         <div>
-          <h3 class="text-sm font-semibold text-white mb-1">Zero Custody Architecture</h3>
+          <h3 class="text-sm font-semibold text-white mb-1">Zero Custody & DEMO-Only Safeguard</h3>
           <p class="text-xs text-surface-400 leading-relaxed">
-            Raw broker passwords and API secrets are never saved to disk. Once connected, you receive a unique <strong>Bridge Token</strong> and a downloadable
-            <code class="text-brand-300">UltraLOB_CopyBridge.mq5</code> Expert Advisor that polls your signal queue securely.
+            Raw broker passwords and API secrets are never saved to disk. Live real-money accounts are blocked by design in this build.
+            Once paired, download <code class="text-brand-300">UltraLOB_Bridge_EA.mq5</code> (v0.2.0) for MT5 Demo OrderCheck validation & heartbeat telemetry.
           </p>
         </div>
       </div>

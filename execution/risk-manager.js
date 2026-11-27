@@ -8,9 +8,57 @@ function finitePositive(value) {
   return Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
-function roundVolumeDown(volume, step) {
+export function roundVolumeDown(volume, step) {
   const precision = Math.max(0, Math.min(8, (String(step).split(".")[1] || "").length));
   return Number((Math.floor((volume + EPSILON) / step) * step).toFixed(precision));
+}
+
+/**
+ * Shared risk-normalized position sizer used by both the MT5 execution bridge
+ * and the copy-trading allocation engine. Never uses fixed lot sizes.
+ */
+export function computeRiskNormalizedVolume({
+  equity,
+  riskPct,
+  stopDistance,
+  tickSize,
+  tickValue,
+  volumeMin = 0.01,
+  volumeMax = 100,
+  volumeStep = 0.01
+}) {
+  if (!finitePositive(equity) || !finitePositive(riskPct) || !finitePositive(stopDistance) ||
+      !finitePositive(tickSize) || !finitePositive(tickValue) || !finitePositive(volumeStep)) {
+    return { ok: false, code: "INVALID_SIZING_INPUT", message: "Positive equity, risk, stop distance, and tick specs are required." };
+  }
+  const lossPerLot = (stopDistance / tickSize) * tickValue;
+  if (!finitePositive(lossPerLot)) {
+    return { ok: false, code: "RISK_CALCULATION_FAILED", message: "Could not calculate loss per lot." };
+  }
+  const riskBudget = (Number(equity) * Number(riskPct)) / 100;
+  const rawVolume = riskBudget / lossPerLot;
+  const boundedVolume = Math.min(rawVolume, Number(volumeMax));
+  const volume = roundVolumeDown(boundedVolume, Number(volumeStep));
+  if (!Number.isFinite(volume) || volume + EPSILON < Number(volumeMin)) {
+    return {
+      ok: false,
+      code: "VOLUME_BELOW_MINIMUM",
+      message: "Risk budget is too small for the broker minimum volume.",
+      raw_volume: rawVolume,
+      minimum_volume: Number(volumeMin),
+      risk_budget: riskBudget
+    };
+  }
+  const actualRiskAmount = lossPerLot * volume;
+  const actualRiskPct = (actualRiskAmount / Number(equity)) * 100;
+  return {
+    ok: true,
+    volume,
+    loss_per_lot: lossPerLot,
+    risk_budget: riskBudget,
+    actual_risk_amount: actualRiskAmount,
+    actual_risk_pct: actualRiskPct
+  };
 }
 
 /**

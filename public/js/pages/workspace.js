@@ -146,17 +146,151 @@ export async function init(route) {
     }
 
     if (route.path === '/execution') {
+      const mon = await api.getExecutionMonitor().catch(() => ({
+        configured: false,
+        storage: execHealth.storage,
+        environment: 'DEMO_ONLY',
+        connectors: [],
+        commands: [],
+        events: []
+      }));
+      const connectors = mon.connectors || [];
+      const commands = mon.commands || [];
+      const events = mon.events || [];
+      const sandboxTrades = portfolio.trades || [];
+
+      const renderCmdRows = (list) => list.length
+        ? list.map(c => `
+            <tr class="border-b border-surface-800/50 hover:bg-surface-800/30">
+              <td class="py-2 font-mono text-surface-400">${c.strategy_id} <span class="text-surface-500">v${c.strategy_version}</span></td>
+              <td class="py-2 text-white font-semibold">${c.symbol}</td>
+              <td class="py-2 text-center"><span class="chip ${c.side === 'BUY' ? 'chip-green' : 'chip-red'}">${c.side}</span></td>
+              <td class="py-2 text-right font-mono">${c.volume ?? '—'} lots</td>
+              <td class="py-2 text-right font-mono text-surface-300">${c.entry_reference ?? '—'}</td>
+              <td class="py-2 text-right font-mono text-surface-400">${c.stop_loss} / ${c.take_profit}</td>
+              <td class="py-2 text-right font-mono text-surface-300">${c.broker_order_id || '—'}</td>
+              <td class="py-2 text-right font-mono text-surface-400">${c.broker_retcode || '—'}</td>
+              <td class="py-2 text-center"><span class="chip ${c.status === 'FILLED' ? 'chip-green' : c.status === 'REJECTED' ? 'chip-red' : 'chip-blue'}">${c.status}</span></td>
+              <td class="py-2 text-xs text-loss">${c.error_message || '—'}</td>
+            </tr>`).join('')
+        : `<tr><td colspan="10" class="py-6 text-center text-surface-500">No MT5 execution commands recorded yet.</td></tr>`;
+
       body.innerHTML = `
+        <div class="grid sm:grid-cols-4 gap-4 mb-6 text-xs">
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Execution Storage</span><strong class="text-white font-mono">${mon.storage}</strong></div>
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Demo Connectors</span><strong class="text-brand-400 font-mono">${connectors.length}</strong></div>
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Dispatched Commands</span><strong class="text-white font-mono">${commands.length}</strong></div>
+          <div class="glass-card rounded-xl p-4"><span class="text-surface-500 block">Live Real-Money Mode</span><strong class="text-loss font-mono">LOCKED (DEMO ONLY)</strong></div>
+        </div>
+
+        ${!mon.configured ? `
+          <div class="mb-6 p-4 rounded-xl bg-warn-bg border border-warn/30 text-xs text-warn">
+            PostgreSQL execution storage (<code class="text-white">DATABASE_URL</code>) is not configured on this host, so <code class="text-white">/api/execution</code> bridge persistence is inactive. Showing sandbox queue fallback (${sandboxTrades.length} sandbox trades).
+          </div>` : ''}
+
         <div class="glass-card rounded-xl p-6 mb-6">
-          <h3 class="text-sm font-semibold text-white mb-4">PostgreSQL MT5 Demo Execution Bridge (/api/execution)</h3>
-          <div class="grid sm:grid-cols-4 gap-4 text-xs mb-4">
-            <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Bridge Status</span><strong class="text-white font-mono">${execHealth.status}</strong></div>
-            <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Storage</span><strong class="text-white font-mono">${execHealth.storage}</strong></div>
-            <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Environment</span><strong class="text-warn font-mono">${execHealth.environment}</strong></div>
-            <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Live Real-Money</span><strong class="text-loss font-mono">DISABLED</strong></div>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h3 class="text-sm font-semibold text-white">MT5 Execution Commands</h3>
+            <div class="flex gap-2">
+              <input id="exec-filter-sym" placeholder="Filter symbol (XAUUSD)..." class="bg-surface-800 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-white">
+              <select id="exec-filter-status" class="bg-surface-800 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-white">
+                <option value="ALL">All Statuses</option>
+                <option value="QUEUED">QUEUED</option>
+                <option value="DISPATCHED">DISPATCHED</option>
+                <option value="ACCEPTED">ACCEPTED</option>
+                <option value="FILLED">FILLED</option>
+                <option value="REJECTED">REJECTED</option>
+              </select>
+            </div>
           </div>
-          <p class="text-xs text-surface-400">Pair MT5 Demo connectors under <a href="#/broker" class="text-brand-400 underline">Brokers</a> using <code class="text-surface-200">mt5/Experts/UltraLOB_Bridge_EA.mq5</code> and set <code class="text-surface-200">DATABASE_URL</code> + <code class="text-surface-200">ULTRALOB_EXECUTION_ADMIN_KEY</code> to unlock full command/event auditing.</p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b border-surface-800 text-surface-500">
+                  <th class="text-left pb-2">Strategy</th><th class="text-left pb-2">Symbol</th><th class="text-center pb-2">Side</th>
+                  <th class="text-right pb-2">Volume</th><th class="text-right pb-2">Fill/Ref</th><th class="text-right pb-2">SL / TP</th>
+                  <th class="text-right pb-2">Order ID</th><th class="text-right pb-2">Retcode</th><th class="text-center pb-2">Status</th><th class="text-left pb-2">Error</th>
+                </tr>
+              </thead>
+              <tbody id="exec-cmd-tbody">${renderCmdRows(commands)}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="glass-card rounded-xl p-6">
+          <h3 class="text-sm font-semibold text-white mb-3">Execution Audit Events</h3>
+          ${events.length ? `
+            <div class="space-y-2 max-h-56 overflow-y-auto text-xs font-mono">
+              ${events.map(e => `<div class="p-2 rounded bg-surface-900/70 border border-surface-800 text-surface-300">[${new Date(e.created_at).toLocaleTimeString()}] <strong class="text-brand-300">${e.event_type}</strong> • ${JSON.stringify(e.payload || {})}</div>`).join('')}
+            </div>` : '<div class="text-xs text-surface-500">No execution bridge events yet. Pair a Demo Connector on the Brokers page.</div>'}
         </div>`;
+
+      const applyFilter = () => {
+        const symQ = (document.getElementById('exec-filter-sym')?.value || '').trim().toUpperCase();
+        const stQ = document.getElementById('exec-filter-status')?.value || 'ALL';
+        const filtered = commands.filter(c =>
+          (!symQ || c.symbol.includes(symQ)) && (stQ === 'ALL' || c.status === stQ)
+        );
+        const tbody = document.getElementById('exec-cmd-tbody');
+        if (tbody) tbody.innerHTML = renderCmdRows(filtered);
+      };
+      document.getElementById('exec-filter-sym')?.addEventListener('input', applyFilter);
+      document.getElementById('exec-filter-status')?.addEventListener('change', applyFilter);
+      return;
+    }
+
+    if (route.path === '/copy-trading') {
+      const subs = portfolio.subscriptions || [];
+      body.innerHTML = `
+        <div class="grid lg:grid-cols-3 gap-6 mb-6">
+          <div class="glass-card rounded-xl p-6 lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-sm font-semibold text-white">Active Copy Mandates & Lifecycle Gate Status</h3>
+              <a href="#/marketplace" class="text-xs text-brand-400 hover:underline">+ Select Strategy</a>
+            </div>
+            ${subs.length ? `
+              <table class="w-full text-xs">
+                <thead><tr class="border-b border-surface-800 text-surface-500">
+                  <th class="text-left pb-2">Strategy</th><th class="text-left pb-2">Stage</th><th class="text-right pb-2">Allocation</th><th class="text-right pb-2">Risk/Trade</th><th class="text-center pb-2">State</th>
+                </tr></thead>
+                <tbody>
+                  ${subs.map(s => `
+                    <tr class="border-b border-surface-800/50">
+                      <td class="py-2.5 text-white font-medium">${s.strategyName}</td>
+                      <td class="py-2.5"><span class="chip chip-yellow text-[10px]">${s.lifecycle_status}</span></td>
+                      <td class="py-2.5 text-right font-mono">$${Number(s.allocation).toLocaleString()}</td>
+                      <td class="py-2.5 text-right font-mono">${s.riskPerTradePct}%</td>
+                      <td class="py-2.5 text-center"><span class="chip ${s.status === 'active' ? 'chip-green' : 'chip-yellow'}">${s.status}</span></td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>` : '<div class="text-xs text-surface-500 py-4">No copy mandates configured. Visit Strategies to allocate capital.</div>'}
+          </div>
+          <div class="glass-card rounded-xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-3">Risk-Normalized Lot Calculator</h3>
+            <form id="size-calc-form" onsubmit="return false;" class="space-y-3 text-xs">
+              <div class="grid grid-cols-2 gap-2">
+                <div><label class="text-surface-400 block mb-1">Equity ($)</label><input name="equity" type="number" value="10000" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Risk %</label><input name="risk_pct" type="number" step="0.05" value="0.5" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Stop Dist ($)</label><input name="stop_distance" type="number" step="0.1" value="5.0" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white font-mono"></div>
+                <div><label class="text-surface-400 block mb-1">Tick Value ($)</label><input name="tick_value" type="number" step="0.01" value="1.0" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white font-mono"></div>
+              </div>
+              <button type="submit" class="btn-primary w-full py-2 rounded-lg text-white font-semibold">Compute Exact Lot Size</button>
+              <div id="size-calc-out" class="p-3 rounded bg-surface-900/70 border border-surface-800 font-mono text-surface-300">Calculates volume = floor((Equity × Risk%) / LossPerLot)</div>
+            </form>
+          </div>
+        </div>`;
+
+      document.getElementById('size-calc-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        const out = document.getElementById('size-calc-out');
+        try {
+          const r = await api.previewPositionSize(f);
+          out.innerHTML = `<strong class="text-profit">${r.volume} lots</strong> • Budget: $${r.risk_budget.toFixed(2)} • Actual Risk: ${r.actual_risk_pct.toFixed(3)}%`;
+        } catch (err) {
+          out.innerHTML = `<span class="text-loss">${err.message}</span>`;
+        }
+      });
       return;
     }
 

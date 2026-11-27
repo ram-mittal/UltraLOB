@@ -121,8 +121,8 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.get("/api/strategies/:id", (request, response) => strategiesHandler(request, response));
   app.all("/api/strategies", (request, response) => strategiesHandler(request, response));
   app.use("/api/auth", (request, response) => authHandler(request, response));
-  app.use("/api/broker", (request, response) => brokerHandler(request, response));
-  app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response));
+  app.use("/api/broker", (request, response) => brokerHandler(request, response, { executionStore }));
+  app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response, { executionStore }));
   app.use("/api/research", (request, response) => researchHandler(request, response));
 
   // --- Health Check & Institutional System Telemetry ---

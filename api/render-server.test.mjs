@@ -189,7 +189,21 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
       headers: { Authorization: `Bearer ${invData.token}` }
     });
     assert.equal(eaFile.status, 200);
-    assert.match(await eaFile.text(), /UltraLOB_CopyBridge\.mq5/);
+    const eaSource = await eaFile.text();
+    assert.match(eaSource, /UltraLOB Bridge EA/);
+    assert.match(eaSource, /ACCOUNT_TRADE_MODE_DEMO/);
+
+    const monitorRes = await fetch(baseUrl + "/api/execution/monitor");
+    assert.equal(monitorRes.status, 200);
+    assert.equal((await monitorRes.json()).environment, "DEMO_ONLY");
+
+    const sizePreview = await fetch(baseUrl + "/api/copy-trading/size-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ equity: 10000, risk_pct: 0.5, stop_distance: 5.0, tick_size: 0.01, tick_value: 1.0 })
+    });
+    assert.equal(sizePreview.status, 200);
+    assert.equal((await sizePreview.json()).volume, 0.1);
 
     // 7. Portfolio starts at $0 (honest), sandbox funding enables MC execution, kill switch blocks
     const emptyPort = await fetch(baseUrl + "/api/copy-trading/portfolio", {

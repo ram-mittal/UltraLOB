@@ -1,51 +1,28 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getMemoryStore, extractUserId } from "./store.js";
 import { getDatabaseStatus } from "../db/client.js";
 
-function generateMt5EaSource(bridgeToken, baseUrl) {
-  return `//+------------------------------------------------------------------+
-//| UltraLOB_CopyBridge.mq5                                          |
-//| Connects MetaTrader 5 / Exness Terminal to UltraLOB Web Engine   |
-//| NOTE: Use UltraLOB_Bridge_EA.mq5 (/mt5/Experts) for full         |
-//| PostgreSQL demo-risk enforcement & OrderCheck validation.        |
-//+------------------------------------------------------------------+
-#property copyright "UltraLOB"
-#property version   "1.10"
-#include <Trade\\Trade.mqh>
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const EA_SOURCE_PATH = path.join(PROJECT_ROOT, "mt5", "Experts", "UltraLOB_Bridge_EA.mq5");
 
-input string InpServerUrl   = "${baseUrl || "https://ultralob.onrender.com"}";
-input string InpBridgeToken = "${bridgeToken}";
-input double InpRiskPct     = 0.50;
-input int    InpPollSeconds = 3;
-
-CTrade trade;
-
-int OnInit() {
-   if(AccountInfoInteger(ACCOUNT_TRADE_MODE) != ACCOUNT_TRADE_MODE_DEMO) {
-      Print("UltraLOB: Non-demo account blocked in Phase 1 build.");
-      return(INIT_FAILED);
-   }
-   EventSetTimer(InpPollSeconds);
-   Print("UltraLOB MT5/Exness Bridge initialized (DEMO ONLY). Polling: ", InpServerUrl);
-   return(INIT_SUCCEEDED);
-}
-
-void OnDeinit(const int reason) {
-   EventKillTimer();
-}
-
-void OnTimer() {
-   string url = InpServerUrl + "/api/broker/mt5/signals?token=" + InpBridgeToken;
-   string headers = "Content-Type: application/json\\r\\n";
-   char post[], result[];
-   string resHeaders;
-   int res = WebRequest("GET", url, headers, 3000, post, result, resHeaders);
-   if(res == 200) {
-      string body = CharArrayToString(result);
-      Print("UltraLOB Signal Poll OK: ", body);
-   }
-}
-`;
+function loadProductionEaSource(baseUrl, connectorId = "") {
+  let raw = fs.readFileSync(EA_SOURCE_PATH, "utf8");
+  if (baseUrl) {
+    raw = raw.replace(
+      /input string InpApiBaseUrl = "[^"]*";/,
+      `input string InpApiBaseUrl = "${baseUrl}";`
+    );
+  }
+  if (connectorId) {
+    raw = raw.replace(
+      /input string InpConnectorId = "[^"]*";/,
+      `input string InpConnectorId = "${connectorId}";`
+    );
+  }
+  return raw;
 }
 
 function maskSecret(value) {
@@ -54,7 +31,7 @@ function maskSecret(value) {
   return s.slice(0, 2) + "*".repeat(Math.min(8, s.length - 4)) + s.slice(-2);
 }
 
-export default async function brokerHandler(request, response) {
+export default async function brokerHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/broker/, "").split("?")[0];
   const userId = extractUserId(request);
@@ -82,20 +59,27 @@ export default async function brokerHandler(request, response) {
     });
   }
 
-  // Download MQL5 Expert Advisor file for MT5 / Exness Desktop Terminal
+  // Download production MQL5 Expert Advisor (mt5/Experts/UltraLOB_Bridge_EA.mq5)
   if (request.method === "GET" && subPath === "/mt5/ea") {
     const existing = mem.brokers.get(userId);
-    const token = existing?.bridgeToken || ("ulb-" + crypto.randomBytes(8).toString("hex"));
     const origin = `${request.protocol || "https"}://${request.get?.("host") || "ultralob.onrender.com"}`;
-    const source = generateMt5EaSource(token, origin);
+    const source = loadProductionEaSource(origin, existing?.executionConnectorId || "");
     response.setHeader("Content-Type", "text/plain; charset=utf-8");
-    response.setHeader("Content-Disposition", 'attachment; filename="UltraLOB_CopyBridge.mq5"');
+    response.setHeader("Content-Disposition", 'attachment; filename="UltraLOB_Bridge_EA.mq5"');
     return response.status(200).send(source);
   }
 
   if (request.method === "GET" && subPath === "/status") {
     const conn = mem.brokers.get(userId) || null;
     const dbStatus = getDatabaseStatus();
+    let executionConnectors = [];
+    if (executionStore) {
+      try {
+        await executionStore.initialize();
+        executionConnectors = await executionStore.listConnectors();
+      } catch {}
+    }
+
     if (!conn) {
       return response.status(200).json({
         connected: false,
@@ -103,7 +87,8 @@ export default async function brokerHandler(request, response) {
         execution_bridge: {
           postgres_configured: dbStatus.configured,
           endpoint: "/api/execution",
-          environment: "DEMO_ONLY"
+          environment: "DEMO_ONLY",
+          connectors_count: executionConnectors.length
         }
       });
     }
@@ -119,7 +104,8 @@ export default async function brokerHandler(request, response) {
       execution_bridge: {
         postgres_configured: dbStatus.configured,
         endpoint: "/api/execution",
-        environment: "DEMO_ONLY"
+        environment: "DEMO_ONLY",
+        connectors_count: executionConnectors.length
       }
     });
   }
@@ -132,7 +118,7 @@ export default async function brokerHandler(request, response) {
     }
     if (String(environment).toUpperCase() === "LIVE") {
       return response.status(403).json({
-        error: "Live real-money broker execution is locked in Phase 1. Only DEMO accounts are permitted.",
+        error: "Live real-money broker execution is locked. Only DEMO accounts are permitted.",
         code: "DEMO_ONLY_BUILD"
       });
     }
@@ -166,7 +152,7 @@ export default async function brokerHandler(request, response) {
         }
       }
       if (!verificationNote) {
-        verificationNote = "Paired in DEMO EA Bridge mode. Confirm terminal heartbeat via UltraLOB_Bridge_EA.mq5.";
+        verificationNote = "Paired in DEMO EA Bridge mode. Attach UltraLOB_Bridge_EA.mq5 to your MT5 demo terminal.";
       }
     } else {
       if (!account_id || !api_key || !api_secret) {
@@ -178,6 +164,36 @@ export default async function brokerHandler(request, response) {
     }
 
     const bridgeToken = "ulb-" + crypto.randomBytes(10).toString("hex");
+    let executionConnectorId = null;
+    let executionAccessToken = null;
+
+    // Automatically register an execution bridge connector when PostgreSQL is active
+    if (executionStore) {
+      try {
+        await executionStore.initialize();
+        executionConnectorId = crypto.randomUUID();
+        executionAccessToken = "ulb_demo_" + crypto.randomBytes(24).toString("base64url");
+        const tokenHash = crypto.createHash("sha256").update(executionAccessToken, "utf8").digest("hex");
+        await executionStore.createConnector({
+          id: executionConnectorId,
+          token_hash: tokenHash,
+          label: `${brokerType.toUpperCase()} Demo (${accountLabel})`,
+          strategy_ids: ["ul-01-gold-trend", "ul-02-liquidity-sweep", "ul-03-volume-profile"],
+          allowed_symbols: ["XAUUSD", "BTCUSD"],
+          max_trade_risk_pct: 0.5,
+          max_daily_loss_pct: 2.0,
+          max_drawdown_pct: 8.0,
+          max_spread_points: 100,
+          max_open_positions: 2,
+          max_deviation_points: 20
+        });
+      } catch (err) {
+        console.warn("[broker] execution store connector creation skipped:", err.message);
+        executionConnectorId = null;
+        executionAccessToken = null;
+      }
+    }
+
     const connection = {
       id: "brk-" + crypto.randomUUID().slice(0, 8),
       type: brokerType,
@@ -191,6 +207,7 @@ export default async function brokerHandler(request, response) {
       upstreamVerified,
       note: verificationNote,
       bridgeToken,
+      executionConnectorId,
       connectedAt: new Date().toISOString(),
       status: "connected"
     };
@@ -198,7 +215,13 @@ export default async function brokerHandler(request, response) {
     // Never persist raw password or api_secret
     mem.brokers.set(userId, connection);
 
-    return response.status(200).json({ connected: true, broker: connection });
+    return response.status(200).json({
+      connected: true,
+      broker: connection,
+      execution_connector: executionConnectorId
+        ? { id: executionConnectorId, access_token: executionAccessToken, notice: "Save this token for UltraLOB_Bridge_EA.mq5" }
+        : null
+    });
   }
 
   if (request.method === "POST" && subPath === "/disconnect") {
