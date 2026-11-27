@@ -358,6 +358,36 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const kellyPayload = await kelly.json();
     assert.equal(kellyPayload.classification, "SIMULATED_RESEARCH_INPUT_ONLY");
     assert.ok(kellyPayload.hard_capped_risk_pct <= 0.5);
+
+    // 11. Phase 5 UltraLOB AI Advisory Pipeline & Event Intelligence
+    const aiEvalBlocked = await fetch(baseUrl + "/api/ai/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ strategy_id: "ul-01-gold-trend", symbol: "XAUUSD", side: "BUY", proposed_risk_pct: 0.5 })
+    });
+    assert.equal(aiEvalBlocked.status, 200);
+    const aiBlockedData = await aiEvalBlocked.json();
+    assert.equal(aiBlockedData.decision.mode, "ADVISORY");
+    // Must be blocked because XAUUSD instrument kill switch is still active from step 10!
+    assert.equal(aiBlockedData.decision.decision, "BLOCKED_BY_RISK");
+
+    // Human authorization must ALSO be refused by Risk Engine while kill switch is active
+    const authDenied = await fetch(baseUrl + `/api/ai/decisions/${aiBlockedData.decision.id}/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ approve: true })
+    });
+    assert.equal(authDenied.status, 403);
+
+    const macroEv = await fetch(baseUrl + "/api/ai/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ title: "FOMC Rate Statement", currency: "USD", impact: "HIGH", timestamp_utc: new Date(Date.now() + 600000).toISOString() })
+    });
+    assert.equal(macroEv.status, 201);
+    const evStatus = await fetch(baseUrl + "/api/ai/events?symbol=XAUUSD");
+    assert.equal(evStatus.status, 200);
+    assert.equal((await evStatus.json()).restriction.status, "RESTRICTED");
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

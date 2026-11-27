@@ -289,27 +289,133 @@ export async function init(route) {
     }
 
     if (route.path === '/ai') {
-      const engines = [
-        '1. Market Intelligence Engine (Regime, Volatility, Session)',
-        '2. Quantitative Research Engine (Backtest & Walk-Forward Analysis)',
-        '3. Risk Engine (Drawdown & Exposure Guard — Independent Authority)',
-        '4. Portfolio Engine (Capital Weighting & Correlation)',
-        '5. Execution Engine (Spread, Slippage & Broker Health)',
-        '6. Event Intelligence Engine (High-Impact Economic Calendar)',
-        '7. Decision Engine (Advisory Synthesis — Never Bypasses Hard Limits)'
-      ];
+      const [evRes, decRes] = await Promise.all([
+        api.getMacroEvents('XAUUSD').catch(() => ({ calendar_status: 'UNAVAILABLE', restriction: { status: 'CLEAR', active_restrictions: [], upcoming_24h_high_impact: [] }, custom_blackout_windows: [] })),
+        api.getAiDecisions().catch(() => ({ decisions: [] }))
+      ]);
+
+      const renderDecisionTrace = (d) => {
+        if (!d) return '<div class="text-xs text-surface-500 p-4 border border-dashed border-surface-700 rounded-xl text-center">Submit an advisory evaluation above to inspect the full 7-engine decision pipeline.</div>';
+        const stages = d.pipeline_stages || {};
+        const decColor = d.decision === 'APPROVE_ADVISORY' ? 'chip-green' : d.decision?.startsWith('BLOCKED') ? 'chip-red' : 'chip-yellow';
+        return `
+          <div class="glass-card rounded-xl p-6 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="text-base font-bold text-white">Advisory Verdict: ${d.decision}</h3>
+                  <span class="chip ${decColor} font-mono text-[10px]">Confidence ${(Number(d.confidence || 0) * 100).toFixed(0)}%</span>
+                  <span class="chip chip-blue text-[10px]">MODE: ADVISORY</span>
+                </div>
+                <p class="text-xs text-surface-300 mt-1">${d.rationale}</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="window.__aiAuthorize?.('${d.id}', true)" class="btn-primary px-3 py-1.5 rounded-lg text-xs text-white font-semibold">Approve Advisory</button>
+                <button onclick="window.__aiAuthorize?.('${d.id}', false)" class="px-3 py-1.5 rounded-lg text-xs border border-loss/40 text-loss">Reject</button>
+              </div>
+            </div>
+            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+              ${Object.entries(stages).map(([k, v]) => `
+                <div class="p-3 rounded-lg bg-surface-900/70 border border-surface-800 space-y-1">
+                  <div class="font-mono text-[10px] uppercase text-brand-300">${k.replace(/_/g, ' ')}</div>
+                  <div class="text-surface-200 font-medium">${v.regime || v.lifecycle_status || v.code || v.status || v.broker_name || 'Evaluated'}</div>
+                  <div class="text-[11px] text-surface-400 truncate">${v.note || v.message || (v.data_origin ? 'Origin: ' + v.data_origin : '')}</div>
+                </div>`).join('')}
+            </div>
+          </div>`;
+      };
+
+      const restr = evRes.restriction || {};
       body.innerHTML = `
-        <div class="glass-card rounded-xl p-6 mb-6">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-semibold text-white">UltraLOB AI — Advisory Mode Pipeline</h3>
-            <span class="chip chip-yellow text-[11px]">${sys.ai_engine?.mode || 'ADVISORY_PENDING_PHASE_5'}</span>
+        <div class="grid lg:grid-cols-3 gap-6 mb-6">
+          <div class="glass-card rounded-xl p-6 lg:col-span-2">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-sm font-semibold text-white">Run 7-Engine Advisory Decision Pipeline</h3>
+              <span class="chip chip-yellow text-[10px]">Autonomous Risk Override Disabled</span>
+            </div>
+            <form id="ai-eval-form" onsubmit="return false;" class="grid sm:grid-cols-5 gap-3 text-xs">
+              <div>
+                <label class="text-surface-400 block mb-1">Strategy</label>
+                <select name="strategy_id" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white">
+                  <option value="ul-01-gold-trend">UL-01 Gold Trend</option>
+                  <option value="ul-02-liquidity-sweep">UL-02 Liquidity Sweep</option>
+                  <option value="ul-03-volume-profile">UL-03 Volume Profile</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Symbol</label>
+                <input name="symbol" value="XAUUSD" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono">
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Proposed Side</label>
+                <select name="side" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white">
+                  <option value="BUY">BUY</option>
+                  <option value="SELL">SELL</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Risk %</label>
+                <input name="proposed_risk_pct" type="number" step="0.05" value="0.5" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono">
+              </div>
+              <div class="flex items-end">
+                <button type="submit" class="btn-primary w-full py-2 rounded-lg text-white font-semibold">Evaluate Proposal</button>
+              </div>
+            </form>
+            <div id="ai-latest-trace" class="mt-5">${renderDecisionTrace(decRes.decisions?.[0])}</div>
           </div>
-          <p class="text-xs text-surface-400 mb-4">UltraLOB AI operates strictly in read-only advisory mode. Deterministic quantitative engines compute all numbers; the AI cannot fabricate prices, performance figures, or override hard risk limits.</p>
-          <div class="grid sm:grid-cols-2 gap-3">
-            ${engines.map(e => `<div class="p-3 rounded-lg bg-surface-900/70 border border-surface-800 text-xs text-surface-200">${e}</div>`).join('')}
+
+          <div class="glass-card rounded-xl p-6 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-semibold text-white">Event Intelligence</h3>
+              <span class="chip ${restr.restricted ? 'chip-red' : 'chip-green'} text-[10px]">${restr.status || 'CLEAR'}</span>
+            </div>
+            <p class="text-[11px] text-surface-400">Calendar Feed: <strong class="text-white font-mono">${evRes.calendar_status}</strong> (${evRes.calendar_source || 'LOCAL'})</p>
+            <form id="macro-add-form" onsubmit="return false;" class="space-y-2 text-xs pt-2 border-t border-surface-800">
+              <label class="text-surface-400 block">Declare Macro Blackout Window (High Impact):</label>
+              <input name="title" required placeholder="e.g., FOMC Rate Decision" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white">
+              <input name="timestamp_utc" required value="${new Date(Date.now() + 5 * 60_000).toISOString().slice(0, 16)}" type="datetime-local" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-1.5 text-white font-mono">
+              <button type="submit" class="btn-outline w-full py-1.5 rounded-lg text-brand-300 font-medium">+ Add High-Impact Blackout</button>
+            </form>
+            <div class="text-[11px] text-surface-400 space-y-1 max-h-40 overflow-y-auto">
+              ${(restr.active_restrictions || []).map(r => `<div class="p-2 rounded bg-loss-bg border border-loss/30 text-loss">ACTIVE: ${r.title} (${r.minutes_to_event}m)</div>`).join('')}
+              ${(restr.upcoming_24h_high_impact || []).map(r => `<div class="p-2 rounded bg-surface-900/70 border border-surface-800 text-surface-300">UPCOMING: ${r.title} (${r.minutes_to_event}m)</div>`).join('')}
+              ${!(restr.active_restrictions?.length || restr.upcoming_24h_high_impact?.length) ? '<div class="text-surface-500">No high-impact USD/XAU restrictions within 24h.</div>' : ''}
+            </div>
           </div>
+        </div>
+
+        <div class="glass-card rounded-xl p-6">
+          <h3 class="text-sm font-semibold text-white mb-3">Auditable AI Decision History</h3>
+          ${(decRes.decisions || []).length ? `
+            <div class="space-y-2 max-h-60 overflow-y-auto text-xs font-mono">
+              ${decRes.decisions.map(d => `<div class="p-2.5 rounded bg-surface-900/70 border border-surface-800 text-surface-300">[${new Date(d.evaluated_at || d.created_at).toLocaleTimeString()}] <strong class="text-white">${d.proposal?.strategy_id || d.strategy_id}</strong> → <span class="text-brand-300">${d.decision}</span> • Human: <span class="text-warn">${d.human_approval_status || (d.human_approved_by ? 'APPROVED' : 'PENDING')}</span></div>`).join('')}
+            </div>` : '<div class="text-xs text-surface-500">No AI advisory evaluations recorded yet.</div>'}
         </div>`;
-      return;
+
+      window.__aiAuthorize = async (id, approve) => {
+        try {
+          await api.authorizeAiDecision(id, approve);
+          showToast(approve ? 'Advisory authorized (Risk Gate verified).' : 'Advisory rejected.', approve ? 'success' : 'info');
+          location.reload();
+        } catch (err) { showToast(err.message, 'error'); }
+      };
+
+      document.getElementById('ai-eval-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        const res = await api.evaluateAiAdvisory(f);
+        document.getElementById('ai-latest-trace').innerHTML = renderDecisionTrace(res.decision);
+        showToast(`AI Pipeline evaluated: ${res.decision.decision}`, 'info');
+      });
+
+      document.getElementById('macro-add-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        await api.addMacroBlackout({ title: f.title, timestamp_utc: new Date(f.timestamp_utc).toISOString(), impact: 'HIGH', currency: 'USD' });
+        showToast('Macro blackout window registered.', 'warning');
+        location.reload();
+      });
+      return () => { delete window.__aiAuthorize; };
     }
 
     if (route.path === '/execution') {

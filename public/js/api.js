@@ -32,6 +32,13 @@ export const api = {
   getBacktests: (strategyId = '') => request(`/api/research/backtests${strategyId ? '?strategy_id=' + encodeURIComponent(strategyId) : ''}`),
   getBacktest: (id) => request(`/api/research/backtests/${id}`),
 
+  // UltraLOB AI Advisory & Event Intelligence (Phase 5)
+  evaluateAiAdvisory: (payload) => request('/api/ai/evaluate', { method: 'POST', body: JSON.stringify(payload) }),
+  authorizeAiDecision: (id, approve = true) => request(`/api/ai/decisions/${id}/authorize`, { method: 'POST', body: JSON.stringify({ approve }) }),
+  getAiDecisions: () => request('/api/ai/decisions'),
+  getMacroEvents: (symbol = 'XAUUSD') => request(`/api/ai/events?symbol=${encodeURIComponent(symbol)}`),
+  addMacroBlackout: (payload) => request('/api/ai/events', { method: 'POST', body: JSON.stringify(payload) }),
+
   // Portfolio, Risk Engine & Copy Trading
   getPortfolio: () => request('/api/copy-trading/portfolio'),
   getPortfolioSummary: () => request('/api/portfolio/summary'),
