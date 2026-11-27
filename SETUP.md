@@ -14,7 +14,7 @@ Create a `.env` file locally or set these variables in Render Dashboard → Envi
 | `PORT` | No (default `10000`) | HTTP/WS port for `server.js` |
 | `DATABASE_URL` | **Yes (Prod)** | PostgreSQL connection string (`postgresql://user:pass@host/db?sslmode=require`) |
 | `DATABASE_SSL` | Conditional | Set `"true"` if Postgres requires TLS with verified cert (e.g. Neon) |
-| `ULTRALOB_JWT_SECRET` | **Yes (Prod)** | 64-char random hex secret for signing JWT access & refresh tokens |
+| `ULTRALOB_JWT_SECRET` | **Yes (Prod)** | Required >=32-char cryptographically random secret for signing JWT access & HMAC-binding refresh tokens. Production startup fails cleanly if missing or set to a placeholder; rotating this secret invalidates all active sessions. |
 | `ULTRALOB_EXECUTION_ADMIN_KEY` | **Yes (Execution)** | Admin key sent in `x-ultralob-admin-key` for `/api/execution` management |
 | `TWELVE_DATA_API_KEY` | Optional | Twelve Data API key for US equity ticks & history |
 | `ALLOWED_WS_ORIGINS` | Optional | Comma-separated allowed WebSocket origins |

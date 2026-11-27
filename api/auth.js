@@ -4,7 +4,7 @@ import {
   getMemoryStore,
   hashPassword,
   verifyPassword,
-  sha256Hex,
+  hashRefreshToken,
   signToken,
   verifyToken,
   query
@@ -50,7 +50,7 @@ async function issueSessionTokens(user, dbAvailable) {
   };
   const accessToken = signToken(payload, 3600); // 1h short-lived access token
   const refreshToken = createRefreshTokenValue();
-  const refreshHash = sha256Hex(refreshToken);
+  const refreshHash = hashRefreshToken(refreshToken);
   const expiresAt = new Date(Date.now() + 14 * 86400 * 1000);
 
   if (dbAvailable) {
@@ -230,7 +230,7 @@ export default async function authHandler(request, response) {
     if (!refreshToken || typeof refreshToken !== "string") {
       return response.status(400).json({ error: "refreshToken is required." });
     }
-    const tokenHash = sha256Hex(refreshToken.trim());
+    const tokenHash = hashRefreshToken(refreshToken.trim());
 
     if (dbAvailable) {
       const res = await query(
@@ -245,6 +245,9 @@ export default async function authHandler(request, response) {
       const row = res.rows[0];
       if (!row || row.revoked_at || new Date(row.expires_at).getTime() <= Date.now()) {
         return response.status(401).json({ error: "Invalid or expired refresh token." });
+      }
+      if (row.status && row.status !== "ACTIVE") {
+        return response.status(403).json({ error: `Account status is ${row.status}.` });
       }
       await query(`UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1`, [row.rt_id]);
       const user = {
@@ -276,7 +279,7 @@ export default async function authHandler(request, response) {
   if (request.method === "POST" && subPath === "/logout") {
     const { refreshToken } = request.body || {};
     if (refreshToken && typeof refreshToken === "string") {
-      const tokenHash = sha256Hex(refreshToken.trim());
+      const tokenHash = hashRefreshToken(refreshToken.trim());
       if (dbAvailable) {
         await query(`UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1`, [tokenHash]);
       } else {
@@ -298,30 +301,23 @@ export default async function authHandler(request, response) {
 
     if (dbAvailable) {
       const res = await query(
-        `SELECT u.id, u.email, u.name, u.role, u.org_id, u.created_at, o.name AS org_name
+        `SELECT u.id, u.email, u.name, u.role, u.org_id, u.status, u.created_at, o.name AS org_name
          FROM users u LEFT JOIN organizations o ON u.org_id = o.id
          WHERE u.id = $1`,
         [decoded.id]
       );
-      if (res.rows[0]) {
-        return response.status(200).json({ user: sanitizeUser(res.rows[0]) });
+      const user = res.rows[0];
+      if (!user || user.status !== "ACTIVE") {
+        return response.status(401).json({ error: "Session invalidated or account inactive." });
       }
-    } else {
-      const user = getMemoryStore().usersById.get(decoded.id);
-      if (user) {
-        return response.status(200).json({ user: sanitizeUser(user) });
-      }
+      return response.status(200).json({ user: sanitizeUser(user) });
     }
 
-    return response.status(200).json({
-      user: sanitizeUser({
-        id: decoded.id,
-        email: decoded.email,
-        name: decoded.name,
-        role: decoded.role || "investor",
-        org_id: decoded.orgId || null
-      })
-    });
+    const user = getMemoryStore().usersById.get(decoded.id);
+    if (!user) {
+      return response.status(401).json({ error: "Session no longer valid." });
+    }
+    return response.status(200).json({ user: sanitizeUser(user) });
   }
 
   return response.status(404).json({ error: "Auth endpoint not found." });

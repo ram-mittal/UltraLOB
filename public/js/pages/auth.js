@@ -88,7 +88,7 @@ export async function init({ navigate, showToast }) {
     const fd = new FormData(loginF);
     try {
       const res = await api.login(fd.get("email"), fd.get("password"));
-      saveAuth(res.token, res.user, res.refreshToken);
+      saveAuth(res.user, res.token, res.refreshToken);
       showToast(`Authenticated as ${res.user.name} (${res.user.role})`, "success");
       navigate("/overview");
     } catch (err) { showToast(err.message, "error"); }
@@ -104,7 +104,7 @@ export async function init({ navigate, showToast }) {
         password: fd.get("password"),
         role: fd.get("role")
       });
-      saveAuth(res.token, res.user, res.refreshToken);
+      saveAuth(res.user, res.token, res.refreshToken);
       showToast(`Registered operator ${res.user.name}`, "success");
       navigate("/overview");
     } catch (err) { showToast(err.message, "error"); }

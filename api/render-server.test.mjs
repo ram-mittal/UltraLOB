@@ -118,6 +118,25 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(me.status, 200);
     assert.equal((await me.json()).user.email, providerEmail);
 
+    // 4b. Secret rotation invalidates pre-rotation access & refresh sessions
+    const prevSecret = process.env.ULTRALOB_JWT_SECRET;
+    try {
+      process.env.ULTRALOB_JWT_SECRET = "rotated-" + "b".repeat(56);
+      const staleMe = await fetch(baseUrl + "/api/auth/me", {
+        headers: { Authorization: `Bearer ${refreshed.token}` }
+      });
+      assert.equal(staleMe.status, 401);
+      const staleRefresh = await fetch(baseUrl + "/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: refreshed.refreshToken })
+      });
+      assert.equal(staleRefresh.status, 401);
+    } finally {
+      if (prevSecret === undefined) delete process.env.ULTRALOB_JWT_SECRET;
+      else process.env.ULTRALOB_JWT_SECRET = prevSecret;
+    }
+
     // 5. Strategy Registry (UL-01..UL-05 with zero fabricated returns + RBAC publish)
     const strats = await fetch(baseUrl + "/api/strategies");
     assert.equal(strats.status, 200);

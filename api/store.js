@@ -458,9 +458,75 @@ export async function ensureDbReady() {
   return true;
 }
 
-const TOKEN_SECRET =
-  process.env.ULTRALOB_JWT_SECRET ||
-  crypto.createHash("sha256").update("ultralob-dev-secret-change-in-prod").digest("hex");
+const KNOWN_INSECURE_SECRETS = new Set([
+  "ultralob-dev-secret-change-in-prod",
+  "replace-with-a-long-random-secret",
+  "changeme",
+  "secret",
+  "dev-secret",
+  "development"
+]);
+
+const MIN_JWT_SECRET_LENGTH = 32;
+let ephemeralProcessSecret = null;
+
+export function isStrictProductionRuntime() {
+  if (process.env.ULTRALOB_REQUIRE_JWT_SECRET === "true") return true;
+  const inTestRunner = Boolean(
+    process.env.NODE_TEST_CONTEXT ||
+    process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS === "true" ||
+    process.env.NODE_ENV === "test"
+  );
+  if (inTestRunner) return false;
+  return Boolean(
+    process.env.NODE_ENV === "production" ||
+    process.env.RENDER === "true" ||
+    process.env.RENDER_SERVICE_ID ||
+    process.env.RENDER_EXTERNAL_HOSTNAME ||
+    process.env.VERCEL === "1" ||
+    (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== "development") ||
+    (process.env.DATABASE_URL && String(process.env.DATABASE_URL).trim()) ||
+    process.env.ULTRALOB_RENDER_MODE === "true"
+  );
+}
+
+export function resolveJwtSecret({ allowEphemeralTest = false } = {}) {
+  const raw = String(process.env.ULTRALOB_JWT_SECRET || "").trim();
+  if (raw) {
+    if (raw.length < MIN_JWT_SECRET_LENGTH) {
+      throw new Error(
+        `FATAL: ULTRALOB_JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters long.`
+      );
+    }
+    if (KNOWN_INSECURE_SECRETS.has(raw.toLowerCase())) {
+      throw new Error(
+        "FATAL: ULTRALOB_JWT_SECRET uses a known insecure placeholder. Generate a random secret with at least 32 characters."
+      );
+    }
+    return raw;
+  }
+
+  if (!allowEphemeralTest && isStrictProductionRuntime()) {
+    throw new Error(
+      "FATAL: ULTRALOB_JWT_SECRET environment variable is missing. Production startup aborted to prevent predictable token signing."
+    );
+  }
+
+  // Strictly non-production (unit tests / ephemeral local sandbox): unique CSPRNG secret per process.
+  if (!ephemeralProcessSecret) {
+    ephemeralProcessSecret = crypto.randomBytes(48).toString("hex");
+  }
+  return ephemeralProcessSecret;
+}
+
+export function assertJwtSecretConfigured() {
+  return resolveJwtSecret({ allowEphemeralTest: false });
+}
+
+export function hashRefreshToken(token) {
+  const secret = resolveJwtSecret();
+  return crypto.createHmac("sha256", secret).update(String(token), "utf8").digest("hex");
+}
 
 export function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const derived = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -481,27 +547,41 @@ export function sha256Hex(value) {
 }
 
 export function signToken(payload, ttlSeconds = 3600) {
+  const secret = resolveJwtSecret();
   const now = Date.now();
   const body = Buffer.from(
-    JSON.stringify({ ...payload, iat: now, exp: now + ttlSeconds * 1000 })
+    JSON.stringify({
+      ...payload,
+      jti: crypto.randomUUID(),
+      typ: "ultralob-access-v2",
+      iat: now,
+      exp: now + ttlSeconds * 1000
+    })
   ).toString("base64url");
-  const sig = crypto.createHmac("sha256", TOKEN_SECRET).update(body).digest("base64url");
+  const sig = crypto.createHmac("sha256", secret).update(body).digest("base64url");
   return `${body}.${sig}`;
 }
 
 export function verifyToken(token) {
   if (!token || typeof token !== "string") return null;
+  const secret = resolveJwtSecret();
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [body, sig] = parts;
   if (!body || !sig) return null;
-  const expected = crypto.createHmac("sha256", TOKEN_SECRET).update(body).digest("base64url");
+  const expected = crypto.createHmac("sha256", secret).update(body).digest("base64url");
   const sigBuf = Buffer.from(sig);
   const expBuf = Buffer.from(expected);
   if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
   try {
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    if (parsed.exp && Date.now() > parsed.exp) return null;
+    if (!parsed?.id || !Number.isFinite(parsed.iat) || !Number.isFinite(parsed.exp)) return null;
+    if (Date.now() > parsed.exp) return null;
+    const minIatRaw = Number(process.env.ULTRALOB_JWT_MIN_IAT || 0);
+    if (Number.isFinite(minIatRaw) && minIatRaw > 0) {
+      const minIatMs = minIatRaw < 1e12 ? minIatRaw * 1000 : minIatRaw;
+      if (parsed.iat < minIatMs) return null;
+    }
     return parsed;
   } catch {
     return null;

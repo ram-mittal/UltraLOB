@@ -16,7 +16,7 @@ import aiHandler from "./ai.js";
 import institutionalHandler from "./institutional.js";
 import WebSocket, { WebSocketServer } from "ws";
 import { getDatabaseStatus } from "../db/client.js";
-import { ensureDbReady } from "./store.js";
+import { assertJwtSecretConfigured, ensureDbReady } from "./store.js";
 import {
   LIVE_SYMBOLS,
   EQUITY_SYMBOLS,
@@ -103,6 +103,9 @@ function sendMarketDataHealth(response) {
 }
 
 if (process.env.ULTRALOB_RENDER_MODE === "true") {
+  if (!process.env.NODE_TEST_CONTEXT && process.env.ULTRALOB_TEST_DISABLE_UPSTREAMS !== "true") {
+    assertJwtSecretConfigured();
+  }
   // This single persistent Node process serves the SPA, APIs, and WebSocket feeds.
   app.use(express.json({ limit: "2mb" }));
 

@@ -1,5 +1,5 @@
 // UltraLOB Institutional Quantitative Terminal — Hash Router & Shell Controller
-import { state, loadAuth, saveAuth } from "./state.js";
+import { state, loadAuth, saveAuth, logout } from "./state.js";
 import { api } from "./api.js";
 import * as sidebar from "./components/sidebar.js";
 import * as topbar from "./components/topbar.js";
@@ -128,9 +128,22 @@ async function initApp() {
   if (state.token) {
     try {
       const me = await api.me();
-      if (me?.user) saveAuth(state.token, me.user, state.refreshToken);
+      if (me?.user) saveAuth(me.user, state.token, state.refreshToken);
     } catch {
-      // Session refresh deferred
+      if (state.refreshToken) {
+        try {
+          const ref = await api.refreshSession(state.refreshToken);
+          if (ref?.user && ref?.token) {
+            saveAuth(ref.user, ref.token, ref.refreshToken || state.refreshToken);
+          } else {
+            logout();
+          }
+        } catch {
+          logout();
+        }
+      } else {
+        logout();
+      }
     }
   }
 
