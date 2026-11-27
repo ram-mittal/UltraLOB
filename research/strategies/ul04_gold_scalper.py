@@ -45,7 +45,13 @@ class GoldMomentumScalper(BaseStrategy):
         prev1 = candles[idx - 1]
         prev2 = candles[idx - 2]
         avg_vol = sum(c.volume for c in candles[idx - 12 : idx]) / 12.0
-        vol_expansion = avg_vol > 0 and bar.volume >= avg_vol * 1.35
+        vol_available = avg_vol > 0
+        vol_expansion = (
+            bar.volume >= avg_vol * 1.35
+            if vol_available
+            else (bar.high - bar.low) >= 1.25 * atr
+        )
+        vol_label = bar.volume_type if vol_available else "RANGE_PROXY_NO_TICK_VOLUME"
 
         # Short-term price velocity & acceleration across last 2 closed impulses
         v1 = bar.close - prev1.close
@@ -72,8 +78,8 @@ class GoldMomentumScalper(BaseStrategy):
                         breakeven_trigger_r=1.0,
                         max_hold_bars=12,
                         regime="MOMENTUM_ACCEL_BULL",
-                        reason="Tick-volume expansion & positive short-term price acceleration within spread gate",
-                        metadata={"volume_source": bar.volume_type, "spread_points": cost_model.spread_points},
+                        reason="Momentum impulse acceleration within spread gate",
+                        metadata={"volume_source": vol_label, "spread_points": cost_model.spread_points},
                     )
 
             # Bearish momentum acceleration
@@ -89,8 +95,8 @@ class GoldMomentumScalper(BaseStrategy):
                         breakeven_trigger_r=1.0,
                         max_hold_bars=12,
                         regime="MOMENTUM_ACCEL_BEAR",
-                        reason="Tick-volume expansion & negative short-term price acceleration within spread gate",
-                        metadata={"volume_source": bar.volume_type, "spread_points": cost_model.spread_points},
+                        reason="Momentum impulse acceleration within spread gate",
+                        metadata={"volume_source": vol_label, "spread_points": cost_model.spread_points},
                     )
 
         return None

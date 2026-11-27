@@ -67,6 +67,13 @@ class TestResearchEngine(unittest.TestCase):
             if sig is not None:
                 self.assertIn("MSS", sig.reason)
 
+    def test_ul04_handles_spot_candles_without_volume(self):
+        raw_candles, _ = generate_synthetic_research_xauusd(bars=600, interval="15m", seed=9)
+        zero_vol = [Candle(c.timestamp, c.open, c.high, c.low, c.close, 0.0, "TICK_VOLUME") for c in raw_candles]
+        engine = BacktestEngine(initial_capital=10_000.0, cost_model=CostModel(), mc_simulations=100)
+        report = engine.run(build_strategy("ul-04-gold-scalper"), zero_vol, data_origin="REAL_MARKET")
+        self.assertGreaterEqual(report["metrics"]["total_trades"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
