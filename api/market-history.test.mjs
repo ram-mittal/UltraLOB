@@ -156,6 +156,25 @@ test("returns normalized chronological Twelve Data equity candles", async () => 
   assert.equal(res.body.candles[0].close_time, res.body.candles[0].time + 299999);
 });
 
+test("maps XAUUSD to XAU/USD on Twelve Data with 4h support", async () => {
+  clearMarketHistoryCache();
+  let requestedUrl = "";
+  const handler = createMarketHistoryHandler({
+    env: { TWELVE_DATA_API_KEY: "unit-test-key" },
+    fetchImpl: async (url) => {
+      requestedUrl = String(url);
+      return { ok: true, status: 200, json: async () => makeTwelvePayload(60) };
+    }
+  });
+  const res = mockResponse();
+  await handler({ method: "GET", query: { symbol: "XAUUSD", interval: "4h", limit: "60" } }, res);
+  const url = new URL(requestedUrl);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.market_symbol, "XAU/USD");
+  assert.equal(url.searchParams.get("symbol"), "XAU/USD");
+  assert.equal(url.searchParams.get("interval"), "4h");
+});
+
 test("rejects methods other than GET", async () => {
   clearMarketHistoryCache();
   const handler = createMarketHistoryHandler();

@@ -71,12 +71,12 @@ async function listStrategies(dbAvailable) {
   const stratRes = await query(`SELECT * FROM strategies ORDER BY code ASC`);
   const verRes = await query(`SELECT * FROM strategy_versions WHERE is_active = TRUE`);
   const verMap = new Map(verRes.rows.map((v) => [v.strategy_id, v]));
-  // Attach latest completed backtest if any exists
+  // Attach latest REAL_MARKET backtest for verified metrics (never promote synthetic data)
   const btRes = await query(
     `SELECT DISTINCT ON (b.strategy_id) b.strategy_id, br.*
      FROM backtests b
      JOIN backtest_results br ON br.backtest_id = b.id
-     WHERE b.status = 'COMPLETED'
+     WHERE b.status = 'COMPLETED' AND b.data_source IN ('REAL_MARKET','BROKER_EXPORT')
      ORDER BY b.strategy_id, b.completed_at DESC`
   );
   const btMap = new Map(btRes.rows.map((r) => [r.strategy_id, r]));

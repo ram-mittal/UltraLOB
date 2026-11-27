@@ -27,6 +27,11 @@ export const api = {
   getStrategy: (id) => request(`/api/strategies/${id}`),
   createStrategy: (data) => request('/api/strategies', { method: 'POST', body: JSON.stringify(data) }),
 
+  // Quantitative Research & Backtesting (Phase 2)
+  runBacktest: (payload) => request('/api/research/backtest', { method: 'POST', body: JSON.stringify(payload) }),
+  getBacktests: (strategyId = '') => request(`/api/research/backtests${strategyId ? '?strategy_id=' + encodeURIComponent(strategyId) : ''}`),
+  getBacktest: (id) => request(`/api/research/backtests/${id}`),
+
   // Portfolio, Risk Engine & Copy Trading
   getPortfolio: () => request('/api/copy-trading/portfolio'),
   fundSandboxCapital: (amount) => request('/api/copy-trading/sandbox-capital', { method: 'POST', body: JSON.stringify({ amount }) }),

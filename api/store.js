@@ -372,7 +372,8 @@ const memoryStore = {
   mt5Signals: [],
   riskConfigs: new Map(),
   riskEvents: [],
-  auditLogs: []
+  auditLogs: [],
+  backtests: []
 };
 
 export function getMemoryStore() {

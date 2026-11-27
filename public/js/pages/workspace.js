@@ -3,6 +3,7 @@
 import { api } from '../api.js';
 import { state } from '../state.js';
 import { showToast } from '../app.js';
+import { createEquityCurve, createDrawdownChart, destroyAllCharts } from '../components/charts.js';
 
 const SECTION_META = {
   '/portfolio':    { title: 'Portfolio & Capital Allocation', badge: 'PAPER_SANDBOX / DEMO', desc: 'Track multi-strategy allocations, exposure limits, and capital utilization.' },
@@ -173,6 +174,168 @@ export async function init(route) {
           ` : `<div>Viewing in unauthenticated Guest Sandbox. <a href="#/auth" class="text-brand-400 underline">Sign in or register with a role →</a></div>`}
         </div>`;
       return;
+    }
+
+    if (route.path === '/research') {
+      const existing = await api.getBacktests().catch(() => ({ backtests: [] }));
+      const renderReport = (bt) => {
+        if (!bt) return '<div class="text-xs text-surface-500 p-6 border border-dashed border-surface-700 rounded-xl text-center">No backtests recorded yet. Configure parameters above and run validation.</div>';
+        const m = bt.metrics || bt;
+        const oos = bt.out_of_sample || bt.oos_metrics?.out_of_sample || {};
+        const ins = bt.in_sample || bt.oos_metrics?.in_sample || {};
+        const wf = bt.walk_forward || bt.walk_forward_metrics || [];
+        const mc = bt.monte_carlo || {};
+        const origin = bt.data_origin || 'SIMULATED_RESEARCH';
+        return `
+          <div class="glass-card rounded-xl p-6 space-y-6">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="text-base font-bold text-white">${bt.strategy_id} (${bt.symbol || 'XAUUSD'})</h3>
+                  <span class="chip ${origin === 'REAL_MARKET' ? 'chip-green' : 'chip-yellow'} font-mono text-[10px]">DATA ORIGIN: ${origin}</span>
+                  ${bt.can_promote_to_backtested ? '<span class="chip chip-blue text-[10px]">PROMOTED → BACKTESTED</span>' : '<span class="chip chip-yellow text-[10px]">RESEARCH CALIBRATION ONLY</span>'}
+                </div>
+                <p class="text-xs text-surface-400 mt-1">Volume Source: ${bt.volume_source || 'TICK_VOLUME'} • Bars: ${bt.bars || '—'} • Spread: ${bt.cost_model?.spread_points ?? 25} pts • Slippage: ${bt.cost_model?.slippage_points ?? 5} pts</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 text-xs">
+              <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Total Return</span><strong class="${(m.total_return_pct || 0) >= 0 ? 'text-profit' : 'text-loss'} font-mono">${m.total_return_pct ?? 0}%</strong></div>
+              <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Sharpe Ratio</span><strong class="text-white font-mono">${m.sharpe_ratio ?? '—'}</strong></div>
+              <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Max Drawdown</span><strong class="text-loss font-mono">${m.max_drawdown_pct ?? 0}%</strong></div>
+              <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Profit Factor</span><strong class="text-white font-mono">${m.profit_factor ?? '—'}</strong></div>
+              <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Win Rate / Trades</span><strong class="text-white font-mono">${m.win_rate_pct ?? 0}% (${m.total_trades ?? 0})</strong></div>
+              <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Risk of Ruin</span><strong class="text-warn font-mono">${m.risk_of_ruin_pct ?? '—'}%</strong></div>
+            </div>
+
+            <div class="grid lg:grid-cols-2 gap-6">
+              <div><div class="text-xs text-surface-400 mb-2">Equity Curve (${origin})</div><div class="h-52"><canvas id="bt-equity-chart"></canvas></div></div>
+              <div><div class="text-xs text-surface-400 mb-2">Drawdown Curve (%)</div><div class="h-52"><canvas id="bt-dd-chart"></canvas></div></div>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-4 text-xs">
+              <div class="p-4 rounded-xl bg-surface-900/60 border border-surface-800 space-y-2">
+                <div class="font-semibold text-white">In-Sample (70%) vs Out-of-Sample (30%)</div>
+                <div class="flex justify-between"><span class="text-surface-400">IS Return / Trades</span><span class="font-mono text-white">${ins.total_return_pct ?? '—'}% (${ins.total_trades ?? 0})</span></div>
+                <div class="flex justify-between"><span class="text-surface-400">OOS Return / Trades</span><span class="font-mono text-white">${oos.total_return_pct ?? '—'}% (${oos.total_trades ?? 0})</span></div>
+                <div class="flex justify-between"><span class="text-surface-400">OOS Sharpe / Max DD</span><span class="font-mono text-white">${oos.sharpe_ratio ?? '—'} / ${oos.max_drawdown_pct ?? '—'}%</span></div>
+              </div>
+              <div class="p-4 rounded-xl bg-surface-900/60 border border-surface-800 space-y-2">
+                <div class="font-semibold text-white">Monte Carlo Trade Resampling (${mc.simulations || 0} paths • SIMULATED_RESEARCH)</div>
+                <div class="flex justify-between"><span class="text-surface-400">Terminal Equity P05 / P50 / P95</span><span class="font-mono text-white">$${mc.terminal_equity_p05 ?? '—'} / $${mc.terminal_equity_p50 ?? '—'} / $${mc.terminal_equity_p95 ?? '—'}</span></div>
+                <div class="flex justify-between"><span class="text-surface-400">MC Max Drawdown P95 / P99</span><span class="font-mono text-loss">${mc.max_drawdown_p95_pct ?? '—'}% / ${mc.max_drawdown_p99_pct ?? '—'}%</span></div>
+                <div class="flex justify-between"><span class="text-surface-400">Prob. Breach ${mc.ruin_threshold_pct ?? 20}% Drawdown</span><span class="font-mono text-warn">${mc.prob_breach_ruin_pct ?? '—'}%</span></div>
+              </div>
+            </div>
+
+            ${wf.length ? `
+              <div>
+                <div class="text-xs font-semibold text-white mb-2">Walk-Forward Windows</div>
+                <div class="grid sm:grid-cols-3 gap-3 text-xs">
+                  ${wf.map(w => `<div class="p-3 rounded bg-surface-900/60 border border-surface-800">Window ${w.window}: <strong class="font-mono text-white">${w.total_return_pct}%</strong> (${w.total_trades} trades, DD ${w.max_drawdown_pct}%)</div>`).join('')}
+                </div>
+              </div>` : ''}
+          </div>`;
+      };
+
+      body.innerHTML = `
+        <div class="glass-card rounded-xl p-6 mb-6">
+          <h3 class="text-sm font-semibold text-white mb-4">Run Python Backtest + Walk-Forward + Monte Carlo Validation</h3>
+          <form id="bt-form" onsubmit="return false;" class="space-y-4 text-xs">
+            <div class="grid sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div>
+                <label class="text-surface-400 block mb-1">Strategy</label>
+                <select name="strategy_id" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white">
+                  <option value="ul-01-gold-trend">UL-01 Gold Trend</option>
+                  <option value="ul-02-liquidity-sweep">UL-02 Liquidity Sweep</option>
+                  <option value="ul-03-volume-profile">UL-03 Volume Profile</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Data Source</label>
+                <select name="data_source" id="bt-source" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white">
+                  <option value="TWELVE_DATA">Twelve Data XAU/USD (Real)</option>
+                  <option value="BROKER_EXPORT_CSV">MT5 Broker CSV Upload (Real)</option>
+                  <option value="SIMULATED_RESEARCH" selected>Synthetic Regime (Calibration Only)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Interval</label>
+                <select name="interval" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white">
+                  <option value="15m" selected>15m</option>
+                  <option value="1h">1h</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Capital ($)</label>
+                <input name="initial_capital" type="number" value="10000" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Spread (pts)</label>
+                <input name="spread_points" type="number" value="25" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
+              </div>
+              <div>
+                <label class="text-surface-400 block mb-1">Slippage (pts)</label>
+                <input name="slippage_points" type="number" value="5" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono">
+              </div>
+            </div>
+            <div id="bt-csv-box" class="hidden">
+              <label class="text-surface-400 block mb-1">Paste MT5 Exported XAUUSD OHLCV CSV (Tab or Comma Separated)</label>
+              <textarea name="csv_text" rows="4" placeholder="<DATE> <TIME> <OPEN> <HIGH> <LOW> <CLOSE> <TICKVOL>" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-white font-mono"></textarea>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <span class="text-surface-500">Requires Researcher, Strategy Provider, or Admin role. Synthetic runs stay tagged SIMULATED_RESEARCH.</span>
+              <button type="submit" id="bt-run-btn" class="btn-primary px-5 py-2.5 rounded-lg text-white font-semibold">Run Validation Suite</button>
+            </div>
+          </form>
+        </div>
+        <div id="bt-output">${renderReport(existing.backtests?.[0])}</div>`;
+
+      const srcSelect = document.getElementById('bt-source');
+      srcSelect?.addEventListener('change', () => {
+        document.getElementById('bt-csv-box')?.classList.toggle('hidden', srcSelect.value !== 'BROKER_EXPORT_CSV');
+      });
+
+      const drawCharts = (bt) => {
+        if (!bt?.equity_curve?.length) return;
+        destroyAllCharts();
+        const labels = bt.equity_curve.map((_, i) => `B${i}`);
+        setTimeout(() => {
+          createEquityCurve('bt-equity-chart', labels, bt.equity_curve);
+          if (bt.drawdown_series?.length) createDrawdownChart('bt-dd-chart', labels, bt.drawdown_series);
+        }, 40);
+      };
+      if (existing.backtests?.[0]) drawCharts(existing.backtests[0]);
+
+      document.getElementById('bt-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        const btn = document.getElementById('bt-run-btn');
+        btn.disabled = true; btn.textContent = 'Running Python Engine...';
+        try {
+          const res = await api.runBacktest({
+            strategy_id: f.strategy_id,
+            data_source: f.data_source,
+            interval: f.interval,
+            initial_capital: Number(f.initial_capital),
+            csv_text: f.csv_text || null,
+            cost_model: {
+              spread_points: Number(f.spread_points),
+              slippage_points: Number(f.slippage_points),
+              commission_per_lot_round_turn: 7.0
+            }
+          });
+          document.getElementById('bt-output').innerHTML = renderReport(res.backtest);
+          drawCharts(res.backtest);
+          showToast('Backtest validation complete.', 'success');
+        } catch (err) {
+          showToast(err.message, 'error');
+        } finally {
+          btn.disabled = false; btn.textContent = 'Run Validation Suite';
+        }
+      });
+
+      return () => destroyAllCharts();
     }
 
     // Default clean structured summary for /portfolio, /copy-trading, /research, /reports

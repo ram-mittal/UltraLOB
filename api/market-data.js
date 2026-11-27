@@ -10,6 +10,7 @@ import strategiesHandler from "./strategies.js";
 import authHandler from "./auth.js";
 import brokerHandler from "./broker.js";
 import copyTradingHandler from "./copy-trading.js";
+import researchHandler from "./research.js";
 import WebSocket, { WebSocketServer } from "ws";
 import { getDatabaseStatus } from "../db/client.js";
 import { ensureDbReady } from "./store.js";
@@ -100,7 +101,7 @@ function sendMarketDataHealth(response) {
 
 if (process.env.ULTRALOB_RENDER_MODE === "true") {
   // This single persistent Node process serves the SPA, APIs, and WebSocket feeds.
-  app.use(express.json({ limit: "64kb" }));
+  app.use(express.json({ limit: "2mb" }));
 
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -122,6 +123,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use("/api/auth", (request, response) => authHandler(request, response));
   app.use("/api/broker", (request, response) => brokerHandler(request, response));
   app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response));
+  app.use("/api/research", (request, response) => researchHandler(request, response));
 
   // --- Health Check & Institutional System Telemetry ---
   app.get("/healthz", (_request, response) => {
@@ -144,7 +146,11 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
       market_feeds: {
         btc_usd: { provider: "Kraken Spot", status: "LIVE", origin: "REAL_MARKET" },
         us_equities: { provider: "Twelve Data", configured: Boolean(process.env.TWELVE_DATA_API_KEY), origin: "REAL_MARKET" },
-        xauusd: { provider: "Broker / MT5 Terminal Feed", status: "AWAITING_PHASE_2_FEED", origin: "AWAITING_DATA" }
+        xauusd: {
+          provider: Boolean(process.env.TWELVE_DATA_API_KEY) ? "Twelve Data (XAU/USD) + MT5 CSV" : "MT5 Broker CSV / Twelve Data",
+          status: Boolean(process.env.TWELVE_DATA_API_KEY) ? "CONFIGURED" : "AWAITING_API_KEY_OR_CSV",
+          origin: Boolean(process.env.TWELVE_DATA_API_KEY) ? "REAL_MARKET" : "AWAITING_DATA"
+        }
       },
       ai_engine: {
         mode: "ADVISORY_PENDING_PHASE_5",

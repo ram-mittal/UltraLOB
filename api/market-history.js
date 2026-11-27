@@ -1,5 +1,5 @@
-const HISTORY_SYMBOLS = Object.freeze(["BTCUSDT", "AAPL", "MSFT", "GOOGL"]);
-const HISTORY_INTERVALS = Object.freeze(["1m", "5m", "15m", "1h"]);
+const HISTORY_SYMBOLS = Object.freeze(["BTCUSDT", "XAUUSD", "AAPL", "MSFT", "GOOGL"]);
+const HISTORY_INTERVALS = Object.freeze(["1m", "5m", "15m", "1h", "4h"]);
 const CACHE_TTL_MS = Object.freeze({ crypto: 15000, equity: 60000 });
 const historyCache = new Map();
 
@@ -17,10 +17,10 @@ function parseRequest(req) {
   const limit = Number.parseInt(query.limit || "300", 10);
 
   if (!HISTORY_SYMBOLS.includes(symbol)) {
-    return { error: "Unsupported symbol. Choose BTCUSDT, AAPL, MSFT or GOOGL.", status: 400 };
+    return { error: "Unsupported symbol. Choose BTCUSDT, XAUUSD, AAPL, MSFT or GOOGL.", status: 400 };
   }
   if (!HISTORY_INTERVALS.includes(interval)) {
-    return { error: "Unsupported interval. Choose 1m, 5m, 15m or 1h.", status: 400 };
+    return { error: "Unsupported interval. Choose 1m, 5m, 15m, 1h or 4h.", status: 400 };
   }
   if (!Number.isInteger(limit) || limit < 50 || limit > 500) {
     return { error: "limit must be an integer between 50 and 500.", status: 400 };
@@ -42,7 +42,7 @@ function validCandle(candle) {
 
 function normalizeKrakenCandles(rows, interval) {
   if (!Array.isArray(rows)) return [];
-  const intervalMs = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000 }[interval];
+  const intervalMs = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000 }[interval];
   return rows.map((row) => {
     if (!Array.isArray(row) || row.length < 8) return null;
     const time = Number(row[0]) * 1000;
@@ -68,7 +68,7 @@ function parseTwelveDataTime(value) {
 
 function normalizeTwelveDataCandles(payload, interval) {
   if (!payload || !Array.isArray(payload.values)) return [];
-  const intervalMs = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000 }[interval];
+  const intervalMs = { "1m": 60000, "5m": 300000, "15m": 900000, "1h": 3600000, "4h": 14400000 }[interval];
   return payload.values.map((row) => {
     const time = parseTwelveDataTime(row.datetime);
     return {
@@ -104,6 +104,7 @@ export function createMarketHistoryHandler({
 
     const { symbol, interval, limit } = parsed.value;
     const isCrypto = symbol === "BTCUSDT";
+    const isGold = symbol === "XAUUSD";
     const provider = isCrypto ? "Kraken Spot" : "Twelve Data";
     const cacheKey = [symbol, interval, limit].join(":");
     const timestamp = now();
@@ -118,7 +119,7 @@ export function createMarketHistoryHandler({
       if (isCrypto) {
         // Kraken's public Spot OHLC endpoint is used instead of Binance because
         // Binance returned a geographic-eligibility rejection to this deployment.
-        const intervalMap = { "1m": 1, "5m": 5, "15m": 15, "1h": 60 };
+        const intervalMap = { "1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240 };
         const params = new URLSearchParams({
           pair: "XBTUSD",
           interval: String(intervalMap[interval])
@@ -151,10 +152,11 @@ export function createMarketHistoryHandler({
             hint: "Add TWELVE_DATA_API_KEY to the Render environment and redeploy. BTC history uses Kraken public market data and does not need a key."
           });
         }
-        const intervalMap = { "1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h" };
+        const intervalMap = { "1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h" };
+        const tdSymbol = isGold ? "XAU/USD" : symbol;
         const url = new URL("https://api.twelvedata.com/time_series");
         url.search = new URLSearchParams({
-          symbol,
+          symbol: tdSymbol,
           interval: intervalMap[interval],
           outputsize: String(limit),
           order: "ASC",
@@ -179,7 +181,7 @@ export function createMarketHistoryHandler({
       const result = {
         status: "ok",
         symbol,
-        market_symbol: isCrypto ? "BTC/USD" : symbol,
+        market_symbol: isCrypto ? "BTC/USD" : isGold ? "XAU/USD" : symbol,
         quote_currency: "USD",
         provider,
         interval,

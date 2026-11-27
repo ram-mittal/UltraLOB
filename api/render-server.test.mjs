@@ -267,6 +267,37 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
 
     const notFound = await fetch(baseUrl + "/unknown-route");
     assert.equal(notFound.status, 404);
+
+    // 9. Phase 2 Research Backtest Bridge (Node -> Python -> Strategy Lifecycle)
+    const invBlockedBt = await fetch(baseUrl + "/api/research/backtest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ strategy_id: "ul-01-gold-trend", data_source: "SIMULATED_RESEARCH" })
+    });
+    assert.equal(invBlockedBt.status, 403);
+
+    const simBt = await fetch(baseUrl + "/api/research/backtest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${refreshed.token}` },
+      body: JSON.stringify({
+        strategy_id: "ul-01-gold-trend",
+        data_source: "SIMULATED_RESEARCH",
+        bars: 600,
+        mc_simulations: 150
+      })
+    });
+    assert.equal(simBt.status, 200);
+    const simBtData = await simBt.json();
+    assert.equal(simBtData.backtest.data_origin, "SIMULATED_RESEARCH");
+    assert.equal(simBtData.backtest.can_promote_to_backtested, false);
+
+    // Confirm synthetic run did NOT promote UL-01 past RESEARCH
+    const ul01Check = await fetch(baseUrl + "/api/strategies/ul-01-gold-trend");
+    assert.equal((await ul01Check.json()).lifecycle_status, "RESEARCH");
+
+    const btList = await fetch(baseUrl + "/api/research/backtests");
+    assert.equal(btList.status, 200);
+    assert.ok((await btList.json()).backtests.length >= 1);
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
