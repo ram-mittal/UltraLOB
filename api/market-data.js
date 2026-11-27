@@ -16,7 +16,8 @@ import aiHandler from "./ai.js";
 import institutionalHandler from "./institutional.js";
 import WebSocket, { WebSocketServer } from "ws";
 import { getDatabaseStatus } from "../db/client.js";
-import { assertJwtSecretConfigured, ensureDbReady } from "./store.js";
+import { assertJwtSecretConfigured, ensureDbReady, resolveAuthContext, query } from "./store.js";
+import { authorizeRequest } from "./security.js";
 import {
   LIVE_SYMBOLS,
   EQUITY_SYMBOLS,
@@ -172,7 +173,35 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use("/api/execution", createExecutionRouter({
     store: executionStore,
     adminKey: process.env.ULTRALOB_EXECUTION_ADMIN_KEY || "",
-    liveExecutionEnabled: false
+    liveExecutionEnabled: false,
+    resolveMonitorAccess: async (req) => {
+      const dbAvail = await ensureDbReady().catch(() => false);
+      const auth = await resolveAuthContext(req, dbAvail);
+      if (!auth.authenticated) {
+        return { authenticated: false, status: 401, code: "AUTH_REQUIRED", error: "Authentication required to access execution monitor." };
+      }
+      const gate = authorizeRequest(auth, ["execution:read", "portfolio:read"], {
+        isMutation: false,
+        apiKeyScope: "execution:read"
+      });
+      if (!gate.ok) {
+        return { authenticated: true, forbidden: true, code: gate.code, error: gate.error };
+      }
+      const ownedConnectorIds = new Set();
+      if (dbAvail && /^[0-9a-f-]{36}$/i.test(auth.userId)) {
+        const res = await query(
+          `SELECT execution_connector_id FROM broker_integrations WHERE user_id = $1 AND execution_connector_id IS NOT NULL`,
+          [auth.userId]
+        ).catch(() => ({ rows: [] }));
+        for (const r of res.rows) ownedConnectorIds.add(r.execution_connector_id);
+      }
+      return {
+        authenticated: true,
+        userId: auth.userId,
+        role: auth.role,
+        ownedConnectorIds
+      };
+    }
   }));
 
   // --- Legacy Classic Terminal ---

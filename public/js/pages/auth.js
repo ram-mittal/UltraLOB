@@ -49,10 +49,10 @@ export function render({ params } = {}) {
           <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">RBAC Role</label>
           <select name="role" class="input-term w-full font-mono text-[11px]">
             <option value="investor">Investor / Allocator</option>
-            <option value="trader">Execution Trader</option>
+            <option value="strategy_provider">Strategy Provider</option>
             <option value="researcher">Quant Researcher</option>
             <option value="fund_manager">Fund Manager</option>
-            <option value="admin">System Admin</option>
+            <option value="risk_manager">Risk Manager</option>
           </select>
         </div>
         <button type="submit" class="btn-primary w-full font-mono">Register Institutional Operator</button>

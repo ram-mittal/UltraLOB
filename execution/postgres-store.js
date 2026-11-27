@@ -37,9 +37,13 @@ CREATE TABLE IF NOT EXISTS ultralob_execution_connectors (
   positions JSONB NOT NULL DEFAULT '[]'::jsonb,
   symbol_specs JSONB NOT NULL DEFAULT '[]'::jsonb,
   last_heartbeat_at TIMESTAMPTZ,
+  owner_user_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ultralob_execution_connectors
+  ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
 
 CREATE TABLE IF NOT EXISTS ultralob_execution_commands (
   id UUID PRIMARY KEY,
@@ -175,13 +179,14 @@ export class PostgresExecutionStore {
         `INSERT INTO ultralob_execution_connectors
          (id, token_hash, label, broker, environment, strategy_ids, allowed_symbols,
           max_trade_risk_pct, max_daily_loss_pct, max_drawdown_pct, max_spread_points,
-          max_open_positions, max_deviation_points)
-         VALUES ($1,$2,$3,'MT5','DEMO',$4,$5,$6,$7,$8,$9,$10,$11)
+          max_open_positions, max_deviation_points, owner_user_id)
+         VALUES ($1,$2,$3,'MT5','DEMO',$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING *`,
         [
           input.id, input.token_hash, input.label, input.strategy_ids, input.allowed_symbols,
           input.max_trade_risk_pct, input.max_daily_loss_pct, input.max_drawdown_pct,
-          input.max_spread_points, input.max_open_positions, input.max_deviation_points
+          input.max_spread_points, input.max_open_positions, input.max_deviation_points,
+          input.owner_user_id || null
         ]
       );
       await appendEvent(client, input.id, null, "CONNECTOR_CREATED", {
@@ -223,7 +228,7 @@ export class PostgresExecutionStore {
              terminal_connected, terminal_trade_allowed, ea_trade_allowed,
              balance, equity, margin, margin_free, day_start_equity, equity_high_water,
              jsonb_array_length(positions) AS open_positions_count,
-             last_heartbeat_at, created_at, updated_at
+             owner_user_id, last_heartbeat_at, created_at, updated_at
       FROM ultralob_execution_connectors ORDER BY created_at DESC
     `);
     return result.rows.map((row) => ({

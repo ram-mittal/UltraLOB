@@ -5,10 +5,13 @@ import {
   getPortfolioForUser,
   getRiskStateForUser,
   getAllStrategiesInMemory,
-  extractAuthContext,
+  resolveAuthContext,
+  resolveManagedUserScope,
+  createEmptyPortfolio,
   syncPgPortfolio,
   syncPgRiskState
 } from "./store.js";
+import { authorizeRequest } from "./security.js";
 import { getDatabaseStatus } from "../db/client.js";
 import { computeRiskNormalizedVolume } from "../execution/risk-manager.js";
 import { computePortfolioExposure } from "../portfolio/allocator.js";
@@ -130,23 +133,54 @@ async function queueBrokerSignal(mem, userId, trade, executionStore = null, brok
 export default async function copyTradingHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/copy-trading/, "").split("?")[0];
-  const auth = extractAuthContext(request);
+  const dbAvailable = await ensureDbReady().catch(() => false);
+  const auth = await resolveAuthContext(request, dbAvailable);
   const userId = auth.userId;
   const mem = getMemoryStore();
-  const portfolio = getPortfolioForUser(userId);
-  const riskState = getRiskStateForUser(userId);
 
-  // GET /api/copy-trading/portfolio
+  // GET /api/copy-trading/portfolio — Read-only empty guest state or authenticated owner-scoped portfolio
   if (request.method === "GET" && subPath === "/portfolio") {
     const dbStatus = getDatabaseStatus();
-    const dbAvailable = await ensureDbReady().catch(() => false);
-    const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
+    if (!auth.authenticated) {
+      const guestPortfolio = createEmptyPortfolio("GUEST_READ_ONLY");
+      return response.status(200).json({
+        guest_read_only: true,
+        summary: computePortfolioMetrics(guestPortfolio),
+        subscriptions: [],
+        trades: [],
+        equityHistory: [],
+        mcConfig: guestPortfolio.mcConfig,
+        broker: null,
+        brokerVerification: { connected: false, paired: false, upstreamVerified: false, verification_status: "UNAUTHENTICATED" },
+        riskConfig: flattenRiskConfig(getRiskStateForUser("guest")),
+        riskAlerts: [],
+        systemStatus: { database: dbStatus, executionEnvironment: "DEMO_ONLY" }
+      });
+    }
+
+    const gate = authorizeRequest(auth, ["portfolio:read", "portfolio:manage"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
+    const scope = await resolveManagedUserScope(auth, request.query?.user_id, {
+      dbAvailable,
+      allowSameOrgRoles: ["risk_manager", "fund_manager"]
+    });
+    if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
+
+    const targetId = scope.targetUserId;
+    const targetPortfolio = getPortfolioForUser(targetId);
+    const targetRisk = getRiskStateForUser(targetId);
+    const brokerState = await resolveUserBrokerStatus(targetId, { executionStore, dbAvailable });
+
     return response.status(200).json({
-      summary: computePortfolioMetrics(portfolio),
-      subscriptions: portfolio.subscriptions,
-      trades: portfolio.trades.slice(0, 50),
-      equityHistory: portfolio.equityHistory,
-      mcConfig: portfolio.mcConfig,
+      summary: computePortfolioMetrics(targetPortfolio),
+      subscriptions: targetPortfolio.subscriptions,
+      trades: targetPortfolio.trades.slice(0, 50),
+      equityHistory: targetPortfolio.equityHistory,
+      mcConfig: targetPortfolio.mcConfig,
       broker: brokerState.broker,
       brokerVerification: {
         connected: brokerState.connected,
@@ -154,8 +188,8 @@ export default async function copyTradingHandler(request, response, { executionS
         upstreamVerified: brokerState.upstreamVerified,
         verification_status: brokerState.verification_status
       },
-      riskConfig: flattenRiskConfig(riskState),
-      riskAlerts: mem.riskEvents.filter((e) => e.userId === userId).slice(0, 20),
+      riskConfig: flattenRiskConfig(targetRisk),
+      riskAlerts: mem.riskEvents.filter((e) => e.userId === targetId).slice(0, 20),
       systemStatus: {
         database: dbStatus,
         executionEnvironment: "DEMO_ONLY"
@@ -163,12 +197,14 @@ export default async function copyTradingHandler(request, response, { executionS
     });
   }
 
-  // POST /api/copy-trading/size-preview
+  // POST /api/copy-trading/size-preview — Stateless risk-normalized position size preview
   if (request.method === "POST" && subPath === "/size-preview") {
     const b = request.body || {};
+    const ownEquity = auth.authenticated ? getPortfolioForUser(userId).balance : 0;
+    const ownMaxRisk = auth.authenticated ? getRiskStateForUser(userId).limits.max_risk_per_trade_pct : 0.5;
     const sizing = computeRiskNormalizedVolume({
-      equity: Number(b.equity || portfolio.balance || 10_000),
-      riskPct: Number(b.risk_pct || riskState.limits.max_risk_per_trade_pct || 0.5),
+      equity: Number(b.equity || ownEquity || 10_000),
+      riskPct: Number(b.risk_pct || ownMaxRisk || 0.5),
       stopDistance: Number(b.stop_distance || 5.0),
       tickSize: Number(b.tick_size || 0.01),
       tickValue: Number(b.tick_value || 1.0),
@@ -179,8 +215,15 @@ export default async function copyTradingHandler(request, response, { executionS
     return response.status(sizing.ok ? 200 : 400).json(sizing);
   }
 
+  // Require authentication on all portfolio & copy-trading mutations below
+  const portfolio = getPortfolioForUser(userId);
+  const riskState = getRiskStateForUser(userId);
+
   // POST /api/copy-trading/sandbox-capital
   if (request.method === "POST" && subPath === "/sandbox-capital") {
+    const gate = authorizeRequest(auth, "portfolio:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const amount = Number(request.body?.amount);
     if (!Number.isFinite(amount) || amount < 100 || amount > 10_000_000) {
       return response.status(400).json({ error: "Sandbox allocation amount must be between $100 and $10,000,000." });
@@ -190,8 +233,7 @@ export default async function copyTradingHandler(request, response, { executionS
     portfolio.equity_high_water = portfolio.balance;
     portfolio.dataOrigin = "PAPER_SANDBOX";
     portfolio.equityHistory = [{ label: "Init", value: portfolio.balance }];
-    const dbReady = await ensureDbReady().catch(() => false);
-    await syncPgPortfolio(userId, portfolio, dbReady);
+    await syncPgPortfolio(userId, portfolio, dbAvailable);
     return response.status(200).json({
       status: "funded",
       data_origin: "PAPER_SANDBOX",
@@ -200,42 +242,55 @@ export default async function copyTradingHandler(request, response, { executionS
     });
   }
 
-  // POST /api/copy-trading/risk-config (Compatible endpoint backed by canonical riskState)
+  // POST /api/copy-trading/risk-config — Strictly restricted to Risk Managers & Admins
   if (request.method === "POST" && subPath === "/risk-config") {
+    const gate = authorizeRequest(auth, "risk:configure", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const b = request.body || {};
+    const scope = await resolveManagedUserScope(auth, b.target_user_id, {
+      dbAvailable,
+      allowSameOrgRoles: ["risk_manager"]
+    });
+    if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
+    const targetRisk = getRiskStateForUser(scope.targetUserId);
+
     if (b.kill_switch_active !== undefined) {
-      riskState.kill_switches.global_active = Boolean(b.kill_switch_active);
-      riskState.kill_switches.global_reason = riskState.kill_switches.global_active ? "Toggled from Overview/Risk panel" : null;
+      targetRisk.kill_switches.global_active = Boolean(b.kill_switch_active);
+      targetRisk.kill_switches.global_reason = targetRisk.kill_switches.global_active ? "Toggled by Risk Officer" : null;
     }
     if (Number.isFinite(Number(b.max_risk_per_trade_pct))) {
-      riskState.limits.max_risk_per_trade_pct = Math.min(2.0, Math.max(0.05, Number(b.max_risk_per_trade_pct)));
+      targetRisk.limits.max_risk_per_trade_pct = Math.min(2.0, Math.max(0.05, Number(b.max_risk_per_trade_pct)));
     }
     if (Number.isFinite(Number(b.max_daily_loss_pct))) {
-      riskState.limits.max_daily_loss_pct = Math.min(10.0, Math.max(0.25, Number(b.max_daily_loss_pct)));
+      targetRisk.limits.max_daily_loss_pct = Math.min(10.0, Math.max(0.25, Number(b.max_daily_loss_pct)));
     }
     if (Number.isFinite(Number(b.max_drawdown_pct))) {
-      riskState.limits.max_drawdown_pct = Math.min(30.0, Math.max(1.0, Number(b.max_drawdown_pct)));
+      targetRisk.limits.max_drawdown_pct = Math.min(30.0, Math.max(1.0, Number(b.max_drawdown_pct)));
     }
     if (Number.isInteger(Number(b.max_open_positions))) {
-      riskState.limits.max_open_positions = Math.min(25, Math.max(1, Number(b.max_open_positions)));
+      targetRisk.limits.max_open_positions = Math.min(25, Math.max(1, Number(b.max_open_positions)));
     }
-    riskState.updated_at = new Date().toISOString();
+    targetRisk.updated_at = new Date().toISOString();
 
     mem.riskEvents.unshift({
       id: crypto.randomUUID().slice(0, 8),
-      userId,
-      severity: riskState.kill_switches.global_active ? "KILL_SWITCH" : "INFO",
-      message: riskState.kill_switches.global_active
+      userId: scope.targetUserId,
+      severity: targetRisk.kill_switches.global_active ? "KILL_SWITCH" : "INFO",
+      message: targetRisk.kill_switches.global_active
         ? "Global kill switch ACTIVATED — all new order execution halted."
         : "Risk governance limits updated.",
-      createdAt: riskState.updated_at
+      createdAt: targetRisk.updated_at
     });
+    await syncPgRiskState(scope.targetUserId, targetRisk, dbAvailable);
 
-    return response.status(200).json({ riskConfig: flattenRiskConfig(riskState) });
+    return response.status(200).json({ riskConfig: flattenRiskConfig(targetRisk) });
   }
 
   // POST /api/copy-trading/subscribe
   if (request.method === "POST" && subPath === "/subscribe") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const {
       strategyId,
       allocation = 1000,
@@ -307,6 +362,8 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/unsubscribe
   if (request.method === "POST" && subPath === "/unsubscribe") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const { strategyId } = request.body || {};
     const idx = portfolio.subscriptions.findIndex((s) => s.strategyId === strategyId);
     if (idx === -1) return response.status(404).json({ error: "Subscription not found." });
@@ -316,6 +373,8 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/toggle
   if (request.method === "POST" && subPath === "/toggle") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const { strategyId } = request.body || {};
     const sub = portfolio.subscriptions.find((s) => s.strategyId === strategyId);
     if (!sub) return response.status(404).json({ error: "Subscription not found." });
@@ -331,6 +390,8 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/mc-config
   if (request.method === "POST" && subPath === "/mc-config") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const cfg = request.body || {};
     portfolio.mcConfig = {
       ...portfolio.mcConfig,
@@ -347,6 +408,8 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/mc-signal
   if (request.method === "POST" && subPath === "/mc-signal") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const {
       symbol = "BTC/USD",
       spot,
@@ -477,6 +540,8 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/execute
   if (request.method === "POST" && subPath === "/execute") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const { symbol = "BTC/USD", side = "BUY", qty = 0.05, price, orderType = "market", strategyId = "manual" } = request.body || {};
     const sideUpper = String(side).toUpperCase();
     const qtyNum = Number(qty);
@@ -539,6 +604,8 @@ export default async function copyTradingHandler(request, response, { executionS
 
   // POST /api/copy-trading/close-trade
   if (request.method === "POST" && subPath === "/close-trade") {
+    const gate = authorizeRequest(auth, "copy:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const { tradeId, closePrice } = request.body || {};
     const trade = portfolio.trades.find((t) => t.id === tradeId);
     if (!trade) return response.status(404).json({ error: "Trade not found." });

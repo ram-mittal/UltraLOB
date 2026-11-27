@@ -6,10 +6,10 @@ import {
   ensureDbReady,
   getAllStrategiesInMemory,
   getMemoryStore,
-  extractAuthContext,
+  resolveAuthContext,
   query
 } from "./store.js";
-import { roleHasPermission } from "./security.js";
+import { authorizeRequest, authorizeOwnership, roleHasPermission } from "./security.js";
 import { recordAuditLog } from "../db/client.js";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,6 +82,7 @@ async function persistBacktestReport(report, auth, dbAvailable) {
   const backtestId = crypto.randomUUID();
   const record = {
     id: backtestId,
+    created_by: auth?.userId || null,
     strategy_id: report.strategy_id,
     code: report.code,
     version: report.version,
@@ -239,14 +240,16 @@ export default async function researchHandler(request, response) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/research/, "").split("?")[0];
   const dbAvailable = await ensureDbReady().catch(() => false);
+  const auth = await resolveAuthContext(request, dbAvailable);
 
-  // GET /api/research/backtests
+  // GET /api/research/backtests — Guests & non-owners only see verified REAL_MARKET runs; private research runs are owner-scoped
   if (request.method === "GET" && (subPath === "/backtests" || subPath === "/backtests/")) {
     const strategyFilter = request.query?.strategy_id ? String(request.query.strategy_id) : null;
+    const isAdmin = auth.authenticated && auth.role === "admin";
     if (dbAvailable) {
       const res = await query(
         `SELECT b.id, b.strategy_id, b.strategy_version AS version, b.instrument AS symbol,
-                b.timeframe, b.data_source AS data_origin, b.status, b.created_at, b.completed_at,
+                b.timeframe, b.data_source AS data_origin, b.status, b.created_by, b.created_at, b.completed_at,
                 br.total_return_pct, br.cagr_pct, br.sharpe_ratio, br.sortino_ratio,
                 br.max_drawdown_pct, br.profit_factor, br.win_rate_pct, br.expectancy,
                 br.total_trades, br.risk_of_ruin_pct, br.oos_metrics, br.walk_forward_metrics,
@@ -254,12 +257,22 @@ export default async function researchHandler(request, response) {
          FROM backtests b
          LEFT JOIN backtest_results br ON br.backtest_id = b.id
          WHERE ($1::text IS NULL OR b.strategy_id = $1)
+           AND (
+             b.data_source IN ('REAL_MARKET','BROKER_EXPORT')
+             OR $2::boolean = TRUE
+             OR ($3::uuid IS NOT NULL AND b.created_by = $3::uuid)
+           )
          ORDER BY b.created_at DESC LIMIT 30`,
-        [strategyFilter]
+        [strategyFilter, isAdmin, /^[0-9a-f-]{36}$/i.test(auth.userId || "") ? auth.userId : null]
       );
       return response.status(200).json({ backtests: res.rows });
     }
-    const list = getMemoryStore().backtests.filter((b) => !strategyFilter || b.strategy_id === strategyFilter);
+    const list = getMemoryStore().backtests.filter((b) => {
+      if (strategyFilter && b.strategy_id !== strategyFilter) return false;
+      const isPublicReal = ["REAL_MARKET", "BROKER_EXPORT"].includes(String(b.data_origin || "").toUpperCase());
+      if (isPublicReal || isAdmin) return true;
+      return auth.authenticated && b.created_by && b.created_by === auth.userId;
+    });
     return response.status(200).json({ backtests: list });
   }
 
@@ -267,29 +280,39 @@ export default async function researchHandler(request, response) {
   const detailMatch = subPath.match(/^\/backtests\/([^/]+)$/);
   if (request.method === "GET" && detailMatch) {
     const id = detailMatch[1];
+    const isAdmin = auth.authenticated && auth.role === "admin";
     const found = getMemoryStore().backtests.find((b) => b.id === id);
-    if (found) return response.status(200).json({ backtest: found });
+    if (found) {
+      const isPublicReal = ["REAL_MARKET", "BROKER_EXPORT"].includes(String(found.data_origin || "").toUpperCase());
+      if (!isPublicReal && !isAdmin) {
+        const own = authorizeOwnership(auth, found.created_by);
+        if (!own.ok) return response.status(own.status).json({ error: own.error, code: own.code });
+      }
+      return response.status(200).json({ backtest: found });
+    }
     if (dbAvailable && /^[0-9a-f-]{36}$/i.test(id)) {
       const res = await query(
         `SELECT b.*, b.data_source AS data_origin, br.* FROM backtests b LEFT JOIN backtest_results br ON br.backtest_id = b.id WHERE b.id = $1`,
         [id]
       );
-      if (res.rows[0]) return response.status(200).json({ backtest: res.rows[0] });
+      const row = res.rows[0];
+      if (row) {
+        const isPublicReal = ["REAL_MARKET", "BROKER_EXPORT"].includes(String(row.data_origin || "").toUpperCase());
+        if (!isPublicReal && !isAdmin) {
+          const own = authorizeOwnership(auth, row.created_by);
+          if (!own.ok) return response.status(own.status).json({ error: own.error, code: own.code });
+        }
+        return response.status(200).json({ backtest: row });
+      }
     }
     return response.status(404).json({ error: "Backtest run not found." });
   }
 
   // POST /api/research/backtest
   if (request.method === "POST" && subPath === "/backtest") {
-    const auth = extractAuthContext(request);
-    if (!auth.authenticated) {
-      return response.status(401).json({ error: "Authentication required to run and record backtests.", code: "AUTH_REQUIRED" });
-    }
-    if (!roleHasPermission(auth.role, "backtests:run")) {
-      return response.status(403).json({
-        error: `Role '${auth.role}' is not authorized to execute research backtests. Use Researcher, Strategy Provider, or Admin.`,
-        code: "FORBIDDEN_ROLE"
-      });
+    const gate = authorizeRequest(auth, "backtests:run", { isMutation: true });
+    if (!gate.ok) {
+      return response.status(gate.status).json({ error: gate.error, code: gate.code });
     }
 
     const body = request.body || {};

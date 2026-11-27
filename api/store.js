@@ -337,7 +337,7 @@ export const CORE_STRATEGIES = [
   }
 ];
 
-function createEmptyPortfolio(environment = "PAPER_SANDBOX") {
+export function createEmptyPortfolio(environment = "PAPER_SANDBOX") {
   return {
     environment,
     dataOrigin: environment,
@@ -381,18 +381,59 @@ export function getMemoryStore() {
   return memoryStore;
 }
 
-export function getPortfolioForUser(userId = "guest") {
+export function getPortfolioForUser(userId) {
+  if (!userId || userId === "guest") {
+    return createEmptyPortfolio("GUEST_READ_ONLY");
+  }
   if (!memoryStore.portfolios.has(userId)) {
     memoryStore.portfolios.set(userId, createEmptyPortfolio("PAPER_SANDBOX"));
   }
   return memoryStore.portfolios.get(userId);
 }
 
-export function getRiskStateForUser(userId = "guest") {
+export function getRiskStateForUser(userId) {
+  if (!userId || userId === "guest") {
+    return createDefaultRiskState();
+  }
   if (!memoryStore.riskConfigs.has(userId)) {
     memoryStore.riskConfigs.set(userId, createDefaultRiskState());
   }
   return memoryStore.riskConfigs.get(userId);
+}
+
+/**
+ * Resolves and authorizes which target user's portfolio/risk state an operator can inspect or govern.
+ * Non-admin operators can access ONLY their own records, or same-org records when explicitly authorized (e.g. risk_manager).
+ */
+export async function resolveManagedUserScope(auth, rawTargetUserId = null, { dbAvailable = false, allowSameOrgRoles = [] } = {}) {
+  if (!auth || !auth.authenticated) {
+    return { ok: false, status: 401, code: "AUTH_REQUIRED", error: "Authentication required." };
+  }
+  const target = rawTargetUserId ? String(rawTargetUserId).trim() : auth.userId;
+  if (!target || target === auth.userId) {
+    return { ok: true, targetUserId: auth.userId };
+  }
+  if (auth.role === "admin") {
+    return { ok: true, targetUserId: target };
+  }
+  if (allowSameOrgRoles.includes(auth.role) && auth.orgId) {
+    let targetOrgId = null;
+    if (dbAvailable && /^[0-9a-f-]{36}$/i.test(target)) {
+      const res = await query(`SELECT org_id FROM users WHERE id = $1`, [target]).catch(() => ({ rows: [] }));
+      targetOrgId = res.rows[0]?.org_id || null;
+    } else {
+      targetOrgId = memoryStore.usersById.get(target)?.org_id || null;
+    }
+    if (targetOrgId && targetOrgId === auth.orgId) {
+      return { ok: true, targetUserId: target };
+    }
+  }
+  return {
+    ok: false,
+    status: 403,
+    code: "FORBIDDEN_OWNERSHIP",
+    error: "Cross-account access denied: insufficient ownership or organization scope."
+  };
 }
 
 export function getAllStrategiesInMemory() {

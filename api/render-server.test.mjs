@@ -270,9 +270,38 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.match(eaSource, /UltraLOB Bridge EA/);
     assert.match(eaSource, /ACCOUNT_TRADE_MODE_DEMO/);
 
-    const monitorRes = await fetch(baseUrl + "/api/execution/monitor");
+    // Execution Monitor requires auth (401 unauthenticated) and scopes strictly to user
+    const unauthMonitor = await fetch(baseUrl + "/api/execution/monitor");
+    assert.equal(unauthMonitor.status, 401);
+
+    const monitorRes = await fetch(baseUrl + "/api/execution/monitor", {
+      headers: { Authorization: `Bearer ${invData.token}` }
+    });
     assert.equal(monitorRes.status, 200);
     assert.equal((await monitorRes.json()).environment, "DEMO_ONLY");
+
+    // Guests get isolated read-only $0 portfolio and are blocked (401) from all mutations
+    const guestPort = await fetch(baseUrl + "/api/copy-trading/portfolio");
+    assert.equal(guestPort.status, 200);
+    const guestPortData = await guestPort.json();
+    assert.equal(guestPortData.guest_read_only, true);
+    assert.equal(guestPortData.summary.balance, 0);
+
+    for (const [ep, body] of [
+      ["/api/broker/connect", { type: "mt5", mode: "ea_bridge", account_id: "123", server: "Demo" }],
+      ["/api/copy-trading/sandbox-capital", { amount: 10000 }],
+      ["/api/copy-trading/subscribe", { strategyId: "ul-01-gold-trend", allocation: 1000 }],
+      ["/api/portfolio/rebalance", { method: "RISK_WEIGHTED", total_capital: 10000 }],
+      ["/api/portfolio/risk/kill-switch", { scope: "GLOBAL", active: true }],
+      ["/api/ai/evaluate", { strategy_id: "ul-01-gold-trend", symbol: "XAUUSD" }]
+    ]) {
+      const blocked = await fetch(baseUrl + ep, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      assert.equal(blocked.status, 401, `Expected 401 for unauthenticated POST ${ep}`);
+    }
 
     const sizePreview = await fetch(baseUrl + "/api/copy-trading/size-preview", {
       method: "POST",
@@ -325,19 +354,62 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(sigPayload.count, 1);
     assert.equal(sigPayload.signals[0].side, "BUY");
 
-    // Kill switch blocks new executions
-    await fetch(baseUrl + "/api/copy-trading/risk-config", {
+    // RBAC forbids investor from modifying hard risk policy or global kill switches
+    const invBlockedRisk = await fetch(baseUrl + "/api/copy-trading/risk-config", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
       body: JSON.stringify({ kill_switch_active: true })
     });
-    const blockedExec = await fetch(baseUrl + "/api/copy-trading/execute", {
+    assert.equal(invBlockedRisk.status, 403);
+    assert.equal((await invBlockedRisk.json()).code, "FORBIDDEN_ROLE");
+
+    // Register a Risk Manager and a second Investor (IDOR / role tests)
+    const riskReg = await fetch(baseUrl + "/api/auth/register", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
-      body: JSON.stringify({ symbol: "BTC/USD", side: "BUY", qty: 0.01, price: 97500 })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Risk Officer", email: `risk-${Date.now()}@ultralob.io`, password: "secret123", role: "risk_manager" })
     });
-    assert.equal(blockedExec.status, 403);
-    assert.equal((await blockedExec.json()).code, "GLOBAL_KILL_SWITCH_ACTIVE");
+    assert.equal(riskReg.status, 201);
+    const riskData = await riskReg.json();
+
+    const inv2Reg = await fetch(baseUrl + "/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Other Investor", email: `inv2-${Date.now()}@ultralob.io`, password: "secret123", role: "investor" })
+    });
+    assert.equal(inv2Reg.status, 201);
+    const inv2Data = await inv2Reg.json();
+
+    // Cross-account IDOR: second investor cannot query first investor's portfolio or backtests
+    const idorPort = await fetch(baseUrl + `/api/portfolio/summary?user_id=${encodeURIComponent(invData.user.id)}`, {
+      headers: { Authorization: `Bearer ${inv2Data.token}` }
+    });
+    assert.equal(idorPort.status, 403);
+    assert.equal((await idorPort.json()).code, "FORBIDDEN_OWNERSHIP");
+
+    // Strategy provider role cannot rebalance allocations or execute trades
+    const provRebalBlocked = await fetch(baseUrl + "/api/portfolio/rebalance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${refreshed.token}` },
+      body: JSON.stringify({ method: "RISK_WEIGHTED", total_capital: 25000 })
+    });
+    assert.equal(provRebalBlocked.status, 403);
+
+    // Risk Manager activates GLOBAL kill switch on its risk scope; Risk Manager + cross-org block check
+    const crossOrgRisk = await fetch(baseUrl + "/api/portfolio/risk/kill-switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
+      body: JSON.stringify({ scope: "GLOBAL", target_user_id: invData.user.id, active: true })
+    });
+    assert.equal(crossOrgRisk.status, 403);
+
+    const rmGlobalKs = await fetch(baseUrl + "/api/copy-trading/risk-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
+      body: JSON.stringify({ kill_switch_active: true })
+    });
+    assert.equal(rmGlobalKs.status, 200);
+    // Investor can still execute on their own unhalted sandbox, verified below against kill-switch on Risk Officer eval
 
     // 8. WebSocket heartbeat & 404
     const socketUrl = baseUrl.replace(/^http/, "ws") + "/api/market-data?symbols=BTCUSDT";
@@ -386,7 +458,19 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const ul01Check = await fetch(baseUrl + "/api/strategies/ul-01-gold-trend");
     assert.equal((await ul01Check.json()).lifecycle_status, "RESEARCH");
 
-    const btList = await fetch(baseUrl + "/api/research/backtests");
+    // Guests do not see private SIMULATED_RESEARCH backtests; owner does
+    const guestBtList = await fetch(baseUrl + "/api/research/backtests");
+    assert.equal(guestBtList.status, 200);
+    assert.equal((await guestBtList.json()).backtests.length, 0);
+
+    const otherUserBtDetail = await fetch(baseUrl + `/api/research/backtests/${simBtData.backtest.id}`, {
+      headers: { Authorization: `Bearer ${invData.token}` }
+    });
+    assert.equal(otherUserBtDetail.status, 403);
+
+    const btList = await fetch(baseUrl + "/api/research/backtests", {
+      headers: { Authorization: `Bearer ${refreshed.token}` }
+    });
     assert.equal(btList.status, 200);
     assert.ok((await btList.json()).backtests.length >= 1);
 
@@ -405,26 +489,25 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(rebalData.plan.method, "RISK_WEIGHTED");
     assert.ok(rebalData.plan.allocations.length === 6);
 
-    // Strategy-scoped kill switch blocks that strategy independently
-    await fetch(baseUrl + "/api/copy-trading/risk-config", {
+    // Risk Manager toggles XAUUSD instrument kill switch on its governed scope; Investor gets 403 trying to toggle
+    const invKsForbidden = await fetch(baseUrl + "/api/portfolio/risk/kill-switch", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ scope: "INSTRUMENT", target: "XAUUSD", active: true, reason: "Unauthorized" })
+    });
+    assert.equal(invKsForbidden.status, 403);
+
+    await fetch(baseUrl + "/api/copy-trading/risk-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
       body: JSON.stringify({ kill_switch_active: false })
     });
     const instKs = await fetch(baseUrl + "/api/portfolio/risk/kill-switch", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
       body: JSON.stringify({ scope: "INSTRUMENT", target: "XAUUSD", active: true, reason: "Volatility spike halt" })
     });
     assert.equal(instKs.status, 200);
-
-    const blockedGold = await fetch(baseUrl + "/api/copy-trading/execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
-      body: JSON.stringify({ symbol: "XAUUSD", side: "BUY", qty: 0.1, price: 2650 })
-    });
-    assert.equal(blockedGold.status, 403);
-    assert.equal((await blockedGold.json()).code, "INSTRUMENT_KILL_SWITCH_ACTIVE");
 
     const kelly = await fetch(baseUrl + "/api/portfolio/risk/kelly-research", {
       method: "POST",
@@ -436,19 +519,44 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(kellyPayload.classification, "SIMULATED_RESEARCH_INPUT_ONLY");
     assert.ok(kellyPayload.hard_capped_risk_pct <= 0.5);
 
-    // 11. Phase 5 UltraLOB AI Advisory Pipeline & Event Intelligence
+    // 11. Phase 5 UltraLOB AI Advisory Pipeline, Ownership Check & Event Intelligence
     const aiEvalBlocked = await fetch(baseUrl + "/api/ai/evaluate", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
       body: JSON.stringify({ strategy_id: "ul-01-gold-trend", symbol: "XAUUSD", side: "BUY", proposed_risk_pct: 0.5 })
     });
     assert.equal(aiEvalBlocked.status, 200);
     const aiBlockedData = await aiEvalBlocked.json();
     assert.equal(aiBlockedData.decision.mode, "ADVISORY");
-    // Must be halted because XAUUSD instrument kill switch is still active from step 10!
+    // Must be halted because XAUUSD instrument kill switch is active on riskData's scope!
     assert.equal(aiBlockedData.decision.decision, "HALT");
     assert.equal(aiBlockedData.decision.gate_status, "BLOCKED_BY_RISK");
     assert.equal(aiBlockedData.decision.instrument, "XAUUSD");
+
+    // Cross-user IDOR check on AI decision authorization & listing
+    const invAiEval = await fetch(baseUrl + "/api/ai/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ strategy_id: "ul-01-gold-trend", symbol: "XAUUSD", side: "BUY", proposed_risk_pct: 0.5 })
+    });
+    assert.equal(invAiEval.status, 200);
+    const invAiData = await invAiEval.json();
+
+    // Another investor cannot authorize first investor's AI decision
+    const idorAiAuth = await fetch(baseUrl + `/api/ai/decisions/${invAiData.decision.id}/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${inv2Data.token}` },
+      body: JSON.stringify({ approve: true })
+    });
+    assert.equal(idorAiAuth.status, 403);
+    assert.equal((await idorAiAuth.json()).code, "FORBIDDEN_OWNERSHIP");
+
+    // Other investor's decision query only returns their own decisions (0)
+    const inv2Decisions = await fetch(baseUrl + "/api/ai/decisions", {
+      headers: { Authorization: `Bearer ${inv2Data.token}` }
+    });
+    assert.equal(inv2Decisions.status, 200);
+    assert.equal((await inv2Decisions.json()).decisions.length, 0);
 
     const stressRes = await fetch(baseUrl + "/api/portfolio/risk/stress-test", {
       method: "POST",
@@ -460,13 +568,23 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(stressData.stress.data_origin, "SIMULATED_RESEARCH");
     assert.ok(Array.isArray(stressData.stress.scenarios) && stressData.stress.scenarios.length >= 3);
 
-    // Human authorization must ALSO be refused by Risk Engine while kill switch is active
-    const authDenied = await fetch(baseUrl + `/api/ai/decisions/${aiBlockedData.decision.id}/authorize`, {
+    // Step 11b: Validate Risk Engine STILL denies human authorization when kill switch is active on owner's scope
+    await fetch(baseUrl + "/api/copy-trading/sandbox-capital", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ amount: 10000 })
+    });
+    await fetch(baseUrl + "/api/portfolio/risk/kill-switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
+      body: JSON.stringify({ scope: "GLOBAL", active: false })
+    });
+    const rmAuthDenied = await fetch(baseUrl + `/api/ai/decisions/${aiBlockedData.decision.id}/authorize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${riskData.token}` },
       body: JSON.stringify({ approve: true })
     });
-    assert.equal(authDenied.status, 403);
+    assert.equal(rmAuthDenied.status, 403);
 
     const macroEv = await fetch(baseUrl + "/api/ai/events", {
       method: "POST",
@@ -474,9 +592,15 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
       body: JSON.stringify({ title: "FOMC Rate Statement", currency: "USD", impact: "HIGH", timestamp_utc: new Date(Date.now() + 600000).toISOString() })
     });
     assert.equal(macroEv.status, 201);
-    const evStatus = await fetch(baseUrl + "/api/ai/events?symbol=XAUUSD");
-    assert.equal(evStatus.status, 200);
-    assert.equal((await evStatus.json()).restriction.status, "RESTRICTED");
+    const evStatusOwner = await fetch(baseUrl + "/api/ai/events?symbol=XAUUSD", {
+      headers: { Authorization: `Bearer ${invData.token}` }
+    });
+    assert.equal(evStatusOwner.status, 200);
+    assert.equal((await evStatusOwner.json()).restriction.status, "RESTRICTED");
+    const evStatusOther = await fetch(baseUrl + "/api/ai/events?symbol=XAUUSD", {
+      headers: { Authorization: `Bearer ${inv2Data.token}` }
+    });
+    assert.equal((await evStatusOther.json()).restriction.status, "CLEAR");
 
     // 12. Phase 6 Institutional Mandates, Statements, HWM Fee Framework & Enterprise API Keys
     const mandatePut = await fetch(baseUrl + "/api/institutional/mandate", {
@@ -520,12 +644,20 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const keyPayload = await apiKeyCreate.json();
     assert.match(keyPayload.secret_key, /^ulb_ent_/);
 
-    // Enterprise x-api-key resolves authenticated investor portfolio directly
+    // Enterprise x-api-key resolves authenticated investor portfolio read-only, and refuses writes
     const entAccess = await fetch(baseUrl + "/api/portfolio/summary", {
       headers: { "x-api-key": keyPayload.secret_key }
     });
     assert.equal(entAccess.status, 200);
     assert.equal((await entAccess.json()).balance, 10000);
+
+    const entWriteBlocked = await fetch(baseUrl + "/api/copy-trading/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": keyPayload.secret_key },
+      body: JSON.stringify({ symbol: "XAUUSD", side: "BUY", qty: 0.01, price: 2650 })
+    });
+    assert.equal(entWriteBlocked.status, 403);
+    assert.equal((await entWriteBlocked.json()).code, "API_KEY_READ_ONLY");
 
     // Revoking key invalidates x-api-key access immediately
     await fetch(baseUrl + `/api/institutional/api-keys/${keyPayload.key.id}`, {

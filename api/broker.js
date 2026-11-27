@@ -9,6 +9,7 @@ import {
   sha256Hex,
   query
 } from "./store.js";
+import { authorizeRequest } from "./security.js";
 import { getDatabaseStatus, recordAuditLog } from "../db/client.js";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -162,11 +163,22 @@ export default async function brokerHandler(request, response, { executionStore 
   const userId = auth.userId;
   const mem = getMemoryStore();
 
-  // Public MT5 EA Signal Queue Polling endpoint (authenticated by bridgeToken)
+  // Public MT5 EA Signal Queue Polling endpoint (authenticated by secret bridgeToken)
   if (request.method === "GET" && subPath === "/mt5/signals") {
     const token = String(request.query?.token || request.headers["x-bridge-token"] || "").trim();
     if (!token) {
       return response.status(401).json({ error: "Bridge token is required." });
+    }
+    let validBridge = [...mem.brokers.values()].some((b) => b.bridgeToken === token);
+    if (!validBridge && dbAvailable) {
+      const res = await query(
+        `SELECT id FROM broker_integrations WHERE bridge_token_hash = $1 AND status NOT IN ('DISCONNECTED','REVOKED') LIMIT 1`,
+        [sha256Hex(token)]
+      ).catch(() => ({ rows: [] }));
+      validBridge = res.rows.length > 0;
+    }
+    if (!validBridge) {
+      return response.status(401).json({ error: "Invalid or revoked bridge token.", code: "INVALID_BRIDGE_TOKEN" });
     }
     const matchingSignals = mem.mt5Signals.filter(
       (s) => s.bridgeToken === token && s.status === "pending"
@@ -186,6 +198,8 @@ export default async function brokerHandler(request, response, { executionStore 
 
   // Download production MQL5 Expert Advisor (mt5/Experts/UltraLOB_Bridge_EA.mq5)
   if (request.method === "GET" && subPath === "/mt5/ea") {
+    const gate = authorizeRequest(auth, "broker:manage", { isMutation: false, apiKeyScope: "portfolio:read" });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const current = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     const origin = `${request.protocol || "https"}://${request.get?.("host") || "ultralob.onrender.com"}`;
     const source = loadProductionEaSource(origin, current.broker?.executionConnectorId || "");
@@ -196,15 +210,34 @@ export default async function brokerHandler(request, response, { executionStore 
 
   if (request.method === "GET" && subPath === "/status") {
     const dbStatus = getDatabaseStatus();
+    if (!auth.authenticated) {
+      return response.status(200).json({
+        connected: false,
+        paired: false,
+        upstreamVerified: false,
+        verification_status: "UNAUTHENTICATED",
+        broker: null,
+        execution_bridge: {
+          postgres_configured: dbStatus.configured,
+          endpoint: "/api/execution",
+          environment: "DEMO_ONLY",
+          connectors_count: 0
+        }
+      });
+    }
+
+    const status = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     let executionConnectors = [];
     if (executionStore) {
       try {
         await executionStore.initialize();
-        executionConnectors = await executionStore.listConnectors();
+        const allConnectors = await executionStore.listConnectors();
+        executionConnectors = auth.role === "admin"
+          ? allConnectors
+          : allConnectors.filter((c) => c.owner_user_id === userId || c.id === status.broker?.executionConnectorId);
       } catch {}
     }
 
-    const status = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     return response.status(200).json({
       connected: status.connected,
       paired: status.paired,
@@ -221,12 +254,13 @@ export default async function brokerHandler(request, response, { executionStore 
   }
 
   if (request.method === "POST" && subPath === "/connect") {
-    if (!auth.authenticated) {
-      return response.status(401).json({
+    const gate = authorizeRequest(auth, "broker:manage", { isMutation: true });
+    if (!gate.ok) {
+      return response.status(gate.status).json({
         connected: false,
         upstreamVerified: false,
-        error: "Authentication required to pair a broker bridge or verify an account.",
-        code: "AUTH_REQUIRED"
+        error: gate.error,
+        code: gate.code
       });
     }
 
@@ -371,6 +405,7 @@ export default async function brokerHandler(request, response, { executionStore 
         await executionStore.createConnector({
           id: executionConnectorId,
           token_hash: tokenHash,
+          owner_user_id: userId,
           label: `${brokerType.toUpperCase()} Demo (${accountLabel})`,
           strategy_ids: ["ul-01-gold-trend", "ul-02-liquidity-sweep", "ul-03-volume-profile"],
           allowed_symbols: ["XAUUSD", "BTCUSD"],
@@ -477,6 +512,8 @@ export default async function brokerHandler(request, response, { executionStore 
   }
 
   if (request.method === "POST" && subPath === "/disconnect") {
+    const gate = authorizeRequest(auth, "broker:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const current = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     if (executionStore && current.broker?.executionConnectorId) {
       try {

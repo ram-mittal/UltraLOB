@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import {
   ensureDbReady,
   resolveAuthContext,
+  resolveManagedUserScope,
+  createEmptyPortfolio,
   getAllStrategiesInMemory,
   getMemoryStore,
   getPortfolioForUser,
@@ -9,6 +11,8 @@ import {
   syncPgRiskState,
   syncPgPortfolio
 } from "./store.js";
+import { authorizeRequest } from "./security.js";
+import { createDefaultRiskState } from "../risk/engine.js";
 import {
   ALLOCATION_METHODS,
   allocatePortfolio,
@@ -54,19 +58,48 @@ export default async function portfolioHandler(request, response) {
   const auth = await resolveAuthContext(request, dbAvailable);
   const userId = auth.userId;
   const mem = getMemoryStore();
-  const portfolio = getPortfolioForUser(userId);
-  const riskState = getRiskStateForUser(userId);
 
-  // GET /api/portfolio/summary
+  // GET /api/portfolio/summary — Read-only isolated guest snapshot or authenticated owner-scoped summary
   if (request.method === "GET" && (subPath === "/summary" || subPath === "/")) {
-    const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
+    if (!auth.authenticated) {
+      const guestPortfolio = createEmptyPortfolio("GUEST_READ_ONLY");
+      const defRisk = createDefaultRiskState();
+      return response.status(200).json({
+        guest_read_only: true,
+        data_origin: "GUEST_READ_ONLY",
+        balance: 0,
+        equity: 0,
+        methods_supported: ALLOCATION_METHODS,
+        subscriptions: [],
+        exposure: computePortfolioExposure({ equity: 0, openTrades: [], subscriptions: [] }),
+        correlations: computeStrategyCorrelationMatrix([]),
+        risk_limits: defRisk.limits,
+        kill_switches: defRisk.kill_switches
+      });
+    }
+
+    const gate = authorizeRequest(auth, ["portfolio:read", "portfolio:manage"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
+    const scope = await resolveManagedUserScope(auth, request.query?.user_id, {
+      dbAvailable,
+      allowSameOrgRoles: ["risk_manager", "fund_manager"]
+    });
+    if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
+
+    const targetPortfolio = getPortfolioForUser(scope.targetUserId);
+    const targetRisk = getRiskStateForUser(scope.targetUserId);
+    const openTrades = (targetPortfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
-    const equity = Number((portfolio.balance + unrealized).toFixed(2));
+    const equity = Number((targetPortfolio.balance + unrealized).toFixed(2));
 
     const exposure = computePortfolioExposure({
       equity,
       openTrades,
-      subscriptions: portfolio.subscriptions
+      subscriptions: targetPortfolio.subscriptions
     });
 
     const strategiesWithReturns = getAllStrategiesInMemory().map((s) => ({
@@ -78,20 +111,25 @@ export default async function portfolioHandler(request, response) {
     const correlations = computeStrategyCorrelationMatrix(strategiesWithReturns);
 
     return response.status(200).json({
-      data_origin: portfolio.dataOrigin || "PAPER_SANDBOX",
-      balance: Number(portfolio.balance.toFixed(2)),
+      data_origin: targetPortfolio.dataOrigin || "PAPER_SANDBOX",
+      balance: Number(targetPortfolio.balance.toFixed(2)),
       equity,
       methods_supported: ALLOCATION_METHODS,
-      subscriptions: portfolio.subscriptions,
+      subscriptions: targetPortfolio.subscriptions,
       exposure,
       correlations,
-      risk_limits: riskState.limits,
-      kill_switches: riskState.kill_switches
+      risk_limits: targetRisk.limits,
+      kill_switches: targetRisk.kill_switches
     });
   }
 
-  // POST /api/portfolio/rebalance
+  // POST /api/portfolio/rebalance — Authenticated & role-gated portfolio allocation modification
   if (request.method === "POST" && subPath === "/rebalance") {
+    const gate = authorizeRequest(auth, "allocations:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
+    const portfolio = getPortfolioForUser(userId);
+    const riskState = getRiskStateForUser(userId);
     const body = request.body || {};
     const method = String(body.method || "RISK_WEIGHTED").toUpperCase();
     const apply = Boolean(body.apply);
@@ -168,37 +206,75 @@ export default async function portfolioHandler(request, response) {
     }
   }
 
-  // GET /api/portfolio/risk
+  // GET /api/portfolio/risk — Isolated default read-only view for guests; strictly scoped for authenticated users
   if (request.method === "GET" && subPath === "/risk") {
-    const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
+    if (!auth.authenticated) {
+      const defRisk = createDefaultRiskState();
+      return response.status(200).json({
+        guest_read_only: true,
+        limits: defRisk.limits,
+        kill_switches: defRisk.kill_switches,
+        updated_at: defRisk.updated_at,
+        analytics: computePortfolioRiskAnalytics({ trades: [], equityHistory: [], initialCapital: 0 }),
+        stress_preview: runPortfolioStressTest({ equity: 0, grossNotional: 0, openTrades: [], riskLimits: defRisk.limits }),
+        events: [],
+        audit_history: [],
+        governance_note: "Guest read-only view. Sign in as Risk Manager or Investor to view account-scoped telemetry."
+      });
+    }
+
+    const gate = authorizeRequest(auth, ["risk:read", "portfolio:read", "portfolio:manage"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
+    const scope = await resolveManagedUserScope(auth, request.query?.user_id, {
+      dbAvailable,
+      allowSameOrgRoles: ["risk_manager", "fund_manager"]
+    });
+    if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
+    const targetId = scope.targetUserId;
+    const targetPortfolio = getPortfolioForUser(targetId);
+    const targetRisk = getRiskStateForUser(targetId);
+
+    const openTrades = (targetPortfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
-    const equity = Number((portfolio.balance + unrealized).toFixed(2));
+    const equity = Number((targetPortfolio.balance + unrealized).toFixed(2));
     const analytics = computePortfolioRiskAnalytics({
-      trades: portfolio.trades || [],
-      equityHistory: portfolio.equityHistory || [],
-      initialCapital: portfolio.balance
+      trades: targetPortfolio.trades || [],
+      equityHistory: targetPortfolio.equityHistory || [],
+      initialCapital: targetPortfolio.balance
     });
     const stress = runPortfolioStressTest({
       equity,
-      grossNotional: computePortfolioExposure({ equity, openTrades, subscriptions: portfolio.subscriptions }).gross_notional,
+      grossNotional: computePortfolioExposure({ equity, openTrades, subscriptions: targetPortfolio.subscriptions }).gross_notional,
       openTrades,
-      riskLimits: riskState.limits
+      riskLimits: targetRisk.limits
     });
 
     return response.status(200).json({
-      limits: riskState.limits,
-      kill_switches: riskState.kill_switches,
-      updated_at: riskState.updated_at,
+      limits: targetRisk.limits,
+      kill_switches: targetRisk.kill_switches,
+      updated_at: targetRisk.updated_at,
       analytics,
       stress_preview: stress,
-      events: mem.riskEvents.filter((e) => e.userId === userId).slice(0, 50),
-      audit_history: mem.auditLogs.filter((a) => a.userId === userId).slice(0, 50),
+      events: mem.riskEvents.filter((e) => e.userId === targetId).slice(0, 50),
+      audit_history: mem.auditLogs.filter((a) => a.userId === targetId).slice(0, 50),
       governance_note: "Independent hard limits are enforced before any execution. UltraLOB AI cannot bypass these limits."
     });
   }
 
-  // POST /api/portfolio/risk/stress-test
+  // POST /api/portfolio/risk/stress-test (Authenticated & owner-scoped)
   if (request.method === "POST" && subPath === "/risk/stress-test") {
+    const gate = authorizeRequest(auth, ["portfolio:manage", "portfolio:read", "risk:read"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
+    const portfolio = getPortfolioForUser(userId);
+    const riskState = getRiskStateForUser(userId);
     const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
     const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
     const eq = Number(request.body?.equity_override || (portfolio.balance + unrealized) || 0);
@@ -212,9 +288,20 @@ export default async function portfolioHandler(request, response) {
     return response.status(200).json({ stress });
   }
 
-  // POST /api/portfolio/risk/limits
+  // POST /api/portfolio/risk/limits — Strictly restricted to Risk Managers & Admins
   if (request.method === "POST" && subPath === "/risk/limits") {
+    const gate = authorizeRequest(auth, "risk:configure", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const b = request.body || {};
+    const scope = await resolveManagedUserScope(auth, b.target_user_id, {
+      dbAvailable,
+      allowSameOrgRoles: ["risk_manager"]
+    });
+    if (!scope.ok) return response.status(scope.status).json({ error: scope.error, code: scope.code });
+
+    const targetId = scope.targetUserId;
+    const riskState = getRiskStateForUser(targetId);
     const prevLimits = { ...riskState.limits };
 
     const clamp = (val, min, max, fallback) => {
@@ -236,19 +323,19 @@ export default async function portfolioHandler(request, response) {
     };
     riskState.updated_at = new Date().toISOString();
 
-    const audit = appendRiskAudit(mem, userId, auth, "RISK_LIMITS_UPDATED", {
+    const audit = appendRiskAudit(mem, targetId, auth, "RISK_LIMITS_UPDATED", {
       before: prevLimits,
       after: riskState.limits
     });
-    appendRiskEvent(mem, userId, "INFO", "Hard risk governance limits updated.", riskState.limits);
-    await syncPgRiskState(userId, riskState, dbAvailable);
+    appendRiskEvent(mem, targetId, "INFO", "Hard risk governance limits updated.", riskState.limits);
+    await syncPgRiskState(targetId, riskState, dbAvailable);
     if (dbAvailable) {
       await recordAuditLog({
         actorUserId: auth.userId,
         actorRole: auth.role,
         action: "RISK_LIMITS_UPDATED",
         targetType: "portfolio_risk",
-        targetId: userId,
+        targetId,
         details: { before: prevLimits, after: riskState.limits }
       });
     }
@@ -256,9 +343,20 @@ export default async function portfolioHandler(request, response) {
     return response.status(200).json({ limits: riskState.limits, audit });
   }
 
-  // POST /api/portfolio/risk/kill-switch
+  // POST /api/portfolio/risk/kill-switch — Strictly restricted to Risk Managers & Admins
   if (request.method === "POST" && subPath === "/risk/kill-switch") {
+    const gate = authorizeRequest(auth, "risk:kill_switch", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const b = request.body || {};
+    const scopeCheck = await resolveManagedUserScope(auth, b.target_user_id, {
+      dbAvailable,
+      allowSameOrgRoles: ["risk_manager"]
+    });
+    if (!scopeCheck.ok) return response.status(scopeCheck.status).json({ error: scopeCheck.error, code: scopeCheck.code });
+
+    const targetUserId = scopeCheck.targetUserId;
+    const riskState = getRiskStateForUser(targetUserId);
     const scope = String(b.scope || "GLOBAL").toUpperCase();
     const target = String(b.target || "").trim();
     const active = Boolean(b.active);
@@ -297,11 +395,11 @@ export default async function portfolioHandler(request, response) {
     }
 
     riskState.updated_at = new Date().toISOString();
-    await syncPgRiskState(userId, riskState, dbAvailable);
-    appendRiskAudit(mem, userId, auth, "KILL_SWITCH_TOGGLED", { scope, target: target || "ALL", active, reason });
+    await syncPgRiskState(targetUserId, riskState, dbAvailable);
+    appendRiskAudit(mem, targetUserId, auth, "KILL_SWITCH_TOGGLED", { scope, target: target || "ALL", active, reason });
     appendRiskEvent(
       mem,
-      userId,
+      targetUserId,
       active ? "KILL_SWITCH" : "INFO",
       `${scope} kill switch ${active ? "ACTIVATED" : "CLEARED"}${target ? " (" + target + ")" : ""}: ${reason}`
     );
@@ -314,7 +412,14 @@ export default async function portfolioHandler(request, response) {
 
   // POST /api/portfolio/risk/kelly-research
   if (request.method === "POST" && subPath === "/risk/kelly-research") {
+    const gate = authorizeRequest(auth, ["portfolio:manage", "risk:configure", "research:read"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const b = request.body || {};
+    const riskState = getRiskStateForUser(userId);
     const calc = computeBoundedKelly({
       winProbability: b.win_probability,
       payoffRatio: b.payoff_ratio,

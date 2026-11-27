@@ -11,17 +11,150 @@ export const VALID_ROLES = Object.freeze([
 
 export const ROLE_PERMISSIONS = Object.freeze({
   guest: ["strategies:read", "market:read"],
-  investor: ["strategies:read", "market:read", "portfolio:manage", "broker:manage", "copy:manage", "reports:read"],
-  strategy_provider: ["strategies:read", "market:read", "strategies:create", "strategies:version", "backtests:run"],
-  fund_manager: ["strategies:read", "market:read", "portfolio:manage", "mandates:manage", "allocations:manage", "reports:read", "org:manage"],
-  risk_manager: ["strategies:read", "market:read", "risk:read", "risk:configure", "risk:kill_switch", "audit:read", "execution:read"],
-  researcher: ["strategies:read", "market:read", "strategies:create", "backtests:run", "research:read"],
+  investor: [
+    "strategies:read",
+    "market:read",
+    "portfolio:read",
+    "portfolio:manage",
+    "allocations:manage",
+    "broker:manage",
+    "copy:manage",
+    "ai:evaluate",
+    "ai:authorize",
+    "mandates:manage",
+    "reports:read",
+    "execution:read"
+  ],
+  strategy_provider: [
+    "strategies:read",
+    "market:read",
+    "strategies:create",
+    "strategies:version",
+    "backtests:run",
+    "research:read"
+  ],
+  fund_manager: [
+    "strategies:read",
+    "market:read",
+    "portfolio:read",
+    "portfolio:manage",
+    "mandates:manage",
+    "allocations:manage",
+    "broker:manage",
+    "copy:manage",
+    "ai:evaluate",
+    "ai:authorize",
+    "reports:read",
+    "org:manage",
+    "risk:read",
+    "execution:read"
+  ],
+  risk_manager: [
+    "strategies:read",
+    "market:read",
+    "portfolio:read",
+    "risk:read",
+    "risk:configure",
+    "risk:kill_switch",
+    "ai:evaluate",
+    "audit:read",
+    "execution:read"
+  ],
+  researcher: [
+    "strategies:read",
+    "market:read",
+    "strategies:create",
+    "backtests:run",
+    "research:read"
+  ],
   admin: ["*"]
 });
 
 export function roleHasPermission(role, permission) {
   const perms = ROLE_PERMISSIONS[role] || [];
   return perms.includes("*") || perms.includes(permission);
+}
+
+export function apiKeyAllowsScope(auth, requiredReadScope) {
+  if (!auth || auth.authMethod !== "api_key") return true;
+  if (!requiredReadScope) return false;
+  const scopes = Array.isArray(auth.scopes) ? auth.scopes : [];
+  return scopes.includes(requiredReadScope) || scopes.includes("*");
+}
+
+/**
+ * Unified server-side authorization gate for API endpoints.
+ * Enforces authentication, read-only x-api-key restrictions, and RBAC permissions.
+ */
+export function authorizeRequest(auth, permission = null, { isMutation = true, apiKeyScope = null } = {}) {
+  if (!auth || !auth.authenticated) {
+    return {
+      ok: false,
+      status: 401,
+      code: "AUTH_REQUIRED",
+      error: "Authentication required for this operation."
+    };
+  }
+
+  if (auth.authMethod === "api_key") {
+    if (isMutation) {
+      return {
+        ok: false,
+        status: 403,
+        code: "API_KEY_READ_ONLY",
+        error: "Enterprise x-api-key credentials are strictly read-only and cannot modify state."
+      };
+    }
+    if (apiKeyScope && !apiKeyAllowsScope(auth, apiKeyScope)) {
+      return {
+        ok: false,
+        status: 403,
+        code: "API_KEY_SCOPE_INSUFFICIENT",
+        error: `Enterprise API key lacks required '${apiKeyScope}' read scope.`
+      };
+    }
+  }
+
+  if (permission) {
+    const allowed = Array.isArray(permission)
+      ? permission.some((p) => roleHasPermission(auth.role, p))
+      : roleHasPermission(auth.role, permission);
+    if (!allowed) {
+      return {
+        ok: false,
+        status: 403,
+        code: "FORBIDDEN_ROLE",
+        error: `Role '${auth.role}' is not authorized to perform this action.`
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Validates record ownership (allows owner or admin; optionally same-org risk_manager/fund_manager when configured).
+ */
+export function authorizeOwnership(auth, ownerUserId, { allowSameOrgRoles = [], targetOrgId = null } = {}) {
+  if (!auth || !auth.authenticated) {
+    return { ok: false, status: 401, code: "AUTH_REQUIRED", error: "Authentication required." };
+  }
+  if (auth.role === "admin") return { ok: true };
+  if (ownerUserId && ownerUserId === auth.userId) return { ok: true };
+  if (
+    allowSameOrgRoles.includes(auth.role) &&
+    auth.orgId &&
+    targetOrgId &&
+    auth.orgId === targetOrgId
+  ) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    status: 403,
+    code: "FORBIDDEN_OWNERSHIP",
+    error: "Access denied: resource belongs to another account."
+  };
 }
 
 export function requireAuth(req, res, next) {

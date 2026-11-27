@@ -1,13 +1,13 @@
 import crypto from "node:crypto";
 import {
   ensureDbReady,
-  extractAuthContext,
+  resolveAuthContext,
   getMemoryStore,
   getPortfolioForUser,
   sha256Hex,
   query
 } from "./store.js";
-import { roleHasPermission } from "./security.js";
+import { authorizeRequest, roleHasPermission } from "./security.js";
 import { recordAuditLog } from "../db/client.js";
 import {
   RISK_TOLERANCE_TIERS,
@@ -29,17 +29,22 @@ function getMandateForUser(mem, userId) {
 export default async function institutionalHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/institutional/, "").split("?")[0];
-  const auth = extractAuthContext(request);
+  const dbAvailable = await ensureDbReady().catch(() => false);
+  const auth = await resolveAuthContext(request, dbAvailable);
   const userId = auth.userId;
   const mem = getMemoryStore();
   if (!mem.mandates) mem.mandates = new Map();
   if (!mem.apiKeys) mem.apiKeys = [];
   if (!mem.orgMembers) mem.orgMembers = [];
 
-  const dbAvailable = await ensureDbReady().catch(() => false);
-
   // GET /api/institutional/statement?format=json|csv
   if (request.method === "GET" && subPath === "/statement") {
+    const gate = authorizeRequest(auth, ["reports:read", "portfolio:read"], {
+      isMutation: false,
+      apiKeyScope: "statements:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const portfolio = getPortfolioForUser(userId);
     const mandate = getMandateForUser(mem, userId);
     const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
@@ -67,7 +72,13 @@ export default async function institutionalHandler(request, response, { executio
 
   // GET /api/institutional/mandate
   if (request.method === "GET" && subPath === "/mandate") {
-    if (dbAvailable && auth.authenticated && /^[0-9a-f-]{36}$/i.test(userId)) {
+    const gate = authorizeRequest(auth, ["mandates:manage", "portfolio:read"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
+    if (dbAvailable && /^[0-9a-f-]{36}$/i.test(userId)) {
       const res = await query(`SELECT * FROM investor_profiles WHERE user_id = $1`, [userId]);
       if (res.rows[0]) {
         return response.status(200).json({ mandate: res.rows[0], tiers: RISK_TOLERANCE_TIERS });
@@ -78,6 +89,8 @@ export default async function institutionalHandler(request, response, { executio
 
   // PUT /api/institutional/mandate
   if (request.method === "PUT" && subPath === "/mandate") {
+    const gate = authorizeRequest(auth, "mandates:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const b = request.body || {};
     const cur = getMandateForUser(mem, userId);
     const riskTolerance = RISK_TOLERANCE_TIERS.includes(String(b.risk_tolerance || "").toUpperCase())
@@ -129,9 +142,12 @@ export default async function institutionalHandler(request, response, { executio
     return response.status(calc.ok ? 200 : 400).json(calc);
   }
 
-  // Enterprise API Keys (hashed storage, revealed once on creation)
+  // Enterprise API Keys (hashed storage, revealed once on creation; forbid management via API key itself)
   if (request.method === "GET" && subPath === "/api-keys") {
-    if (!auth.authenticated) return response.status(401).json({ error: "Authentication required." });
+    const gate = authorizeRequest(auth, null, { isMutation: false });
+    if (!gate.ok || auth.authMethod === "api_key") {
+      return response.status(auth.authMethod === "api_key" ? 403 : gate.status).json({ error: auth.authMethod === "api_key" ? "API keys cannot list other API keys." : gate.error, code: auth.authMethod === "api_key" ? "API_KEY_FORBIDDEN" : gate.code });
+    }
     if (dbAvailable && /^[0-9a-f-]{36}$/i.test(userId)) {
       const res = await query(
         `SELECT id, label, key_prefix, scopes, status, created_at, revoked_at
@@ -146,7 +162,8 @@ export default async function institutionalHandler(request, response, { executio
   }
 
   if (request.method === "POST" && subPath === "/api-keys") {
-    if (!auth.authenticated) return response.status(401).json({ error: "Authentication required." });
+    const gate = authorizeRequest(auth, null, { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const label = String(request.body?.label || "").trim().slice(0, 80);
     if (!label || label.length < 3) {
       return response.status(400).json({ error: "API key label (min 3 chars) is required." });
@@ -196,22 +213,28 @@ export default async function institutionalHandler(request, response, { executio
 
   const revokeMatch = subPath.match(/^\/api-keys\/([^/]+)$/);
   if (request.method === "DELETE" && revokeMatch) {
-    if (!auth.authenticated) return response.status(401).json({ error: "Authentication required." });
+    const gate = authorizeRequest(auth, null, { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const id = revokeMatch[1];
     if (dbAvailable && /^[0-9a-f-]{36}$/i.test(id)) {
-      await query(
-        `UPDATE enterprise_api_keys SET status='REVOKED', revoked_at=NOW() WHERE id=$1 AND user_id=$2`,
+      const upd = await query(
+        `UPDATE enterprise_api_keys SET status='REVOKED', revoked_at=NOW() WHERE id=$1 AND user_id=$2 RETURNING id`,
         [id, userId]
       );
+      if (!upd.rows[0]) return response.status(404).json({ error: "API key not found for this account." });
     } else {
       const k = mem.apiKeys.find((item) => item.id === id && item.userId === userId);
-      if (k) { k.status = "REVOKED"; k.revoked_at = new Date().toISOString(); }
+      if (!k) return response.status(404).json({ error: "API key not found for this account." });
+      k.status = "REVOKED";
+      k.revoked_at = new Date().toISOString();
     }
     return response.status(200).json({ status: "revoked", id });
   }
 
-  // Organization Desk Management
+  // Organization Desk Management (authenticated + owner/org-scoped)
   if (request.method === "GET" && subPath === "/organization") {
+    const gate = authorizeRequest(auth, ["portfolio:read", "org:manage"], { isMutation: false, apiKeyScope: "portfolio:read" });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const members = mem.orgMembers.filter((m) => m.ownerUserId === userId || (auth.orgId && m.orgId === auth.orgId));
     return response.status(200).json({
       organization: {
@@ -224,10 +247,8 @@ export default async function institutionalHandler(request, response, { executio
   }
 
   if (request.method === "POST" && subPath === "/organization/members") {
-    if (!auth.authenticated) return response.status(401).json({ error: "Authentication required." });
-    if (!roleHasPermission(auth.role, "org:manage") && auth.role !== "admin") {
-      return response.status(403).json({ error: "Only Fund Managers or Admins can assign organization desk roles.", code: "FORBIDDEN_ROLE" });
-    }
+    const gate = authorizeRequest(auth, "org:manage", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const { email, org_role = "ANALYST" } = request.body || {};
     const cleanEmail = String(email || "").trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes("@")) {

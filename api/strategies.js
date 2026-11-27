@@ -2,10 +2,10 @@ import {
   ensureDbReady,
   getAllStrategiesInMemory,
   getMemoryStore,
-  extractAuthContext,
+  resolveAuthContext,
   query
 } from "./store.js";
-import { roleHasPermission } from "./security.js";
+import { authorizeRequest, roleHasPermission } from "./security.js";
 import { recordAuditLog } from "../db/client.js";
 
 function mapDbStrategyRow(row, versionRow = null, backtestRow = null) {
@@ -101,15 +101,10 @@ export default async function strategiesHandler(request, response) {
   // POST /api/strategies — Submit a new quantitative strategy specification in RESEARCH status.
   // Never invents performance numbers; requires strategy_provider / researcher / fund_manager / admin role.
   if (request.method === "POST") {
-    const auth = extractAuthContext(request);
-    if (!auth.authenticated) {
-      return response.status(401).json({ error: "Authentication required to register a strategy.", code: "AUTH_REQUIRED" });
-    }
-    if (!roleHasPermission(auth.role, "strategies:create")) {
-      return response.status(403).json({
-        error: `Role '${auth.role}' cannot submit strategies. Switch to a Strategy Provider or Researcher account.`,
-        code: "FORBIDDEN_ROLE"
-      });
+    const auth = await resolveAuthContext(request, dbAvailable);
+    const gate = authorizeRequest(auth, "strategies:create", { isMutation: true });
+    if (!gate.ok) {
+      return response.status(gate.status).json({ error: gate.error, code: gate.code });
     }
 
     const body = request.body || {};

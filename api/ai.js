@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
 import {
   ensureDbReady,
-  extractAuthContext,
+  resolveAuthContext,
   getAllStrategiesInMemory,
   getMemoryStore,
   getPortfolioForUser,
   getRiskStateForUser,
   query
 } from "./store.js";
+import { authorizeRequest, authorizeOwnership } from "./security.js";
 import { getDatabaseStatus, recordAuditLog } from "../db/client.js";
 import { fetchMacroCalendar, evaluateEventRestriction } from "../ai/events.js";
 import { evaluateAdvisoryPipeline } from "../ai/engines.js";
@@ -17,40 +18,46 @@ import { resolveUserBrokerStatus } from "./broker.js";
 export default async function aiHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/ai/, "").split("?")[0];
-  const auth = extractAuthContext(request);
+  const dbAvailable = await ensureDbReady().catch(() => false);
+  const auth = await resolveAuthContext(request, dbAvailable);
   const userId = auth.userId;
   const mem = getMemoryStore();
   if (!mem.aiDecisions) mem.aiDecisions = [];
   if (!mem.customMacroEvents) mem.customMacroEvents = [];
 
-  const dbAvailable = await ensureDbReady().catch(() => false);
-
-  // GET /api/ai/events — Fetch macro calendar + operator restriction windows
+  // GET /api/ai/events — Public macro calendar + caller's declared blackout windows
   if (request.method === "GET" && subPath === "/events") {
     const symbol = String(request.query?.symbol || "XAUUSD").toUpperCase();
     const cal = await fetchMacroCalendar();
+    const visibleBlackouts = mem.customMacroEvents.filter(
+      (ev) => !ev.userId || (auth.authenticated && (ev.userId === userId || auth.role === "admin"))
+    );
     const restriction = evaluateEventRestriction({
       symbol,
       events: cal.events,
-      customBlackouts: mem.customMacroEvents
+      customBlackouts: visibleBlackouts
     });
     return response.status(200).json({
       calendar_status: cal.status,
       calendar_source: cal.source,
       calendar_error: cal.error || null,
-      custom_blackout_windows: mem.customMacroEvents,
+      custom_blackout_windows: visibleBlackouts,
       restriction
     });
   }
 
   // POST /api/ai/events — Register an operator macro blackout window (FOMC/CPI/NFP etc.)
   if (request.method === "POST" && subPath === "/events") {
+    const gate = authorizeRequest(auth, ["risk:configure", "portfolio:manage", "ai:evaluate"], { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const { title, currency = "USD", impact = "HIGH", timestamp_utc } = request.body || {};
     if (!title || !timestamp_utc || Number.isNaN(Date.parse(timestamp_utc))) {
       return response.status(400).json({ error: "Valid title and ISO-8601 timestamp_utc are required." });
     }
     const ev = {
       id: "macro-" + crypto.randomUUID().slice(0, 8),
+      userId,
       title: String(title).trim().slice(0, 120),
       currency: String(currency).toUpperCase(),
       impact: ["HIGH", "MEDIUM", "LOW"].includes(String(impact).toUpperCase()) ? String(impact).toUpperCase() : "HIGH",
@@ -61,18 +68,32 @@ export default async function aiHandler(request, response, { executionStore = nu
     return response.status(201).json({ event: ev });
   }
 
-  // GET /api/ai/decisions
+  // GET /api/ai/decisions — Authenticated & strictly owner-scoped decision audit history
   if (request.method === "GET" && (subPath === "/decisions" || subPath === "/decisions/")) {
+    const gate = authorizeRequest(auth, ["ai:evaluate", "risk:read", "portfolio:read"], {
+      isMutation: false,
+      apiKeyScope: "portfolio:read"
+    });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     if (dbAvailable) {
-      const res = await query(
-        `SELECT id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs, created_at
-         FROM ai_decisions ORDER BY created_at DESC LIMIT 30`
-      );
+      const isAdmin = auth.role === "admin";
+      const res = isAdmin
+        ? await query(
+            `SELECT id, user_id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs, created_at
+             FROM ai_decisions ORDER BY created_at DESC LIMIT 30`
+          )
+        : await query(
+            `SELECT id, user_id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs, created_at
+             FROM ai_decisions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 30`,
+            [/^[0-9a-f-]{36}$/i.test(userId) ? userId : null]
+          );
       const decisions = res.rows.map((r) => {
         const spec = r.engine_outputs?._decision_spec || {};
         return {
           ...spec,
           id: r.id,
+          userId: r.user_id,
           strategy_id: r.strategy_id,
           mode: r.mode,
           decision: r.decision,
@@ -87,11 +108,16 @@ export default async function aiHandler(request, response, { executionStore = nu
       });
       return response.status(200).json({ decisions });
     }
-    return response.status(200).json({ decisions: mem.aiDecisions.slice(0, 30) });
+    const filtered = auth.role === "admin"
+      ? mem.aiDecisions
+      : mem.aiDecisions.filter((d) => d.userId === userId);
+    return response.status(200).json({ decisions: filtered.slice(0, 30) });
   }
 
-  // POST /api/ai/evaluate — Execute full 7-engine advisory pipeline
+  // POST /api/ai/evaluate — Execute full 7-engine advisory pipeline (Authenticated)
   if (request.method === "POST" && subPath === "/evaluate") {
+    const gate = authorizeRequest(auth, "ai:evaluate", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
     const b = request.body || {};
     const strategyId = String(b.strategy_id || "ul-01-gold-trend").trim();
     const symbol = String(b.symbol || "XAUUSD").replace("/", "").toUpperCase();
@@ -122,6 +148,9 @@ export default async function aiHandler(request, response, { executionStore = nu
       (bt) => bt.strategy_id === strategy.id && bt.data_origin === "REAL_MARKET"
     ) || null;
 
+    const visibleBlackouts = mem.customMacroEvents.filter(
+      (ev) => !ev.userId || ev.userId === userId || auth.role === "admin"
+    );
     const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     const evaluation = evaluateAdvisoryPipeline({
       strategy,
@@ -138,7 +167,7 @@ export default async function aiHandler(request, response, { executionStore = nu
       broker: brokerState.broker,
       postgresConfigured: getDatabaseStatus().configured,
       macroEvents: cal.events,
-      customBlackouts: mem.customMacroEvents
+      customBlackouts: visibleBlackouts
     });
 
     const recordId = crypto.randomUUID();
@@ -154,12 +183,14 @@ export default async function aiHandler(request, response, { executionStore = nu
     if (mem.aiDecisions.length > 50) mem.aiDecisions.length = 50;
 
     if (dbAvailable) {
+      const ownerUuid = /^[0-9a-f-]{36}$/i.test(userId) ? userId : null;
       await query(
         `INSERT INTO ai_decisions
-         (id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs)
-         VALUES ($1,$2,'ADVISORY',$3,$4,$5,NULL,$6,$7::jsonb)`,
+         (id, user_id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs)
+         VALUES ($1,$2,$3,'ADVISORY',$4,$5,$6,NULL,$7,$8::jsonb)`,
         [
           recordId,
+          ownerUuid,
           strategy.id,
           evaluation.decision,
           evaluation.confidence,
@@ -204,16 +235,27 @@ export default async function aiHandler(request, response, { executionStore = nu
     return response.status(200).json({ decision: record });
   }
 
-  // POST /api/ai/decisions/:id/authorize — Human authorization step (re-validates Hard Risk Gate!)
+  // POST /api/ai/decisions/:id/authorize — Human authorization step with ownership & Hard Risk Gate
   const authMatch = subPath.match(/^\/decisions\/([^/]+)\/authorize$/);
   if (request.method === "POST" && authMatch) {
-    if (!auth.authenticated) {
-      return response.status(401).json({ error: "Authentication required to authorize advisory decisions.", code: "AUTH_REQUIRED" });
-    }
+    const gate = authorizeRequest(auth, "ai:authorize", { isMutation: true });
+    if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
+
     const id = authMatch[1];
     const approve = request.body?.approve !== false;
-    const record = mem.aiDecisions.find((d) => d.id === id);
+    let record = mem.aiDecisions.find((d) => d.id === id);
+    if (!record && dbAvailable && /^[0-9a-f-]{36}$/i.test(id)) {
+      const dbRes = await query(`SELECT * FROM ai_decisions WHERE id = $1`, [id]);
+      if (dbRes.rows[0]) {
+        const r = dbRes.rows[0];
+        const spec = r.engine_outputs?._decision_spec || {};
+        record = { ...spec, id: r.id, userId: r.user_id, strategy_id: r.strategy_id, decision: r.decision };
+      }
+    }
     if (!record) return response.status(404).json({ error: "AI decision record not found." });
+
+    const own = authorizeOwnership(auth, record.userId);
+    if (!own.ok) return response.status(own.status).json({ error: own.error, code: own.code });
 
     if (approve) {
       // Independent Risk Engine MUST still pass at time of authorization!

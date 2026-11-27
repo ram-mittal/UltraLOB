@@ -126,11 +126,26 @@ export async function init() {
   }
 
   async function refresh() {
+    let execAuthDenied = false;
     const [execRes, portRes, brokerRes] = await Promise.all([
-      api.getExecutionMonitor().catch(() => ({ configured: false, connectors: [], commands: [], events: [] })),
+      api.getExecutionMonitor().catch((err) => {
+        if (String(err.message || "").toLowerCase().includes("authentication") || String(err.message || "").includes("401")) {
+          execAuthDenied = true;
+        }
+        return { configured: false, connectors: [], commands: [], events: [] };
+      }),
       api.getPortfolio().catch(() => ({ trades: [] })),
       api.getBrokerStatus().catch(() => ({ connected: false }))
     ]);
+    if (execAuthDenied) {
+      const tblEl = document.getElementById("ex-blotter-table");
+      if (tblEl) tblEl.innerHTML = stateBanner({
+        kind: "disconnected",
+        title: "Authentication Required",
+        message: "Sign in to inspect your account's MT5 execution connectors, commands, and fills.",
+        actionHtml: `<a href="#/auth" class="btn-primary font-mono text-[11px]">Sign In</a>`
+      });
+    }
 
     const connectors = execRes.connectors || [];
     const commands = execRes.commands || [];

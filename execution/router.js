@@ -99,7 +99,12 @@ function sanitizeConnector(row) {
   };
 }
 
-export function createExecutionRouter({ store = null, adminKey = "", liveExecutionEnabled = false } = {}) {
+export function createExecutionRouter({
+  store = null,
+  adminKey = "",
+  liveExecutionEnabled = false,
+  resolveMonitorAccess = null
+} = {}) {
   const router = express.Router();
 
   async function requireStore(_req, res, next) {
@@ -154,9 +159,29 @@ export function createExecutionRouter({ store = null, adminKey = "", liveExecuti
     });
   });
 
-  // Authenticated UI monitor summary (falls back cleanly when Postgres storage is disabled)
-  router.get("/monitor", async (_req, res) => {
+  // Authenticated & ownership-scoped UI monitor summary
+  router.get("/monitor", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
+    let monitorScope = { authenticated: true, role: "admin", userId: null, ownedConnectorIds: null };
+    if (typeof resolveMonitorAccess === "function") {
+      try {
+        monitorScope = await resolveMonitorAccess(req);
+      } catch (err) {
+        return errorResponse(res, 500, "AUTH_RESOLUTION_FAILED", err.message);
+      }
+      if (!monitorScope?.authenticated) {
+        return errorResponse(
+          res,
+          monitorScope?.status || 401,
+          monitorScope?.code || "AUTH_REQUIRED",
+          monitorScope?.error || "Authentication required to access execution monitor."
+        );
+      }
+      if (monitorScope.forbidden) {
+        return errorResponse(res, 403, monitorScope.code || "FORBIDDEN_ROLE", monitorScope.error || "Access denied.");
+      }
+    }
+
     if (!store) {
       return res.status(200).json({
         configured: false,
@@ -169,11 +194,24 @@ export function createExecutionRouter({ store = null, adminKey = "", liveExecuti
     }
     try {
       await store.initialize();
-      const [connectors, commands, events] = await Promise.all([
+      const [allConnectors, allCommands, allEvents] = await Promise.all([
         store.listConnectors(),
         store.listCommands(100),
         store.listEvents({ limit: 100 })
       ]);
+
+      const canViewAll = monitorScope.role === "admin";
+      const ownedSet = monitorScope.ownedConnectorIds instanceof Set ? monitorScope.ownedConnectorIds : null;
+      const connectors = canViewAll
+        ? allConnectors
+        : allConnectors.filter((c) =>
+            (c.owner_user_id && c.owner_user_id === monitorScope.userId) ||
+            (ownedSet && ownedSet.has(c.id))
+          );
+      const visibleIds = new Set(connectors.map((c) => c.id));
+      const commands = canViewAll ? allCommands : allCommands.filter((cmd) => visibleIds.has(cmd.connector_id));
+      const events = canViewAll ? allEvents : allEvents.filter((ev) => visibleIds.has(ev.connector_id));
+
       return res.status(200).json({
         configured: true,
         storage: "postgresql",
