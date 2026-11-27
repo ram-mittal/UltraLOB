@@ -271,7 +271,7 @@ export default async function researchHandler(request, response) {
     if (found) return response.status(200).json({ backtest: found });
     if (dbAvailable && /^[0-9a-f-]{36}$/i.test(id)) {
       const res = await query(
-        `SELECT b.*, br.* FROM backtests b LEFT JOIN backtest_results br ON br.backtest_id = b.id WHERE b.id = $1`,
+        `SELECT b.*, b.data_source AS data_origin, br.* FROM backtests b LEFT JOIN backtest_results br ON br.backtest_id = b.id WHERE b.id = $1`,
         [id]
       );
       if (res.rows[0]) return response.status(200).json({ backtest: res.rows[0] });

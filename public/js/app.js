@@ -114,20 +114,22 @@ export function showToast(message, type = 'info', duration = 4000) {
   }, duration);
 }
 
-window.__closeMobileMenu = () => {
-  document.getElementById('mobile-menu')?.classList.remove('open');
-  document.getElementById('mobile-overlay')?.classList.add('hidden');
-};
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  window.__closeMobileMenu = () => {
+    document.getElementById('mobile-menu')?.classList.remove('open');
+    document.getElementById('mobile-overlay')?.classList.add('hidden');
+  };
 
-window.__openMobileMenu = () => {
-  const menu = document.getElementById('mobile-menu');
-  const overlay = document.getElementById('mobile-overlay');
-  if (menu && overlay) {
-    menu.innerHTML = renderMobileMenu();
-    menu.classList.add('open');
-    overlay.classList.remove('hidden');
-  }
-};
+  window.__openMobileMenu = () => {
+    const menu = document.getElementById('mobile-menu');
+    const overlay = document.getElementById('mobile-overlay');
+    if (menu && overlay) {
+      menu.innerHTML = renderMobileMenu();
+      menu.classList.add('open');
+      overlay.classList.remove('hidden');
+    }
+  };
+}
 
 function renderMobileMenu() {
   return `
@@ -161,4 +163,6 @@ async function initApp() {
   navigate(parseHash());
 }
 
-initApp().catch(err => console.error('App init failed:', err));
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  initApp().catch(err => console.error('App init failed:', err));
+}

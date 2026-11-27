@@ -74,6 +74,15 @@ class TestResearchEngine(unittest.TestCase):
         report = engine.run(build_strategy("ul-04-gold-scalper"), zero_vol, data_origin="REAL_MARKET")
         self.assertGreaterEqual(report["metrics"]["total_trades"], 1)
 
+    def test_sharpe_is_null_when_sample_below_5_trades(self):
+        from research.metrics import calculate_metrics
+        from research.models import Trade
+        t1 = Trade("1", "ul-01", "XAUUSD", "BUY", 1000, 2000, 2650, 2649, 2640, 2670, 0.01, -0.05, 0.07, 0.0, 0.0, -0.12, -0.1, 60.0, "SL")
+        t2 = Trade("2", "ul-01", "XAUUSD", "BUY", 3000, 4000, 2650, 2649, 2640, 2670, 0.01, -0.05, 0.07, 0.0, 0.0, -0.12, -0.1, 60.0, "SL")
+        m = calculate_metrics([t1, t2], 10_000.0, [{"equity": 9999.76}], 0, 10_000)
+        self.assertIsNone(m["sharpe_ratio"])
+        self.assertIsNone(m["sortino_ratio"])
+
 
 if __name__ == "__main__":
     unittest.main()

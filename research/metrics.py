@@ -107,17 +107,17 @@ def calculate_metrics(
     trades_per_year = total_trades * _annualization_factor(span_days)
     sharpe_ratio = None
     sortino_ratio = None
-    if len(trade_returns) >= 2:
+    if len(trade_returns) >= 5:
         mean_r = sum(trade_returns) / len(trade_returns)
         var_r = sum((r - mean_r) ** 2 for r in trade_returns) / (len(trade_returns) - 1)
         std_r = math.sqrt(var_r)
-        if std_r > 1e-12:
+        if std_r > 1e-6:
             sharpe_ratio = round((mean_r / std_r) * math.sqrt(trades_per_year), 3)
 
         downside = [min(0.0, r) for r in trade_returns]
         downside_var = sum(d * d for d in downside) / len(downside)
         downside_std = math.sqrt(downside_var)
-        if downside_std > 1e-12:
+        if downside_std > 1e-6:
             sortino_ratio = round((mean_r / downside_std) * math.sqrt(trades_per_year), 3)
 
     # Risk of Ruin (Kaufman / Balsara approximation using empirical win rate & payoff ratio)

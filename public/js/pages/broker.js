@@ -158,7 +158,7 @@ export function render() {
           <ol class="list-decimal list-inside space-y-1 text-surface-400 text-xs leading-relaxed">
             <li>In MT5/Exness Terminal go to <strong>Tools → Options → Expert Advisors</strong></li>
             <li>Check <strong>Allow WebRequest for listed URL</strong></li>
-            <li>Add <code class="text-surface-200">${location.origin}</code></li>
+            <li>Add <code class="text-surface-200">${globalThis.location?.origin || 'https://ultralob.onrender.com'}</code></li>
             <li>Enable Algo Trading so Monte Carlo signals mirror automatically</li>
           </ol>
         </div>

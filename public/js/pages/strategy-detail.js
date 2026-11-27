@@ -12,6 +12,15 @@ function fmt(val, suffix = '%', digits = 1, signed = false) {
   return `${signed && n > 0 ? '+' : ''}${n.toFixed(digits)}${suffix}`;
 }
 
+export function render() {
+  return `
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" id="strategy-detail-root">
+    <div class="flex items-center justify-center min-h-[50vh]">
+      <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  </div>`;
+}
+
 function renderStrategyHTML(s) {
   const lifecycle = getLifecycleBadge(s.lifecycle_status);
   const currentIdx = Math.max(0, LIFECYCLE_STAGES.indexOf(s.lifecycle_status));
@@ -224,7 +233,7 @@ export async function init(route) {
   // Fetch any completed research/backtest runs for honest Due Diligence display
   const btData = await api.getBacktests(s.id).catch(() => ({ backtests: [] }));
   const latestBt = btData.backtests?.[0] || null;
-  if (latestBt && latestBt.data_origin === 'REAL_MARKET' && s.total_return == null) {
+  if (latestBt && latestBt.data_origin === 'REAL_MARKET' && (latestBt.total_trades ?? latestBt.metrics?.total_trades ?? 0) >= 10 && s.total_return == null) {
     const m = latestBt.metrics || latestBt;
     s.total_return = m.total_return_pct ?? s.total_return;
     s.cagr = m.cagr_pct ?? s.cagr;

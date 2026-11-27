@@ -447,6 +447,25 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
       headers: { "x-api-key": keyPayload.secret_key }
     });
     assert.equal((await revokedAccess.json()).balance, 0);
+
+    // 13. Verify every frontend SPA page module exports render() & produces clean HTML
+    const pageFiles = [
+      "../public/js/pages/landing.js",
+      "../public/js/pages/marketplace.js",
+      "../public/js/pages/strategy-detail.js",
+      "../public/js/pages/dashboard.js",
+      "../public/js/pages/broker.js",
+      "../public/js/pages/terminal.js",
+      "../public/js/pages/auth.js",
+      "../public/js/pages/workspace.js"
+    ];
+    for (const file of pageFiles) {
+      const mod = await import(file);
+      assert.equal(typeof mod.render, "function", `${file} must export render()`);
+      const html = mod.render({ path: file.includes("workspace") ? "/portfolio" : "/", id: "ul-01-gold-trend", params: new URLSearchParams() });
+      assert.equal(typeof html, "string");
+      assert.ok(html.length > 50, `${file} render() returned empty HTML`);
+    }
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
