@@ -430,6 +430,23 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(apiKeyCreate.status, 201);
     const keyPayload = await apiKeyCreate.json();
     assert.match(keyPayload.secret_key, /^ulb_ent_/);
+
+    // Enterprise x-api-key resolves authenticated investor portfolio directly
+    const entAccess = await fetch(baseUrl + "/api/portfolio/summary", {
+      headers: { "x-api-key": keyPayload.secret_key }
+    });
+    assert.equal(entAccess.status, 200);
+    assert.equal((await entAccess.json()).balance, 10000);
+
+    // Revoking key invalidates x-api-key access immediately
+    await fetch(baseUrl + `/api/institutional/api-keys/${keyPayload.key.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${invData.token}` }
+    });
+    const revokedAccess = await fetch(baseUrl + "/api/portfolio/summary", {
+      headers: { "x-api-key": keyPayload.secret_key }
+    });
+    assert.equal((await revokedAccess.json()).balance, 0);
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

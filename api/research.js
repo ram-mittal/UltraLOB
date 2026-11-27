@@ -300,8 +300,14 @@ export default async function researchHandler(request, response) {
     const bars = Math.min(5000, Math.max(150, Number(body.bars || 1200)));
     const mcSimulations = Math.min(2000, Math.max(100, Number(body.mc_simulations || 500)));
 
-    if (!["ul-01-gold-trend", "UL-01", "ul-02-liquidity-sweep", "UL-02", "ul-03-volume-profile", "UL-03"].includes(strategyId)) {
-      return response.status(400).json({ error: "Phase 2 backtester currently implements UL-01, UL-02, and UL-03." });
+    if (![
+      "ul-01-gold-trend", "UL-01",
+      "ul-02-liquidity-sweep", "UL-02",
+      "ul-03-volume-profile", "UL-03",
+      "ul-04-gold-scalper", "UL-04",
+      "ul-05-adaptive-regime", "UL-05"
+    ].includes(strategyId)) {
+      return response.status(400).json({ error: "Select a supported quantitative model (UL-01 through UL-05)." });
     }
 
     try {

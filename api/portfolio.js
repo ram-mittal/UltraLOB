@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
 import {
   ensureDbReady,
-  extractAuthContext,
+  resolveAuthContext,
   getAllStrategiesInMemory,
   getMemoryStore,
   getPortfolioForUser,
-  getRiskStateForUser
+  getRiskStateForUser,
+  syncPgRiskState,
+  syncPgPortfolio
 } from "./store.js";
 import {
   ALLOCATION_METHODS,
@@ -48,12 +50,12 @@ function appendRiskEvent(mem, userId, severity, message, details = {}) {
 export default async function portfolioHandler(request, response) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/portfolio/, "").split("?")[0];
-  const auth = extractAuthContext(request);
+  const dbAvailable = await ensureDbReady().catch(() => false);
+  const auth = await resolveAuthContext(request, dbAvailable);
   const userId = auth.userId;
   const mem = getMemoryStore();
   const portfolio = getPortfolioForUser(userId);
   const riskState = getRiskStateForUser(userId);
-  const dbAvailable = await ensureDbReady().catch(() => false);
 
   // GET /api/portfolio/summary
   if (request.method === "GET" && (subPath === "/summary" || subPath === "/")) {
@@ -207,6 +209,7 @@ export default async function portfolioHandler(request, response) {
       after: riskState.limits
     });
     appendRiskEvent(mem, userId, "INFO", "Hard risk governance limits updated.", riskState.limits);
+    await syncPgRiskState(userId, riskState, dbAvailable);
     if (dbAvailable) {
       await recordAuditLog({
         actorUserId: auth.userId,
@@ -262,6 +265,7 @@ export default async function portfolioHandler(request, response) {
     }
 
     riskState.updated_at = new Date().toISOString();
+    await syncPgRiskState(userId, riskState, dbAvailable);
     appendRiskAudit(mem, userId, auth, "KILL_SWITCH_TOGGLED", { scope, target: target || "ALL", active, reason });
     appendRiskEvent(
       mem,

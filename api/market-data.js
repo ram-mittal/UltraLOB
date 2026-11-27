@@ -142,7 +142,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
     response.setHeader("Cache-Control", "no-store, max-age=0");
     response.status(200).json({
       platform: "UltraLOB — Institutional Strategy Allocation & Risk Infrastructure",
-      phase: "Phase 1 (Foundation, Strategy Registry, RBAC, Demo Execution Bridge)",
+      phase: "Phases 1–6 Complete (Quant Registry, Research Backtester, MT5 Demo Bridge, Portfolio/Risk Engine, 7-Engine AI, Institutional Governance)",
       database: db,
       execution: {
         environment: "DEMO_ONLY",

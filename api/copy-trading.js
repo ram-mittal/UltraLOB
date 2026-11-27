@@ -1,10 +1,13 @@
 import crypto from "node:crypto";
 import {
+  ensureDbReady,
   getMemoryStore,
   getPortfolioForUser,
   getRiskStateForUser,
   getAllStrategiesInMemory,
-  extractAuthContext
+  extractAuthContext,
+  syncPgPortfolio,
+  syncPgRiskState
 } from "./store.js";
 import { getDatabaseStatus } from "../db/client.js";
 import { computeRiskNormalizedVolume } from "../execution/risk-manager.js";
@@ -166,6 +169,8 @@ export default async function copyTradingHandler(request, response, { executionS
     portfolio.equity_high_water = portfolio.balance;
     portfolio.dataOrigin = "PAPER_SANDBOX";
     portfolio.equityHistory = [{ label: "Init", value: portfolio.balance }];
+    const dbReady = await ensureDbReady().catch(() => false);
+    await syncPgPortfolio(userId, portfolio, dbReady);
     return response.status(200).json({
       status: "funded",
       data_origin: "PAPER_SANDBOX",

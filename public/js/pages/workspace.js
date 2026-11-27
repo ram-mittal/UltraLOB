@@ -340,6 +340,8 @@ export async function init(route) {
                   <option value="ul-01-gold-trend">UL-01 Gold Trend</option>
                   <option value="ul-02-liquidity-sweep">UL-02 Liquidity Sweep</option>
                   <option value="ul-03-volume-profile">UL-03 Volume Profile</option>
+                  <option value="ul-04-gold-scalper">UL-04 Gold Scalper</option>
+                  <option value="ul-05-adaptive-regime">UL-05 Adaptive Regime</option>
                 </select>
               </div>
               <div>
@@ -764,6 +766,8 @@ export async function init(route) {
                   <option value="ul-01-gold-trend">UL-01 Gold Trend</option>
                   <option value="ul-02-liquidity-sweep">UL-02 Liquidity Sweep</option>
                   <option value="ul-03-volume-profile">UL-03 Volume Profile</option>
+                  <option value="ul-04-gold-scalper">UL-04 Gold Scalper</option>
+                  <option value="ul-05-adaptive-regime">UL-05 Adaptive Regime</option>
                 </select>
               </div>
               <div>

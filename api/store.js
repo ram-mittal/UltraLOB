@@ -519,7 +519,25 @@ export function extractAuthContext(request) {
         email: decoded.email || null,
         name: decoded.name || null,
         role: decoded.role || "investor",
-        orgId: decoded.orgId || null
+        orgId: decoded.orgId || null,
+        authMethod: "jwt"
+      };
+    }
+  }
+  const apiKey = request.headers?.["x-api-key"];
+  if (apiKey && typeof apiKey === "string" && apiKey.startsWith("ulb_ent_")) {
+    const hash = sha256Hex(apiKey.trim());
+    const found = (memoryStore.apiKeys || []).find((k) => k.key_hash === hash && k.status === "ACTIVE");
+    if (found) {
+      return {
+        authenticated: true,
+        userId: found.userId,
+        email: null,
+        name: found.label,
+        role: "investor",
+        scopes: found.scopes || [],
+        orgId: found.orgId || null,
+        authMethod: "api_key"
       };
     }
   }
@@ -529,8 +547,98 @@ export function extractAuthContext(request) {
     email: null,
     name: "Guest Sandbox",
     role: "guest",
-    orgId: null
+    orgId: null,
+    authMethod: "none"
   };
+}
+
+export async function resolveAuthContext(request, dbAvailable = false) {
+  const ctx = extractAuthContext(request);
+  if (ctx.authenticated || !dbAvailable) return ctx;
+
+  const apiKey = request.headers?.["x-api-key"];
+  if (apiKey && typeof apiKey === "string" && apiKey.startsWith("ulb_ent_")) {
+    try {
+      const hash = sha256Hex(apiKey.trim());
+      const res = await query(
+        `SELECT k.id, k.user_id, k.org_id, k.label, k.scopes, u.email, u.name, u.role
+         FROM enterprise_api_keys k
+         JOIN users u ON u.id = k.user_id
+         WHERE k.key_hash = $1 AND k.status = 'ACTIVE'`,
+        [hash]
+      );
+      if (res.rows[0]) {
+        const r = res.rows[0];
+        await query(`UPDATE enterprise_api_keys SET last_used_at = NOW() WHERE id = $1`, [r.id]);
+        return {
+          authenticated: true,
+          userId: r.user_id,
+          email: r.email,
+          name: r.name,
+          role: r.role || "investor",
+          scopes: r.scopes || [],
+          orgId: r.org_id || null,
+          authMethod: "api_key"
+        };
+      }
+    } catch {}
+  }
+  return ctx;
+}
+
+export async function syncPgRiskState(userId, riskState, dbAvailable = false) {
+  if (!dbAvailable || !/^[0-9a-f-]{36}$/i.test(userId || "")) return;
+  try {
+    const l = riskState.limits;
+    await query(
+      `INSERT INTO risk_configs
+       (scope_type, scope_id, max_risk_per_trade_pct, max_daily_loss_pct, max_weekly_loss_pct,
+        max_monthly_loss_pct, max_drawdown_pct, max_open_positions, max_leverage,
+        max_spread_points, kill_switch_active, updated_by, updated_at)
+       VALUES ('USER',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$1,NOW())
+       ON CONFLICT (scope_type, scope_id) DO UPDATE SET
+         max_risk_per_trade_pct=$2, max_daily_loss_pct=$3, max_weekly_loss_pct=$4,
+         max_monthly_loss_pct=$5, max_drawdown_pct=$6, max_open_positions=$7,
+         max_leverage=$8, max_spread_points=$9, kill_switch_active=$10, updated_at=NOW()`,
+      [
+        userId,
+        l.max_risk_per_trade_pct,
+        l.max_daily_loss_pct,
+        l.max_weekly_loss_pct,
+        l.max_monthly_loss_pct,
+        l.max_drawdown_pct,
+        l.max_open_positions,
+        l.max_leverage,
+        l.max_spread_points,
+        Boolean(riskState.kill_switches.global_active)
+      ]
+    );
+  } catch (err) {
+    console.warn("[store] non-fatal risk_configs sync warning:", err.message);
+  }
+}
+
+export async function syncPgPortfolio(userId, portfolio, dbAvailable = false) {
+  if (!dbAvailable || !/^[0-9a-f-]{36}$/i.test(userId || "")) return;
+  try {
+    await query(
+      `INSERT INTO portfolios (user_id, environment, balance, equity, margin_used, equity_high_water, mc_config, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,NOW())
+       ON CONFLICT (user_id, environment) DO UPDATE SET
+         balance=$3, equity=$4, margin_used=$5, equity_high_water=$6, mc_config=$7::jsonb, updated_at=NOW()`,
+      [
+        userId,
+        portfolio.dataOrigin || "PAPER_SANDBOX",
+        portfolio.balance,
+        portfolio.equity,
+        portfolio.margin_used || 0,
+        portfolio.equity_high_water || portfolio.balance,
+        JSON.stringify(portfolio.mcConfig || {})
+      ]
+    );
+  } catch (err) {
+    console.warn("[store] non-fatal portfolios sync warning:", err.message);
+  }
 }
 
 export function extractUserId(request) {

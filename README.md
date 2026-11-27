@@ -29,20 +29,23 @@ If you are new to quantitative finance or electronic trading systems:
 
 ---
 
-## 🌐 Live Web Trading Terminal
+## 🌐 Live Institutional Platform & Web Terminal
 
-Experience the web terminal without installing anything:
+Experience the web platform without installing anything:
 
 👉 **[Launch UltraLOB on Render](https://ultralob.onrender.com)**
 
-* **BTC/USD live market data**: Browser-direct Kraken Spot WebSocket v2 ticker/trade and best-bid/ask stream; public access requires no API key.
-* **Automated Monte Carlo repricing**: Live BTC spot can update the pricing input and trigger European call/put repricing on a configurable interval.
-* **Optional US equity feed**: AAPL, MSFT and GOOGL use Twelve Data through a server-side WebSocket gateway when the key and account entitlements are configured.
-* **Pricing analytics**: Risk-neutral GBM Monte Carlo, antithetic variates, Black–Scholes reference values, standard errors and 95% confidence intervals.
-* **Trading-system interface**: Order desk, simulated Level 2 books, FIX 4.4 wire inspector, working orders and execution blotter.
-* **MT5 demo execution bridge (phase 1)**: authenticated per-connector tokens, account/position heartbeats, server-side risk sizing and demo-only order instructions. The EA is off by default and refuses live/contest accounts.
+UltraLOB's web architecture provides **Institutional Strategy Allocation, Research Validation, Portfolio Risk Governance & MT5 Demo Execution**:
 
-**Execution disclaimer:** the web terminal's FIX order ticket and sample fills are simulated. It does not route orders to a live broker or exchange. BTC shows live best bid/ask, not full market depth; the displayed equity Level 2 books are demo data.
+* **Quantitative Strategy Registry (`UL-01`–`UL-05`)**: Lifecycle-gated XAUUSD strategies (`RESEARCH → BACKTESTED → FORWARD_TESTING → LIVE_PILOT → VERIFIED_LIVE`) with zero fabricated performance claims ([ARCHITECTURE.md](ARCHITECTURE.md)).
+* **Python Research & Validation Engine (`research/`)**: Event-realistic OHLCV backtesting (spread, commission, slippage, overnight swaps, execution delay), Out-of-Sample & Walk-Forward testing, plus Monte Carlo trade-sequence stress simulation across **UL-01 (Gold Institutional Trend)**, **UL-02 (Liquidity Sweep Reversal)**, **UL-03 (Volume Profile Mean Reversion — tick-volume labeled)**, **UL-04 (Gold Momentum Scalper)**, and **UL-05 (Adaptive Multi-Regime Strategy)**.
+* **Portfolio & Independent Risk Governance (`portfolio/`, `risk/`)**: Multi-method allocation optimizer (`Fixed`, `Risk-Weighted`, `Volatility-Adjusted`, `Equal Risk Contribution`, `Fractional`), exposure & correlation tracking, multi-horizon hard loss/leverage caps, Global/Strategy/Instrument kill switches, and immutable audit logs.
+* **MT5 Demo Execution Bridge (`execution/`, `mt5/`)**: PostgreSQL-backed command lease queue (`FOR UPDATE SKIP LOCKED`), SHA-256 token authentication, risk-normalized position sizing, and `UltraLOB_Bridge_EA.mq5` (`v0.2.0` demo-only enforcement with `OrderCheck` & `OrderCalcMargin` validation).
+* **UltraLOB AI Advisory Pipeline (`ai/`)**: 7-engine advisory pipeline + High-Impact Macro Event Intelligence that cannot bypass Risk Engine vetoes.
+* **Institutional Reports, Mandates & Enterprise Keys (`institutional/`)**: Investor mandate enforcement (`investor_profiles`), JSON/CSV statements, non-billing High-Water-Mark fee accounting previews, and SHA-256 enterprise API keys (`x-api-key`).
+* **Real-Time Market Feeds & Classic Terminal (`/terminal`, `/legacy`)**: Browser-direct Kraken Spot BTC/USD WebSocket, server-side Twelve Data `XAU/USD` & US equity candles/streams, and Antithetic GBM Monte Carlo pricing.
+
+**Execution disclaimer:** All hosted broker connectors default to **DEMO ONLY** (`LIVE` accounts are rejected by design in both API and MQL5 EA). Simulated/Monte Carlo research runs are explicitly labeled and never mixed with real historical or broker-confirmed data. See [SETUP.md](SETUP.md) for PostgreSQL and API key setup.
 
 ---
 

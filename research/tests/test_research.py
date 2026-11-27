@@ -35,12 +35,18 @@ class TestResearchEngine(unittest.TestCase):
         self.assertIn("out_of_sample", res)
         self.assertIsInstance(res["walk_forward"], list)
 
-    def test_ul01_ul02_ul03_run_end_to_end_with_realistic_costs(self):
+    def test_ul01_through_ul05_run_end_to_end_with_realistic_costs(self):
         candles, meta = generate_synthetic_research_xauusd(bars=1500, interval="15m", seed=42)
         self.assertEqual(meta["data_origin"], "SIMULATED_RESEARCH")
         engine = BacktestEngine(initial_capital=10_000.0, cost_model=CostModel(), mc_simulations=300)
 
-        for sid in ["ul-01-gold-trend", "ul-02-liquidity-sweep", "ul-03-volume-profile"]:
+        for sid in [
+            "ul-01-gold-trend",
+            "ul-02-liquidity-sweep",
+            "ul-03-volume-profile",
+            "ul-04-gold-scalper",
+            "ul-05-adaptive-regime",
+        ]:
             strat = build_strategy(sid)
             report = engine.run(strat, candles, data_origin="SIMULATED_RESEARCH")
             self.assertEqual(report["strategy_id"], sid)
