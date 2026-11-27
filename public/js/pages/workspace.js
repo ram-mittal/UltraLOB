@@ -569,18 +569,126 @@ export async function init(route) {
 
     if (route.path === '/settings') {
       const u = state.user;
+      const [mandateRes, keysRes, orgRes] = await Promise.all([
+        api.getMandate().catch(() => ({ mandate: { risk_tolerance: 'CONSERVATIVE', permitted_instruments: ['XAUUSD'], max_portfolio_drawdown_pct: 10, max_daily_loss_pct: 2 } })),
+        u ? api.getApiKeys().catch(() => ({ keys: [] })) : Promise.resolve({ keys: [] }),
+        api.getOrganization().catch(() => ({ organization: { members: [] } }))
+      ]);
+      const m = mandateRes.mandate || {};
+      const keys = keysRes.keys || [];
+      const org = orgRes.organization || {};
+
       body.innerHTML = `
-        <div class="glass-card rounded-xl p-6 text-xs space-y-3">
-          <h3 class="text-sm font-semibold text-white">Active Session & Role Permissions</h3>
-          ${u ? `
-            <div>Name: <strong class="text-white">${u.name}</strong></div>
-            <div>Email: <strong class="text-white">${u.email}</strong></div>
-            <div>Role: <span class="chip chip-blue font-mono">${u.role}</span></div>
-            <div>Organization: <strong class="text-white">${u.org_name || 'Individual'}</strong></div>
-            <div>Permissions: <code class="text-brand-300">${(u.permissions || []).join(', ')}</code></div>
-          ` : `<div>Viewing in unauthenticated Guest Sandbox. <a href="#/auth" class="text-brand-400 underline">Sign in or register with a role →</a></div>`}
+        <div class="grid lg:grid-cols-2 gap-6 mb-6 text-xs">
+          <div class="glass-card rounded-xl p-6 space-y-3">
+            <h3 class="text-sm font-semibold text-white">Active Session & Role Permissions</h3>
+            ${u ? `
+              <div>Name: <strong class="text-white">${u.name}</strong></div>
+              <div>Email: <strong class="text-white">${u.email}</strong></div>
+              <div>Role: <span class="chip chip-blue font-mono">${u.role}</span></div>
+              <div>Organization: <strong class="text-white">${u.org_name || 'Individual'}</strong></div>
+              <div>Permissions: <code class="text-brand-300">${(u.permissions || []).join(', ')}</code></div>
+            ` : `<div>Viewing in unauthenticated Guest Sandbox. <a href="#/auth" class="text-brand-400 underline">Sign in or register with a role →</a></div>`}
+          </div>
+
+          <div class="glass-card rounded-xl p-6">
+            <h3 class="text-sm font-semibold text-white mb-3">Investor Risk & Instrument Mandate</h3>
+            <form id="mandate-form" onsubmit="return false;" class="space-y-3">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-surface-400 block mb-1">Risk Tolerance</label>
+                  <select name="risk_tolerance" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white">
+                    ${['CONSERVATIVE', 'MODERATE', 'AGGRESSIVE', 'INSTITUTIONAL_MANDATE'].map(t => `<option value="${t}" ${m.risk_tolerance === t ? 'selected' : ''}>${t}</option>`).join('')}
+                  </select>
+                </div>
+                <div>
+                  <label class="text-surface-400 block mb-1">Permitted Instruments</label>
+                  <input name="permitted_instruments" value="${(m.permitted_instruments || ['XAUUSD']).join(', ')}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono">
+                </div>
+                <div>
+                  <label class="text-surface-400 block mb-1">Max Drawdown %</label>
+                  <input name="max_portfolio_drawdown_pct" type="number" step="0.5" value="${m.max_portfolio_drawdown_pct ?? 10}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono">
+                </div>
+                <div>
+                  <label class="text-surface-400 block mb-1">Max Daily Loss %</label>
+                  <input name="max_daily_loss_pct" type="number" step="0.25" value="${m.max_daily_loss_pct ?? 2}" class="w-full bg-surface-800 border border-surface-700 rounded px-2.5 py-2 text-white font-mono">
+                </div>
+              </div>
+              <button type="submit" class="btn-primary px-4 py-2 rounded-lg text-white font-semibold">Update Investor Mandate</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-6 text-xs">
+          <div class="glass-card rounded-xl p-6 space-y-3">
+            <h3 class="text-sm font-semibold text-white">Enterprise API Keys (SHA-256 Scoped)</h3>
+            ${u ? `
+              <form id="apikey-form" onsubmit="return false;" class="flex gap-2">
+                <input name="label" required placeholder="Key label (e.g., CIO Reporting Feed)" class="flex-1 bg-surface-800 border border-surface-700 rounded px-3 py-2 text-white">
+                <button type="submit" class="btn-outline px-3 py-2 rounded-lg text-brand-300 font-semibold">+ Create Key</button>
+              </form>
+              <div id="apikey-secret-banner" class="hidden p-3 rounded bg-warn-bg border border-warn/30 font-mono text-warn break-all"></div>
+              <div class="space-y-2 max-h-40 overflow-y-auto">
+                ${keys.length ? keys.map(k => `
+                  <div class="flex items-center justify-between p-2.5 rounded bg-surface-900/70 border border-surface-800">
+                    <div><strong class="text-white">${k.label}</strong> <code class="text-surface-400">${k.key_prefix}</code> <span class="chip ${k.status === 'ACTIVE' ? 'chip-green' : 'chip-red'} text-[10px]">${k.status}</span></div>
+                    ${k.status === 'ACTIVE' ? `<button onclick="window.__revokeKey?.('${k.id}')" class="text-loss hover:underline">Revoke</button>` : ''}
+                  </div>`).join('') : '<div class="text-surface-500">No enterprise API keys created yet.</div>'}
+              </div>` : '<div class="text-surface-500">Sign in to manage enterprise API keys.</div>'}
+          </div>
+
+          <div class="glass-card rounded-xl p-6 space-y-3">
+            <h3 class="text-sm font-semibold text-white">Organization Desk & Role Delegation</h3>
+            ${org.can_manage_org ? `
+              <form id="org-member-form" onsubmit="return false;" class="flex gap-2">
+                <input name="email" type="email" required placeholder="analyst@desk.io" class="flex-1 bg-surface-800 border border-surface-700 rounded px-3 py-2 text-white">
+                <select name="org_role" class="bg-surface-800 border border-surface-700 rounded px-2 py-2 text-white">
+                  <option value="ANALYST">ANALYST</option>
+                  <option value="RISK_OFFICER">RISK OFFICER</option>
+                  <option value="MANAGER">MANAGER</option>
+                </select>
+                <button type="submit" class="btn-outline px-3 py-2 rounded-lg text-white">Assign</button>
+              </form>` : '<div class="text-surface-500">Organization role assignment requires a Fund Manager or Admin account.</div>'}
+            <div class="space-y-2">
+              ${(org.members || []).length ? org.members.map(mem => `<div class="p-2 rounded bg-surface-900/70 border border-surface-800 flex justify-between"><span class="text-white">${mem.email}</span><span class="chip chip-blue text-[10px]">${mem.org_role} • ${mem.status}</span></div>`).join('') : '<div class="text-surface-500">No additional desk members assigned.</div>'}
+            </div>
+          </div>
         </div>`;
-      return;
+
+      window.__revokeKey = async (id) => {
+        await api.revokeApiKey(id);
+        showToast('API key revoked.', 'info');
+        location.reload();
+      };
+
+      document.getElementById('mandate-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        await api.updateMandate(f);
+        showToast('Investor mandate updated.', 'success');
+      });
+
+      document.getElementById('apikey-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        const res = await api.createApiKey({ label: f.label });
+        const banner = document.getElementById('apikey-secret-banner');
+        if (banner) {
+          banner.textContent = `ONE-TIME SECRET KEY: ${res.secret_key}`;
+          banner.classList.remove('hidden');
+        }
+        showToast('Enterprise API key generated.', 'success');
+      });
+
+      document.getElementById('org-member-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = Object.fromEntries(new FormData(e.target));
+        await api.addOrgMember(f);
+        showToast('Organization member invited.', 'success');
+        location.reload();
+      });
+
+      return () => { delete window.__revokeKey; };
     }
 
     if (route.path === '/research') {
@@ -745,23 +853,73 @@ export async function init(route) {
       return () => destroyAllCharts();
     }
 
-    // Default clean structured summary for /portfolio, /copy-trading, /research, /reports
+    // Institutional Statements, Attribution, Fee Disclosure & Audit Export (/reports)
+    const stmtRes = await api.getInstitutionalStatement().catch(() => null);
+    const st = stmtRes?.statement;
+    if (!st) {
+      body.innerHTML = `<div class="p-6 text-surface-400 text-xs">Unable to generate statement telemetry.</div>`;
+      return;
+    }
+    const sm = st.summary;
+    const attr = st.strategy_attribution || [];
+
     body.innerHTML = `
-      <div class="glass-card rounded-xl p-6 space-y-4 text-xs">
-        <div class="flex items-center justify-between">
-          <span class="text-white font-semibold">Portfolio & Allocation Summary</span>
-          <span class="chip chip-yellow font-mono">${portfolio.summary.data_origin}</span>
+      <div class="glass-card rounded-xl p-6 mb-6 text-xs space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-white">Institutional Account Statement (${st.statement_id})</h3>
+              <span class="chip chip-yellow font-mono text-[10px]">DATA ORIGIN: ${st.data_origin}</span>
+              <span class="chip chip-red font-mono text-[10px]">${st.execution_environment}</span>
+            </div>
+            <p class="text-surface-400 mt-1">Holder: ${st.account_holder.name} (${st.account_holder.role}) • Generated: ${new Date(st.generated_at).toLocaleString()}</p>
+          </div>
+          <a href="/api/institutional/statement?format=csv" class="btn-primary px-4 py-2 rounded-lg text-white font-semibold">⬇️ Export CSV Statement</a>
         </div>
-        <div class="grid sm:grid-cols-4 gap-4">
-          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Balance</span><strong class="text-white font-mono">$${portfolio.summary.balance.toLocaleString()}</strong></div>
-          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Allocated</span><strong class="text-brand-400 font-mono">$${(portfolio.summary.allocated_capital || 0).toLocaleString()}</strong></div>
-          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Active Mandates</span><strong class="text-white font-mono">${portfolio.subscriptions.length}</strong></div>
-          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">PostgreSQL DB</span><strong class="text-white font-mono">${sys.database?.ready ? 'Connected' : 'Awaiting DATABASE_URL'}</strong></div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Balance</span><strong class="text-white font-mono">$${sm.balance_usd.toLocaleString()}</strong></div>
+          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Equity / HWM</span><strong class="text-white font-mono">$${sm.equity_usd.toLocaleString()} / $${sm.high_water_mark_usd.toLocaleString()}</strong></div>
+          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Realized P&L</span><strong class="${sm.realized_pnl_usd >= 0 ? 'text-profit' : 'text-loss'} font-mono">$${sm.realized_pnl_usd.toLocaleString()}</strong></div>
+          <div class="p-3 rounded bg-surface-900/70 border border-surface-800"><span class="text-surface-500 block">Drawdown</span><strong class="text-loss font-mono">${sm.current_drawdown_pct}%</strong></div>
         </div>
-        <p class="text-surface-400 leading-relaxed">
-          Full historical backtesting (<code class="text-surface-200">research/</code>), risk-normalized multi-strategy attribution, and institutional PDF/CSV statements activate progressively across Phases 2–6 without altering or fabricating baseline metrics.
-        </p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-6 mb-6 text-xs">
+        <div class="glass-card rounded-xl p-6">
+          <h3 class="text-sm font-semibold text-white mb-3">Strategy P&L Attribution</h3>
+          ${attr.length ? `
+            <table class="w-full">
+              <thead><tr class="border-b border-surface-800 text-surface-500"><th class="text-left pb-2">Strategy</th><th class="text-left pb-2">Origin</th><th class="text-right pb-2">Trades</th><th class="text-right pb-2">Win Rate</th><th class="text-right pb-2">Net P&L</th></tr></thead>
+              <tbody>
+                ${attr.map(a => `<tr class="border-b border-surface-800/50"><td class="py-2 text-white font-medium">${a.strategy_name}</td><td class="py-2 font-mono">${a.data_origin}</td><td class="py-2 text-right font-mono">${a.trades_closed}</td><td class="py-2 text-right font-mono">${a.win_rate_pct ?? '—'}%</td><td class="py-2 text-right font-mono ${a.realized_pnl_usd >= 0 ? 'text-profit' : 'text-loss'}">$${a.realized_pnl_usd}</td></tr>`).join('')}
+              </tbody>
+            </table>` : '<div class="text-surface-500 py-4">No closed trades recorded for attribution yet.</div>'}
+        </div>
+
+        <div class="glass-card rounded-xl p-6 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-white">HWM Fee Accounting Preview</h3>
+            <span class="chip chip-yellow text-[10px]">NO BILLING ACTIVE</span>
+          </div>
+          <p class="text-[11px] text-surface-400">Accounting model only — UltraLOB assesses zero live fees until regulated custody & licensing are established.</p>
+          <form id="fee-form" onsubmit="return false;" class="grid grid-cols-4 gap-2">
+            <div><label class="text-surface-500 block mb-1">Beg Eq</label><input name="beginningEquity" type="number" value="10000" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+            <div><label class="text-surface-500 block mb-1">End Eq</label><input name="endingEquity" type="number" value="11500" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+            <div><label class="text-surface-500 block mb-1">Mgmt %</label><input name="annualMgmtFeePct" type="number" step="0.25" value="1.0" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+            <div><label class="text-surface-500 block mb-1">Perf %</label><input name="performanceFeePct" type="number" step="1" value="15" class="w-full bg-surface-800 border border-surface-700 rounded px-2 py-1.5 text-white font-mono"></div>
+            <button type="submit" class="col-span-4 btn-outline py-1.5 rounded-lg text-brand-300 font-semibold">Calculate Accounting Accrual</button>
+          </form>
+          <div id="fee-out" class="p-2.5 rounded bg-surface-900/70 border border-surface-800 font-mono text-surface-400">Preview management & high-water-mark performance accrual.</div>
+        </div>
       </div>`;
+
+    document.getElementById('fee-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(e.target));
+      const r = await api.previewFeeSchedule({ ...f, highWaterMarkEquity: f.beginningEquity });
+      document.getElementById('fee-out').innerHTML = `Mgmt: $${r.management_fee_usd} • HWM Perf: $${r.performance_fee_usd} • Net Equity: $${r.net_ending_equity} (${r.billing_status})`;
+    });
   } catch (err) {
     body.innerHTML = `<div class="p-6 text-loss text-xs">Error loading section: ${err.message}</div>`;
   }

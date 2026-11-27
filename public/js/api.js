@@ -39,6 +39,17 @@ export const api = {
   getMacroEvents: (symbol = 'XAUUSD') => request(`/api/ai/events?symbol=${encodeURIComponent(symbol)}`),
   addMacroBlackout: (payload) => request('/api/ai/events', { method: 'POST', body: JSON.stringify(payload) }),
 
+  // Institutional Reports, Mandates, Orgs, Fees & Enterprise Keys (Phase 6)
+  getInstitutionalStatement: () => request('/api/institutional/statement'),
+  getMandate: () => request('/api/institutional/mandate'),
+  updateMandate: (payload) => request('/api/institutional/mandate', { method: 'PUT', body: JSON.stringify(payload) }),
+  previewFeeSchedule: (payload) => request('/api/institutional/fees/preview', { method: 'POST', body: JSON.stringify(payload) }),
+  getApiKeys: () => request('/api/institutional/api-keys'),
+  createApiKey: (payload) => request('/api/institutional/api-keys', { method: 'POST', body: JSON.stringify(payload) }),
+  revokeApiKey: (id) => request(`/api/institutional/api-keys/${id}`, { method: 'DELETE' }),
+  getOrganization: () => request('/api/institutional/organization'),
+  addOrgMember: (payload) => request('/api/institutional/organization/members', { method: 'POST', body: JSON.stringify(payload) }),
+
   // Portfolio, Risk Engine & Copy Trading
   getPortfolio: () => request('/api/copy-trading/portfolio'),
   getPortfolioSummary: () => request('/api/portfolio/summary'),

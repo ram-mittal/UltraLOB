@@ -69,11 +69,11 @@ UltraLOB never mixes data sources without explicit UI and API labeling:
 
 ---
 
-## 4. Phased Implementation Roadmap
+## 4. Implementation Status (Phases 1–6 Complete)
 
-- **Phase 1 (Current):** Architecture audit, PostgreSQL schema + migrations (`db/`), RBAC auth + refresh tokens, Strategy Registry (`UL-01`..`UL-05` in `RESEARCH` status, zero fake metrics), 12-section institutional UI navigation, honest provenance labeling.
-- **Phase 2:** Python backtesting engine (`research/`), transaction cost / slippage / OOS / walk-forward / Monte Carlo suite, implement `UL-01` (`Gold Institutional Trend`), `UL-02` (`Liquidity Sweep Reversal`), `UL-03` (`Volume Profile Mean Reversion`), XAUUSD historical data ingestion.
-- **Phase 3:** Unify `api/broker.js` & `api/copy-trading.js` onto `execution/` PostgreSQL bridge, upgrade MQL5 EA (account type verification, symbol spec guard, heartbeat, idempotent reconnect), full risk-normalized copy sizing, Execution Monitor UI.
-- **Phase 4:** Portfolio allocation engine (equal-risk, volatility-adjusted, fixed), independent hard Risk Engine & kill switches, Risk Configuration UI with audit log.
-- **Phase 5:** UltraLOB AI (7 deterministic/advisory engines + LLM synthesis strictly bounded by risk engine).
-- **Phase 6:** Institutional mandates, org workspaces, investor reporting, fee accounting disclosures, enterprise API keys.
+- **Phase 1 (Foundation):** Architecture audit, PostgreSQL schema + migrations (`db/migrations/`), RBAC auth + rotating refresh tokens (`api/auth.js`, `api/security.js`), honest XAUUSD Strategy Registry (`UL-01`..`UL-05` in `RESEARCH` status with zero fake metrics), 12-section institutional UI navigation, strict data provenance labeling.
+- **Phase 2 (Quant Research Engine):** Pure-Python OHLCV backtesting engine (`research/engine.py`, `metrics.py`, `monte_carlo.py`, `data_feed.py`) modeling spread/commission/slippage/swap/delay, OOS split, walk-forward windows, and Monte Carlo trade-sequence stress tests; implemented `UL-01`, `UL-02`, and `UL-03` on XAUUSD with Twelve Data & MT5 CSV loaders (`api/research.js`).
+- **Phase 3 (MT5 Execution Bridge):** Unified broker & copy-trading routing onto PostgreSQL `execution/` bridge (`UltraLOB_Bridge_EA.mq5` v0.2.0 with `OrderCalcMargin` & version telemetry), shared risk-normalized sizing (`computeRiskNormalizedVolume`), and real-time Execution Monitor UI (`/execution`).
+- **Phase 4 (Portfolio & Risk Engine):** Multi-strategy allocation optimizer (`portfolio/allocator.js` supporting Fixed, Risk-Weighted, Volatility-Adjusted, ERC, and Fractional), net/gross exposure aggregation, empirical correlation checks, independent hard Risk Engine (`risk/engine.js`) with Global/Strategy/Instrument kill switches and immutable audit trails (`/portfolio`, `/risk`).
+- **Phase 5 (UltraLOB AI):** 7-engine advisory-only pipeline (`ai/engines.js`, `ai/events.js`, `api/ai.js`) integrating Macro Event Intelligence blackouts and mandatory Risk Engine re-verification before human authorization (`/ai`).
+- **Phase 6 (Institutional Features):** Investor mandate enforcement (`investor_profiles`), organization desk management, HWM fee accounting framework (explicitly non-billing), scoped enterprise API keys, and CSV/JSON institutional statements (`/reports`, `/settings`).

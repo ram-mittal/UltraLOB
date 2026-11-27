@@ -13,6 +13,7 @@ import copyTradingHandler from "./copy-trading.js";
 import portfolioHandler from "./portfolio.js";
 import researchHandler from "./research.js";
 import aiHandler from "./ai.js";
+import institutionalHandler from "./institutional.js";
 import WebSocket, { WebSocketServer } from "ws";
 import { getDatabaseStatus } from "../db/client.js";
 import { ensureDbReady } from "./store.js";
@@ -128,6 +129,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use("/api/portfolio", (request, response) => portfolioHandler(request, response));
   app.use("/api/research", (request, response) => researchHandler(request, response));
   app.use("/api/ai", (request, response) => aiHandler(request, response));
+  app.use("/api/institutional", (request, response) => institutionalHandler(request, response));
 
   // --- Health Check & Institutional System Telemetry ---
   app.get("/healthz", (_request, response) => {

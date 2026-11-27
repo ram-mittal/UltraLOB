@@ -10,6 +10,7 @@ import { getDatabaseStatus } from "../db/client.js";
 import { computeRiskNormalizedVolume } from "../execution/risk-manager.js";
 import { computePortfolioExposure } from "../portfolio/allocator.js";
 import { evaluateTradeGovernance } from "../risk/engine.js";
+import { validateAgainstMandate, createDefaultMandate } from "../institutional/governance.js";
 
 function computePortfolioMetrics(portfolio) {
   const subs = portfolio.subscriptions || [];
@@ -224,6 +225,16 @@ export default async function copyTradingHandler(request, response, { executionS
     const allocNum = Number(allocation);
     if (!Number.isFinite(allocNum) || allocNum < strategy.min_capital) {
       return response.status(400).json({ error: `Minimum capital for ${strategy.name} is $${strategy.min_capital}.` });
+    }
+
+    const userMandate = mem.mandates?.get(userId) || createDefaultMandate();
+    const mandateCheck = validateAgainstMandate({
+      mandate: userMandate,
+      strategy,
+      requestedMaxDrawdownPct: Number(maxDrawdownPct) || 10
+    });
+    if (!mandateCheck.allowed) {
+      return response.status(403).json({ error: mandateCheck.message, code: mandateCheck.code });
     }
 
     const isResearchOnly = strategy.lifecycle_status === "RESEARCH";

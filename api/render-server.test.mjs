@@ -388,6 +388,48 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     const evStatus = await fetch(baseUrl + "/api/ai/events?symbol=XAUUSD");
     assert.equal(evStatus.status, 200);
     assert.equal((await evStatus.json()).restriction.status, "RESTRICTED");
+
+    // 12. Phase 6 Institutional Mandates, Statements, HWM Fee Framework & Enterprise API Keys
+    const mandatePut = await fetch(baseUrl + "/api/institutional/mandate", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ risk_tolerance: "CONSERVATIVE", permitted_instruments: ["XAUUSD"], max_portfolio_drawdown_pct: 10 })
+    });
+    assert.equal(mandatePut.status, 200);
+
+    // Mandate blocks subscribing to high-risk UL-04 on CONSERVATIVE mandate
+    const mandateBlockedSub = await fetch(baseUrl + "/api/copy-trading/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ strategyId: "ul-04-gold-scalper", allocation: 2000, maxDrawdownPct: 8 })
+    });
+    assert.equal(mandateBlockedSub.status, 403);
+    assert.equal((await mandateBlockedSub.json()).code, "MANDATE_RISK_TIER_EXCEEDED");
+
+    const csvStmt = await fetch(baseUrl + "/api/institutional/statement?format=csv", {
+      headers: { Authorization: `Bearer ${invData.token}` }
+    });
+    assert.equal(csvStmt.status, 200);
+    assert.match(await csvStmt.text(), /StatementID,GeneratedAt,DataOrigin/);
+
+    const feeRes = await fetch(baseUrl + "/api/institutional/fees/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ beginningEquity: 10000, endingEquity: 12000, highWaterMarkEquity: 10000, annualMgmtFeePct: 0, performanceFeePct: 15 })
+    });
+    assert.equal(feeRes.status, 200);
+    const feeData = await feeRes.json();
+    assert.equal(feeData.billing_status, "ACCOUNTING_FRAMEWORK_ONLY_NO_BILLING");
+    assert.equal(feeData.performance_fee_usd, 300);
+
+    const apiKeyCreate = await fetch(baseUrl + "/api/institutional/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ label: "CIO Read Feed" })
+    });
+    assert.equal(apiKeyCreate.status, 201);
+    const keyPayload = await apiKeyCreate.json();
+    assert.match(keyPayload.secret_key, /^ulb_ent_/);
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

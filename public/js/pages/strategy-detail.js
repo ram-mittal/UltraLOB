@@ -221,6 +221,25 @@ export async function init(route) {
     return;
   }
 
+  // Fetch any completed research/backtest runs for honest Due Diligence display
+  const btData = await api.getBacktests(s.id).catch(() => ({ backtests: [] }));
+  const latestBt = btData.backtests?.[0] || null;
+  if (latestBt && latestBt.data_origin === 'REAL_MARKET' && s.total_return == null) {
+    const m = latestBt.metrics || latestBt;
+    s.total_return = m.total_return_pct ?? s.total_return;
+    s.cagr = m.cagr_pct ?? s.cagr;
+    s.sharpe_ratio = m.sharpe_ratio ?? s.sharpe_ratio;
+    s.sortino_ratio = m.sortino_ratio ?? s.sortino_ratio;
+    s.max_drawdown = m.max_drawdown_pct ?? s.max_drawdown;
+    s.profit_factor = m.profit_factor ?? s.profit_factor;
+    s.win_rate = m.win_rate_pct ?? s.win_rate;
+    s.expectancy = m.expectancy_r ?? s.expectancy;
+    s.total_trades = m.total_trades ?? s.total_trades;
+    s.risk_of_ruin = m.risk_of_ruin_pct ?? s.risk_of_ruin;
+    s.equity_curve = latestBt.equity_curve || s.equity_curve;
+    s.drawdown = latestBt.drawdown_series || s.drawdown;
+  }
+
   root.innerHTML = renderStrategyHTML(s);
 
   if (Array.isArray(s.equity_curve) && s.equity_curve.length > 0) {
