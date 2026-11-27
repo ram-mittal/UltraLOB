@@ -11,6 +11,8 @@ import authHandler from "./auth.js";
 import brokerHandler from "./broker.js";
 import copyTradingHandler from "./copy-trading.js";
 import WebSocket, { WebSocketServer } from "ws";
+import { getDatabaseStatus } from "../db/client.js";
+import { ensureDbReady } from "./store.js";
 import {
   LIVE_SYMBOLS,
   EQUITY_SYMBOLS,
@@ -121,9 +123,34 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use("/api/broker", (request, response) => brokerHandler(request, response));
   app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response));
 
-  // --- Health Check ---
+  // --- Health Check & Institutional System Telemetry ---
   app.get("/healthz", (_request, response) => {
     response.status(200).json({ status: "ok", service: "ultralob" });
+  });
+
+  app.get("/api/system/status", async (_request, response) => {
+    await ensureDbReady().catch(() => false);
+    const db = getDatabaseStatus();
+    response.setHeader("Cache-Control", "no-store, max-age=0");
+    response.status(200).json({
+      platform: "UltraLOB — Institutional Strategy Allocation & Risk Infrastructure",
+      phase: "Phase 1 (Foundation, Strategy Registry, RBAC, Demo Execution Bridge)",
+      database: db,
+      execution: {
+        environment: "DEMO_ONLY",
+        live_execution_enabled: false,
+        postgres_configured: Boolean(executionStore)
+      },
+      market_feeds: {
+        btc_usd: { provider: "Kraken Spot", status: "LIVE", origin: "REAL_MARKET" },
+        us_equities: { provider: "Twelve Data", configured: Boolean(process.env.TWELVE_DATA_API_KEY), origin: "REAL_MARKET" },
+        xauusd: { provider: "Broker / MT5 Terminal Feed", status: "AWAITING_PHASE_2_FEED", origin: "AWAITING_DATA" }
+      },
+      ai_engine: {
+        mode: "ADVISORY_PENDING_PHASE_5",
+        autonomous_override_permitted: false
+      }
+    });
   });
 
   // --- MT5 Execution Bridge & Risk Manager Router ---
@@ -140,7 +167,11 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
 
   // --- SPA Routes: serve index.html ---
   const spaFile = path.join(projectRoot, "index.html");
-  app.get(["/", "/marketplace", "/dashboard", "/broker", "/terminal", "/auth", "/strategy/:id"], (_request, response) => {
+  app.get([
+    "/", "/overview", "/marketplace", "/portfolio", "/ai", "/markets",
+    "/risk", "/copy-trading", "/broker", "/execution", "/research",
+    "/reports", "/settings", "/dashboard", "/terminal", "/auth", "/strategy/:id"
+  ], (_request, response) => {
     response.sendFile(spaFile);
   });
 

@@ -1,26 +1,32 @@
 import crypto from "node:crypto";
-import { getStore, saveStore, extractUserId } from "./store.js";
+import { getMemoryStore, extractUserId } from "./store.js";
+import { getDatabaseStatus } from "../db/client.js";
 
 function generateMt5EaSource(bridgeToken, baseUrl) {
   return `//+------------------------------------------------------------------+
 //| UltraLOB_CopyBridge.mq5                                          |
-//| Connects MetaTrader 5 / Exness Terminal to UltraLOB Web EA       |
+//| Connects MetaTrader 5 / Exness Terminal to UltraLOB Web Engine   |
+//| NOTE: Use UltraLOB_Bridge_EA.mq5 (/mt5/Experts) for full         |
+//| PostgreSQL demo-risk enforcement & OrderCheck validation.        |
 //+------------------------------------------------------------------+
 #property copyright "UltraLOB"
-#property version   "1.00"
+#property version   "1.10"
 #include <Trade\\Trade.mqh>
 
 input string InpServerUrl   = "${baseUrl || "https://ultralob.onrender.com"}";
 input string InpBridgeToken = "${bridgeToken}";
-input double InpLotScale    = 1.0;
+input double InpRiskPct     = 0.50;
 input int    InpPollSeconds = 3;
 
 CTrade trade;
-datetime lastPoll = 0;
 
 int OnInit() {
+   if(AccountInfoInteger(ACCOUNT_TRADE_MODE) != ACCOUNT_TRADE_MODE_DEMO) {
+      Print("UltraLOB: Non-demo account blocked in Phase 1 build.");
+      return(INIT_FAILED);
+   }
    EventSetTimer(InpPollSeconds);
-   Print("UltraLOB MT5/Exness Bridge initialized. Polling: ", InpServerUrl);
+   Print("UltraLOB MT5/Exness Bridge initialized (DEMO ONLY). Polling: ", InpServerUrl);
    return(INIT_SUCCEEDED);
 }
 
@@ -37,7 +43,6 @@ void OnTimer() {
    if(res == 200) {
       string body = CharArrayToString(result);
       Print("UltraLOB Signal Poll OK: ", body);
-      // Parse JSON signal batch and invoke trade.Buy / trade.Sell with SL & TP
    }
 }
 `;
@@ -53,7 +58,7 @@ export default async function brokerHandler(request, response) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/broker/, "").split("?")[0];
   const userId = extractUserId(request);
-  const store = getStore();
+  const mem = getMemoryStore();
 
   // Public MT5 EA Signal Queue Polling endpoint (authenticated by bridgeToken)
   if (request.method === "GET" && subPath === "/mt5/signals") {
@@ -61,16 +66,16 @@ export default async function brokerHandler(request, response) {
     if (!token) {
       return response.status(401).json({ error: "Bridge token is required." });
     }
-    const matchingSignals = (store.mt5Signals || []).filter(
+    const matchingSignals = mem.mt5Signals.filter(
       (s) => s.bridgeToken === token && s.status === "pending"
     );
     const ack = String(request.query?.ack || "false") === "true";
     if (ack && matchingSignals.length > 0) {
       for (const sig of matchingSignals) sig.status = "dispatched";
-      saveStore();
     }
     return response.status(200).json({
       status: "ok",
+      environment: "DEMO_ONLY",
       count: matchingSignals.length,
       signals: matchingSignals,
       timestamp: Date.now()
@@ -79,7 +84,7 @@ export default async function brokerHandler(request, response) {
 
   // Download MQL5 Expert Advisor file for MT5 / Exness Desktop Terminal
   if (request.method === "GET" && subPath === "/mt5/ea") {
-    const existing = store.brokers[userId];
+    const existing = mem.brokers.get(userId);
     const token = existing?.bridgeToken || ("ulb-" + crypto.randomBytes(8).toString("hex"));
     const origin = `${request.protocol || "https"}://${request.get?.("host") || "ultralob.onrender.com"}`;
     const source = generateMt5EaSource(token, origin);
@@ -89,11 +94,20 @@ export default async function brokerHandler(request, response) {
   }
 
   if (request.method === "GET" && subPath === "/status") {
-    const conn = store.brokers[userId];
+    const conn = mem.brokers.get(userId) || null;
+    const dbStatus = getDatabaseStatus();
     if (!conn) {
-      return response.status(200).json({ connected: false, broker: null });
+      return response.status(200).json({
+        connected: false,
+        broker: null,
+        execution_bridge: {
+          postgres_configured: dbStatus.configured,
+          endpoint: "/api/execution",
+          environment: "DEMO_ONLY"
+        }
+      });
     }
-    const pendingCount = (store.mt5Signals || []).filter(
+    const pendingCount = mem.mt5Signals.filter(
       (s) => s.bridgeToken === conn.bridgeToken && s.status === "pending"
     ).length;
     return response.status(200).json({
@@ -101,20 +115,31 @@ export default async function brokerHandler(request, response) {
       broker: {
         ...conn,
         pendingSignals: pendingCount
+      },
+      execution_bridge: {
+        postgres_configured: dbStatus.configured,
+        endpoint: "/api/execution",
+        environment: "DEMO_ONLY"
       }
     });
   }
 
   if (request.method === "POST" && subPath === "/connect") {
-    const { type, server, login, password, account_id, api_key, api_secret, mode, metaapi_token, metaapi_account_id } = request.body || {};
+    const { type, server, login, password, account_id, api_key, api_secret, mode, environment = "DEMO", metaapi_token, metaapi_account_id } = request.body || {};
     const brokerType = String(type || "").toLowerCase();
     if (!["mt5", "exness"].includes(brokerType)) {
       return response.status(400).json({ error: "Broker type must be 'mt5' or 'exness'." });
     }
+    if (String(environment).toUpperCase() === "LIVE") {
+      return response.status(403).json({
+        error: "Live real-money broker execution is locked in Phase 1. Only DEMO accounts are permitted.",
+        code: "DEMO_ONLY_BUILD"
+      });
+    }
 
     let accountLabel = "";
     let serverLabel = "";
-    let connectionMode = mode || "ea-bridge";
+    let connectionMode = mode || "ea-bridge-demo";
     let upstreamVerified = false;
     let verificationNote = "";
 
@@ -125,7 +150,6 @@ export default async function brokerHandler(request, response) {
       accountLabel = String(login).trim();
       serverLabel = String(server).trim();
 
-      // Optional live MetaApi verification when user provides a MetaApi token + account ID
       if (metaapi_token && metaapi_account_id) {
         try {
           const check = await fetch(
@@ -134,30 +158,32 @@ export default async function brokerHandler(request, response) {
           );
           if (check.ok) {
             upstreamVerified = true;
-            connectionMode = "metaapi-live";
-            verificationNote = "Verified live via MetaApi Cloud.";
+            connectionMode = "metaapi-demo";
+            verificationNote = "Verified via MetaApi Cloud.";
           }
         } catch {
-          verificationNote = "MetaApi unreachable; using MT5 EA Bridge queue.";
+          verificationNote = "MetaApi unreachable; paired in MT5 Demo EA Bridge queue mode.";
         }
       }
       if (!verificationNote) {
-        verificationNote = "Connected via UltraLOB MT5 EA Bridge + Paper Execution Mirror.";
+        verificationNote = "Paired in DEMO EA Bridge mode. Confirm terminal heartbeat via UltraLOB_Bridge_EA.mq5.";
       }
     } else {
       if (!account_id || !api_key || !api_secret) {
         return response.status(400).json({ error: "Exness Account ID, API Key, and API Secret are required." });
       }
       accountLabel = String(account_id).trim();
-      serverLabel = String(server || "Exness-MT5Real").trim();
-      verificationNote = "Connected via Exness MT5/API Bridge + Paper Execution Mirror.";
+      serverLabel = String(server || "Exness-MT5Trial").trim();
+      verificationNote = "Paired with Exness MT5 Demo Bridge queue (no live capital custody).";
     }
 
     const bridgeToken = "ulb-" + crypto.randomBytes(10).toString("hex");
     const connection = {
       id: "brk-" + crypto.randomUUID().slice(0, 8),
       type: brokerType,
-      name: brokerType === "mt5" ? "MetaTrader 5" : "Exness",
+      name: brokerType === "mt5" ? "MetaTrader 5 (Demo)" : "Exness MT5 (Demo)",
+      environment: "DEMO",
+      data_origin: "DEMO_BROKER",
       account: accountLabel,
       server: serverLabel,
       credentialHint: maskSecret(brokerType === "mt5" ? password : api_key),
@@ -169,16 +195,14 @@ export default async function brokerHandler(request, response) {
       status: "connected"
     };
 
-    // Never persist raw password or api_secret!
-    store.brokers[userId] = connection;
-    saveStore();
+    // Never persist raw password or api_secret
+    mem.brokers.set(userId, connection);
 
     return response.status(200).json({ connected: true, broker: connection });
   }
 
   if (request.method === "POST" && subPath === "/disconnect") {
-    delete store.brokers[userId];
-    saveStore();
+    mem.brokers.delete(userId);
     return response.status(200).json({ connected: false, broker: null });
   }
 

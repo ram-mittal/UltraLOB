@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
-import { getStore, saveStore, getPortfolioForUser, getAllStrategies, extractUserId } from "./store.js";
+import {
+  getMemoryStore,
+  getPortfolioForUser,
+  getAllStrategiesInMemory,
+  extractAuthContext
+} from "./store.js";
+import { getDatabaseStatus } from "../db/client.js";
 
 function computePortfolioMetrics(portfolio) {
   const subs = portfolio.subscriptions || [];
@@ -9,33 +15,63 @@ function computePortfolioMetrics(portfolio) {
 
   const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
   const realized = closedTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
-  const subPnl = subs.reduce((sum, s) => sum + (Number(s.pnl) || 0), 0);
-  const totalPnl = Number((subPnl + realized).toFixed(2));
   const equity = Number((portfolio.balance + unrealized).toFixed(2));
+  const highWater = Math.max(Number(portfolio.equity_high_water || 0), equity, portfolio.balance);
+  portfolio.equity_high_water = highWater;
+  const drawdownPct = highWater > 0 ? Number((((highWater - equity) / highWater) * 100).toFixed(2)) : 0;
+
+  const allocatedCapital = Number(activeSubs.reduce((sum, s) => sum + Number(s.allocation || 0), 0).toFixed(2));
+  const availableCapital = Number(Math.max(0, equity - allocatedCapital).toFixed(2));
+  const marginUsed = Number(openTrades.reduce((sum, t) => sum + Number(t.margin || (t.qty * t.price * 0.05)), 0).toFixed(2));
   const wins = closedTrades.filter((t) => (t.pnl || 0) > 0).length;
-  const winRate = closedTrades.length > 0 ? Number(((wins / closedTrades.length) * 100).toFixed(1)) : 0;
+  const winRate = closedTrades.length > 0 ? Number(((wins / closedTrades.length) * 100).toFixed(1)) : null;
 
   return {
+    data_origin: portfolio.dataOrigin || "PAPER_SANDBOX",
     balance: Number(portfolio.balance.toFixed(2)),
     equity,
-    margin_used: Number((activeSubs.reduce((sum, s) => sum + s.allocation * 0.25, 0)).toFixed(2)),
-    free_margin: Number(Math.max(0, equity - activeSubs.reduce((sum, s) => sum + s.allocation * 0.25, 0)).toFixed(2)),
+    allocated_capital: allocatedCapital,
+    available_capital: availableCapital,
+    margin_used: marginUsed,
+    free_margin: Number(Math.max(0, equity - marginUsed).toFixed(2)),
+    drawdown_pct: drawdownPct,
     unrealized_pnl: Number(unrealized.toFixed(2)),
-    total_pnl: totalPnl,
-    pnl_percent: portfolio.balance > 0 ? Number(((totalPnl / portfolio.balance) * 100).toFixed(2)) : 0,
+    realized_pnl: Number(realized.toFixed(2)),
+    total_pnl: Number((realized + unrealized).toFixed(2)),
+    pnl_percent: portfolio.balance > 0 ? Number((((realized + unrealized) / portfolio.balance) * 100).toFixed(2)) : 0,
     active_copies: activeSubs.length,
-    total_trades_today: portfolio.trades.length,
+    open_positions_count: openTrades.length,
+    total_trades: portfolio.trades.length,
     win_rate_today: winRate
   };
 }
 
-function queueBrokerSignal(store, userId, trade) {
-  const broker = store.brokers[userId];
+function getRiskConfig(mem, userId) {
+  if (!mem.riskConfigs.has(userId)) {
+    mem.riskConfigs.set(userId, {
+      max_risk_per_trade_pct: 0.5,
+      max_daily_loss_pct: 2.0,
+      max_weekly_loss_pct: 5.0,
+      max_monthly_loss_pct: 10.0,
+      max_drawdown_pct: 12.0,
+      max_open_positions: 5,
+      max_leverage: 20.0,
+      max_spread_points: 100.0,
+      kill_switch_active: false,
+      updated_at: new Date().toISOString()
+    });
+  }
+  return mem.riskConfigs.get(userId);
+}
+
+function queueBrokerSignal(mem, userId, trade) {
+  const broker = mem.brokers.get(userId);
   if (!broker) return null;
   const signal = {
     id: "sig-" + crypto.randomUUID().slice(0, 8),
     bridgeToken: broker.bridgeToken,
     brokerType: broker.type,
+    environment: "DEMO",
     account: broker.account,
     symbol: trade.symbol.replace("/", ""),
     side: trade.side,
@@ -47,34 +83,101 @@ function queueBrokerSignal(store, userId, trade) {
     status: "pending",
     createdAt: new Date().toISOString()
   };
-  store.mt5Signals.unshift(signal);
-  if (store.mt5Signals.length > 200) store.mt5Signals.length = 200;
+  mem.mt5Signals.unshift(signal);
+  if (mem.mt5Signals.length > 200) mem.mt5Signals.length = 200;
   return signal;
 }
 
 export default function copyTradingHandler(request, response) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/copy-trading/, "").split("?")[0];
-  const userId = extractUserId(request);
-  const store = getStore();
+  const auth = extractAuthContext(request);
+  const userId = auth.userId;
+  const mem = getMemoryStore();
   const portfolio = getPortfolioForUser(userId);
+  const riskConfig = getRiskConfig(mem, userId);
 
   // GET /api/copy-trading/portfolio
   if (request.method === "GET" && subPath === "/portfolio") {
+    const dbStatus = getDatabaseStatus();
     return response.status(200).json({
       summary: computePortfolioMetrics(portfolio),
       subscriptions: portfolio.subscriptions,
       trades: portfolio.trades.slice(0, 50),
       equityHistory: portfolio.equityHistory,
       mcConfig: portfolio.mcConfig,
-      broker: store.brokers[userId] || null
+      broker: mem.brokers.get(userId) || null,
+      riskConfig,
+      riskAlerts: mem.riskEvents.filter((e) => e.userId === userId).slice(0, 20),
+      systemStatus: {
+        database: dbStatus,
+        executionEnvironment: "DEMO_ONLY"
+      }
     });
+  }
+
+  // POST /api/copy-trading/sandbox-capital — Explicitly fund Paper Sandbox capital (never fabricated silently)
+  if (request.method === "POST" && subPath === "/sandbox-capital") {
+    const amount = Number(request.body?.amount);
+    if (!Number.isFinite(amount) || amount < 100 || amount > 10_000_000) {
+      return response.status(400).json({ error: "Sandbox allocation amount must be between $100 and $10,000,000." });
+    }
+    portfolio.balance = Number(amount.toFixed(2));
+    portfolio.equity = portfolio.balance;
+    portfolio.equity_high_water = portfolio.balance;
+    portfolio.dataOrigin = "PAPER_SANDBOX";
+    portfolio.equityHistory = [{ label: "Init", value: portfolio.balance }];
+    return response.status(200).json({
+      status: "funded",
+      data_origin: "PAPER_SANDBOX",
+      balance: portfolio.balance,
+      summary: computePortfolioMetrics(portfolio)
+    });
+  }
+
+  // POST /api/copy-trading/risk-config — Update independent hard risk limits / kill switch
+  if (request.method === "POST" && subPath === "/risk-config") {
+    const b = request.body || {};
+    if (b.kill_switch_active !== undefined) riskConfig.kill_switch_active = Boolean(b.kill_switch_active);
+    if (Number.isFinite(Number(b.max_risk_per_trade_pct))) {
+      riskConfig.max_risk_per_trade_pct = Math.min(2.0, Math.max(0.05, Number(b.max_risk_per_trade_pct)));
+    }
+    if (Number.isFinite(Number(b.max_daily_loss_pct))) {
+      riskConfig.max_daily_loss_pct = Math.min(10.0, Math.max(0.25, Number(b.max_daily_loss_pct)));
+    }
+    if (Number.isFinite(Number(b.max_drawdown_pct))) {
+      riskConfig.max_drawdown_pct = Math.min(25.0, Math.max(1.0, Number(b.max_drawdown_pct)));
+    }
+    if (Number.isInteger(Number(b.max_open_positions))) {
+      riskConfig.max_open_positions = Math.min(20, Math.max(1, Number(b.max_open_positions)));
+    }
+    riskConfig.updated_at = new Date().toISOString();
+
+    mem.riskEvents.unshift({
+      id: crypto.randomUUID().slice(0, 8),
+      userId,
+      severity: riskConfig.kill_switch_active ? "KILL_SWITCH" : "INFO",
+      message: riskConfig.kill_switch_active
+        ? "Global kill switch ACTIVATED — all new order execution halted."
+        : "Risk limits updated.",
+      createdAt: riskConfig.updated_at
+    });
+
+    return response.status(200).json({ riskConfig });
   }
 
   // POST /api/copy-trading/subscribe
   if (request.method === "POST" && subPath === "/subscribe") {
-    const { strategyId, allocation = 1000, lotMultiplier = 1.0, maxDrawdownPct = 15, autoMcEnabled = true } = request.body || {};
-    const strategy = getAllStrategies().find((s) => s.id === strategyId);
+    const {
+      strategyId,
+      allocation = 1000,
+      riskPerTradePct = 0.5,
+      maxDrawdownPct = 10,
+      allocationMethod = "RISK_NORMALIZED",
+      autoMcEnabled = true
+    } = request.body || {};
+
+    const strategy = getAllStrategiesInMemory().find((s) => s.id === strategyId || s.code === strategyId);
     if (!strategy) return response.status(404).json({ error: "Strategy not found." });
 
     const allocNum = Number(allocation);
@@ -82,31 +185,46 @@ export default function copyTradingHandler(request, response) {
       return response.status(400).json({ error: `Minimum capital for ${strategy.name} is $${strategy.min_capital}.` });
     }
 
-    const existing = portfolio.subscriptions.find((s) => s.strategyId === strategyId);
+    const isResearchOnly = strategy.lifecycle_status === "RESEARCH";
+    const statusLabel = isResearchOnly ? "research_watch" : "active";
+
+    const existing = portfolio.subscriptions.find((s) => s.strategyId === strategy.id);
     if (existing) {
       existing.allocation = allocNum;
-      existing.lotMultiplier = Number(lotMultiplier) || 1.0;
-      existing.maxDrawdownPct = Number(maxDrawdownPct) || 15;
+      existing.riskPerTradePct = Math.min(riskConfig.max_risk_per_trade_pct, Math.max(0.05, Number(riskPerTradePct) || 0.5));
+      existing.maxDrawdownPct = Number(maxDrawdownPct) || 10;
+      existing.allocationMethod = allocationMethod;
       existing.autoMcEnabled = Boolean(autoMcEnabled);
-      existing.status = "active";
+      existing.status = statusLabel;
+      existing.lifecycle_status = strategy.lifecycle_status;
     } else {
       portfolio.subscriptions.unshift({
         strategyId: strategy.id,
+        code: strategy.code,
         strategyName: strategy.name,
-        icon: strategy.icon || "📈",
+        icon: strategy.icon || "🥇",
+        instrument: strategy.instrument,
+        lifecycle_status: strategy.lifecycle_status,
+        allocationMethod,
         allocation: allocNum,
-        lotMultiplier: Number(lotMultiplier) || 1.0,
-        maxDrawdownPct: Number(maxDrawdownPct) || 15,
+        riskPerTradePct: Math.min(riskConfig.max_risk_per_trade_pct, Math.max(0.05, Number(riskPerTradePct) || 0.5)),
+        maxDrawdownPct: Number(maxDrawdownPct) || 10,
         autoMcEnabled: Boolean(autoMcEnabled),
         pnl: 0,
         pnl_pct: 0,
         trades: 0,
-        status: "active",
+        status: statusLabel,
         startedAt: new Date().toISOString()
       });
     }
-    saveStore();
-    return response.status(200).json({ status: "subscribed", subscriptions: portfolio.subscriptions });
+
+    return response.status(200).json({
+      status: isResearchOnly ? "subscribed_research_watch" : "subscribed",
+      warning: isResearchOnly
+        ? "Strategy is in RESEARCH status (pending backtest). Copy mandate saved in watch-only mode; live execution blocked until validated."
+        : null,
+      subscriptions: portfolio.subscriptions
+    });
   }
 
   // POST /api/copy-trading/unsubscribe
@@ -115,7 +233,6 @@ export default function copyTradingHandler(request, response) {
     const idx = portfolio.subscriptions.findIndex((s) => s.strategyId === strategyId);
     if (idx === -1) return response.status(404).json({ error: "Subscription not found." });
     portfolio.subscriptions.splice(idx, 1);
-    saveStore();
     return response.status(200).json({ status: "unsubscribed", subscriptions: portfolio.subscriptions });
   }
 
@@ -124,8 +241,13 @@ export default function copyTradingHandler(request, response) {
     const { strategyId } = request.body || {};
     const sub = portfolio.subscriptions.find((s) => s.strategyId === strategyId);
     if (!sub) return response.status(404).json({ error: "Subscription not found." });
+    if (sub.lifecycle_status === "RESEARCH") {
+      return response.status(400).json({
+        error: "Cannot activate live copying on a strategy in RESEARCH stage prior to backtest validation.",
+        code: "LIFECYCLE_GATE_BLOCKED"
+      });
+    }
     sub.status = sub.status === "active" ? "paused" : "active";
-    saveStore();
     return response.status(200).json({ status: sub.status, subscription: sub });
   }
 
@@ -137,15 +259,15 @@ export default function copyTradingHandler(request, response) {
       enabled: cfg.enabled !== undefined ? Boolean(cfg.enabled) : portfolio.mcConfig.enabled,
       minTargetProb: Number(cfg.minTargetProb) || portfolio.mcConfig.minTargetProb,
       minEdgePct: Number(cfg.minEdgePct) >= 0 ? Number(cfg.minEdgePct) : portfolio.mcConfig.minEdgePct,
-      minExpectedReturnPct: Number.isFinite(Number(cfg.minExpectedReturnPct)) ? Number(cfg.minExpectedReturnPct) : portfolio.mcConfig.minExpectedReturnPct,
+      minExpectedReturnPct: Number.isFinite(Number(cfg.minExpectedReturnPct))
+        ? Number(cfg.minExpectedReturnPct)
+        : portfolio.mcConfig.minExpectedReturnPct,
       riskAmountUsd: Math.max(10, Number(cfg.riskAmountUsd) || portfolio.mcConfig.riskAmountUsd)
     };
-    saveStore();
     return response.status(200).json({ mcConfig: portfolio.mcConfig });
   }
 
   // POST /api/copy-trading/mc-signal
-  // Evaluates Monte Carlo results and optionally auto-executes onto connected MT5/Exness + copiers
   if (request.method === "POST" && subPath === "/mc-signal") {
     const {
       symbol = "BTC/USD",
@@ -182,6 +304,7 @@ export default function copyTradingHandler(request, response) {
     const evaluation = {
       signal: signalSide,
       qualified,
+      data_origin: "SIMULATED_RESEARCH",
       symbol,
       spot: spotNum,
       targetFirstProb: tProb,
@@ -204,17 +327,42 @@ export default function copyTradingHandler(request, response) {
 
     let executedTrades = [];
     if (qualified && execute) {
+      if (riskConfig.kill_switch_active) {
+        return response.status(403).json({
+          error: "Kill switch is active. Execution blocked by Risk Engine.",
+          code: "KILL_SWITCH_ACTIVE",
+          evaluation
+        });
+      }
+      const openCount = portfolio.trades.filter((t) => t.status === "open").length;
+      if (openCount >= riskConfig.max_open_positions) {
+        return response.status(400).json({
+          error: `Max open positions limit (${riskConfig.max_open_positions}) reached.`,
+          code: "MAX_OPEN_POSITIONS",
+          evaluation
+        });
+      }
+      if (portfolio.balance <= 0) {
+        return response.status(400).json({
+          error: "Portfolio capital is $0. Fund Paper Sandbox capital or link an MT5 Demo connector before executing.",
+          code: "NO_ALLOCATED_CAPITAL",
+          evaluation
+        });
+      }
+
       const stopDist = Math.abs(spotNum - (Number(stopPrice) || spotNum * 0.98)) / spotNum;
-      const notional = stopDist > 0 ? Math.min(portfolio.balance * 0.5, cfg.riskAmountUsd / stopDist) : cfg.riskAmountUsd * 5;
+      const riskCapUsd = Math.min(cfg.riskAmountUsd, (portfolio.balance * riskConfig.max_risk_per_trade_pct) / 100);
+      const notional = stopDist > 0 ? Math.min(portfolio.balance * 0.5, riskCapUsd / stopDist) : riskCapUsd * 5;
       const qty = Number(Math.max(0.001, notional / spotNum).toFixed(4));
-      const brokerName = store.brokers[userId]?.name || "Demo Paper Engine";
+      const connectedBroker = mem.brokers.get(userId);
+      const brokerName = connectedBroker ? connectedBroker.name : "Paper Sandbox Engine";
 
       const mainTrade = {
         id: "tr-" + crypto.randomUUID().slice(0, 8),
         time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
         timestamp: Date.now(),
-        strategyId: "mc-momentum",
-        strategy: "MC Auto-Trader",
+        strategyId: "mc-research-signal",
+        strategy: "MC Research Signal",
         symbol,
         side: signalSide,
         qty,
@@ -224,23 +372,32 @@ export default function copyTradingHandler(request, response) {
         pnl: 0,
         status: "open",
         broker: brokerName,
-        source: "Monte Carlo Auto"
+        data_origin: connectedBroker ? "DEMO_BROKER" : "PAPER_SANDBOX",
+        source: "Monte Carlo Signal"
       };
       portfolio.trades.unshift(mainTrade);
-      const brokerSignal = queueBrokerSignal(store, userId, mainTrade);
+      const brokerSignal = queueBrokerSignal(mem, userId, mainTrade);
       executedTrades.push({ trade: mainTrade, brokerSignal });
-
-      // Update active MC-enabled copy subscription stats
-      const mcSub = portfolio.subscriptions.find((s) => s.strategyId === "mc-momentum" && s.status === "active");
-      if (mcSub) mcSub.trades += 1;
     }
 
-    saveStore();
     return response.status(200).json({ evaluation, executedTrades });
   }
 
-  // POST /api/copy-trading/execute (Manual order from terminal + mirror to connected broker)
+  // POST /api/copy-trading/execute (Manual order from terminal + mirror to connected demo broker)
   if (request.method === "POST" && subPath === "/execute") {
+    if (riskConfig.kill_switch_active) {
+      return response.status(403).json({
+        error: "Kill switch is active. New orders blocked by Risk Engine.",
+        code: "KILL_SWITCH_ACTIVE"
+      });
+    }
+    if (portfolio.balance <= 0) {
+      return response.status(400).json({
+        error: "Portfolio capital is $0. Fund Paper Sandbox capital before placing orders.",
+        code: "NO_ALLOCATED_CAPITAL"
+      });
+    }
+
     const { symbol = "BTC/USD", side = "BUY", qty = 0.05, price, orderType = "market", strategyId = "manual" } = request.body || {};
     const sideUpper = String(side).toUpperCase();
     const qtyNum = Number(qty);
@@ -249,7 +406,8 @@ export default function copyTradingHandler(request, response) {
       return response.status(400).json({ error: "Valid side (BUY/SELL), qty, and price are required." });
     }
 
-    const brokerName = store.brokers[userId]?.name || "Demo Paper Engine";
+    const connectedBroker = mem.brokers.get(userId);
+    const brokerName = connectedBroker ? connectedBroker.name : "Paper Sandbox Engine";
     const trade = {
       id: "tr-" + crypto.randomUUID().slice(0, 8),
       time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
@@ -265,12 +423,12 @@ export default function copyTradingHandler(request, response) {
       pnl: 0,
       status: "open",
       broker: brokerName,
+      data_origin: connectedBroker ? "DEMO_BROKER" : "PAPER_SANDBOX",
       source: "Terminal"
     };
 
     portfolio.trades.unshift(trade);
-    const brokerSignal = queueBrokerSignal(store, userId, trade);
-    saveStore();
+    const brokerSignal = queueBrokerSignal(mem, userId, trade);
 
     return response.status(201).json({ trade, brokerSignal });
   }
@@ -289,7 +447,10 @@ export default function copyTradingHandler(request, response) {
     trade.closePrice = Number(exit.toFixed(2));
     trade.status = "closed";
     portfolio.balance = Number((portfolio.balance + realized).toFixed(2));
-    saveStore();
+    portfolio.equityHistory.push({
+      label: new Date().toLocaleTimeString("en-GB", { hour12: false }),
+      value: portfolio.balance
+    });
 
     return response.status(200).json({ trade, balance: portfolio.balance });
   }
