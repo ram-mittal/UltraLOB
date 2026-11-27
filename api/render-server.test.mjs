@@ -25,9 +25,22 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     // 1. Institutional SPA shell & all 12 workspace routes
     const spa = await fetch(baseUrl + "/");
     assert.equal(spa.status, 200);
+    const cspHeader = spa.headers.get("content-security-policy") || "";
+    assert.match(cspHeader, /script-src 'self'/);
+    assert.ok(!cspHeader.includes("unsafe-eval") && !cspHeader.includes("cdn.tailwindcss.com"), "Strict SPA CSP must exclude unsafe-eval & runtime Tailwind CDN");
+    assert.equal(spa.headers.get("x-frame-options"), "DENY");
+    assert.equal(spa.headers.get("x-content-type-options"), "nosniff");
     const spaHtml = await spa.text();
     assert.match(spaHtml, /UltraLOB — Institutional Strategy Allocation & Risk Infrastructure/);
     assert.match(spaHtml, /\/public\/js\/app\.js/);
+    assert.match(spaHtml, /\/public\/css\/ultralob\.css/);
+    assert.match(spaHtml, /\/public\/vendor\/chart\.umd\.min\.js/);
+    assert.ok(!spaHtml.includes("cdn.tailwindcss.com"), "Production SPA must not load runtime Tailwind CDN script");
+
+    const cssAsset = await fetch(baseUrl + "/public/css/ultralob.css");
+    assert.equal(cssAsset.status, 200);
+    const chartAsset = await fetch(baseUrl + "/public/vendor/chart.umd.min.js");
+    assert.equal(chartAsset.status, 200);
 
     for (const route of [
       "/overview", "/marketplace", "/portfolio", "/ai", "/markets", "/risk",
@@ -117,6 +130,79 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     });
     assert.equal(me.status, 200);
     assert.equal((await me.json()).user.email, providerEmail);
+
+    // 4c. Browser-mode HttpOnly refresh cookie + short-lived access JWT + CSRF enforcement
+    const browserReg = await fetch(baseUrl + "/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-UltraLOB-Client": "browser" },
+      body: JSON.stringify({ name: "Cookie Browser", email: `cookie-${Date.now()}@ultralob.io`, password: "secret123", role: "investor" })
+    });
+    assert.equal(browserReg.status, 201);
+    const setCookies = browserReg.headers.getSetCookie ? browserReg.headers.getSetCookie() : [];
+    const rtCookieLine = setCookies.find((c) => c.startsWith("ultralob_rt=")) || "";
+    const csrfCookieLine = setCookies.find((c) => c.startsWith("ultralob_csrf=")) || "";
+    assert.match(rtCookieLine, /HttpOnly/);
+    assert.match(rtCookieLine, /SameSite=Lax/);
+    assert.ok(csrfCookieLine.startsWith("ultralob_csrf="));
+    const browserPayload = await browserReg.json();
+    assert.equal(browserPayload.expiresIn, 300);
+    assert.equal(browserPayload.refreshToken, undefined);
+    assert.ok(browserPayload.token && browserPayload.csrfToken);
+
+    const cookiePair = `${rtCookieLine.split(";")[0]}; ${csrfCookieLine.split(";")[0]}`;
+    // Cookie refresh WITHOUT CSRF header must be blocked (403)
+    const missingCsrf = await fetch(baseUrl + "/api/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-UltraLOB-Client": "browser", Cookie: cookiePair },
+      body: JSON.stringify({})
+    });
+    assert.equal(missingCsrf.status, 403);
+    assert.equal((await missingCsrf.json()).code, "CSRF_TOKEN_INVALID");
+
+    // Cross-origin POST must be blocked (403)
+    const crossOrigin = await fetch(baseUrl + "/api/auth/refresh", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil-attacker.example",
+        "X-CSRF-Token": browserPayload.csrfToken,
+        Cookie: cookiePair
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(crossOrigin.status, 403);
+    assert.equal((await crossOrigin.json()).code, "CSRF_ORIGIN_MISMATCH");
+
+    // Valid cookie + CSRF token refreshes & rotates HttpOnly cookie cleanly
+    const validCookieRefresh = await fetch(baseUrl + "/api/auth/refresh", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-UltraLOB-Client": "browser",
+        "X-CSRF-Token": browserPayload.csrfToken,
+        Cookie: cookiePair
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(validCookieRefresh.status, 200);
+    const rotatedCookies = validCookieRefresh.headers.getSetCookie ? validCookieRefresh.headers.getSetCookie() : [];
+    const newRtLine = rotatedCookies.find((c) => c.startsWith("ultralob_rt=")) || "";
+    assert.ok(newRtLine && newRtLine.split(";")[0] !== rtCookieLine.split(";")[0]);
+
+    // Logout with valid cookie + CSRF clears HttpOnly cookie
+    const logoutRes = await fetch(baseUrl + "/api/auth/logout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-UltraLOB-Client": "browser",
+        "X-CSRF-Token": browserPayload.csrfToken,
+        Cookie: `${newRtLine.split(";")[0]}; ${csrfCookieLine.split(";")[0]}`
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(logoutRes.status, 200);
+    const clearedCookies = logoutRes.headers.getSetCookie ? logoutRes.headers.getSetCookie() : [];
+    assert.ok(clearedCookies.some((c) => c.startsWith("ultralob_rt=;") || c.includes("Max-Age=0")));
 
     // 4b. Secret rotation invalidates pre-rotation access & refresh sessions
     const prevSecret = process.env.ULTRALOB_JWT_SECRET;

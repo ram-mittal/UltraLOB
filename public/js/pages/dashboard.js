@@ -445,7 +445,7 @@ export async function init({ showToast, navigate }) {
           subtitle: `ID: ${found._rowId}`,
           badgeHtml: `${originBadge(found.origin)} ${statusBadge(found.status)}`,
           bodyHtml: `<pre class="p-3 rounded bg-[#0b0e13] border border-[#232a37] text-[11px] font-mono text-[#cbd5e1] overflow-x-auto">${esc(JSON.stringify(found._raw, null, 2))}</pre>`,
-          footerHtml: `<button class="btn-secondary" onclick="window.location.hash='#/execution'">Open Execution Monitor</button>`
+          footerHtml: `<a href="#/execution" class="btn-secondary">Open Execution Monitor</a>`
         });
       });
     }

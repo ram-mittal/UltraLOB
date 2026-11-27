@@ -10,147 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-            mono: ['IBM Plex Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
-          },
-          colors: {
-            graphite: {
-              950: '#0b0e13',
-              900: '#11151d',
-              850: '#141923',
-              800: '#161b25',
-              750: '#1c2330',
-              700: '#232a37',
-              600: '#2e3748'
-            },
-            accent: {
-              DEFAULT: '#3b82f6',
-              hover: '#2563eb'
-            },
-            gain: '#22c55e',
-            loss: '#ef4444',
-            warn: '#eab308'
-          }
-        }
-      }
-    };
-  </script>
-
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg-canvas: #0b0e13;
-      --bg-panel: #11151d;
-      --bg-elevated: #161b25;
-      --border-subtle: #232a37;
-      --border-strong: #2e3748;
-      --text-primary: #e6edf6;
-      --text-secondary: #94a3b8;
-      --text-muted: #64748b;
-    }
-
-    html, body {
-      background-color: var(--bg-canvas);
-      color: var(--text-primary);
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      font-size: 13px;
-      line-height: 1.45;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    .font-mono, .num-tabular {
-      font-family: 'IBM Plex Mono', ui-monospace, monospace;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .panel {
-      background-color: var(--bg-panel);
-      border: 1px solid var(--border-subtle);
-      border-radius: 6px;
-    }
-
-    .panel-elevated {
-      background-color: var(--bg-elevated);
-      border: 1px solid var(--border-subtle);
-      border-radius: 6px;
-    }
-
-    .input-term {
-      background-color: #0b0e13;
-      border: 1px solid #232a37;
-      color: #e6edf6;
-      border-radius: 4px;
-      padding: 6px 10px;
-      font-size: 12px;
-      outline: none;
-      transition: border-color 120ms ease;
-    }
-    .input-term:focus {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
-    }
-
-    .btn-primary {
-      background-color: #2563eb;
-      border: 1px solid #3b82f6;
-      color: #ffffff;
-      font-weight: 500;
-      border-radius: 4px;
-      padding: 6px 12px;
-      font-size: 12px;
-      transition: background-color 120ms ease;
-    }
-    .btn-primary:hover { background-color: #1d4ed8; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .btn-secondary {
-      background-color: #161b25;
-      border: 1px solid #2e3748;
-      color: #e6edf6;
-      font-weight: 500;
-      border-radius: 4px;
-      padding: 6px 12px;
-      font-size: 12px;
-      transition: background-color 120ms ease, border-color 120ms ease;
-    }
-    .btn-secondary:hover { background-color: #1c2330; border-color: #3b475c; }
-
-    .btn-danger {
-      background-color: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.45);
-      color: #fca5a5;
-      font-weight: 500;
-      border-radius: 4px;
-      padding: 6px 12px;
-      font-size: 12px;
-      transition: background-color 120ms ease;
-    }
-    .btn-danger:hover { background-color: rgba(239, 68, 68, 0.22); }
-
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0b0e13; }
-    ::-webkit-scrollbar-thumb { background: #232a37; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #2e3748; }
-
-    .table-sort-btn { cursor: pointer; user-select: none; }
-    .table-sort-btn:hover { color: #e6edf6; }
-
-    @media (min-width: 1024px) {
-      body.sidebar-collapsed #sidebar-rail { width: 64px !important; }
-      body.sidebar-collapsed #sidebar-rail .sidebar-label { display: none !important; }
-      body.sidebar-collapsed #sidebar-rail .sidebar-group-title { display: none !important; }
-      body.sidebar-collapsed #sidebar-rail .sidebar-brand-text { display: none !important; }
-    }
-  </style>
+  <link rel="stylesheet" href="/public/css/ultralob.css" />
+  <script src="/public/vendor/chart.umd.min.js"></script>
 </head>
 <body class="bg-[#0b0e13] text-[#e6edf6] antialiased selection:bg-[#3b82f6]/30 selection:text-white">
   <div id="app-shell" class="min-h-screen flex bg-[#0b0e13]">
@@ -163,7 +24,7 @@
       <main id="page-content" class="flex-1 min-w-0 px-4 py-4 lg:px-6 lg:py-5"></main>
 
       <footer id="footer-container" class="border-t border-[#232a37] bg-[#0b0e13] px-4 lg:px-6 py-2.5 text-[11px] text-[#64748b] flex flex-wrap items-center justify-between gap-2">
-        <span>UltraLOB Institutional Strategy Allocation & Risk Infrastructure</span>
+        <span>UltraLOB Institutional Strategy Allocation &amp; Risk Infrastructure</span>
         <span class="font-mono">ENVIRONMENT: DEMO &amp; PAPER SANDBOX GOVERNANCE • NOT INVESTMENT ADVICE</span>
       </footer>
     </div>

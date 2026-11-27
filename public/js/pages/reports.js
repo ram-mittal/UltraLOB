@@ -160,7 +160,7 @@ export async function init({ showToast }) {
   document.getElementById("rp-export-csv")?.addEventListener("click", async () => {
     try {
       const headers = state.token ? { Authorization: `Bearer ${state.token}` } : {};
-      const resp = await fetch("/api/institutional/statement?format=csv", { headers });
+      const resp = await fetch("/api/institutional/statement?format=csv", { headers, credentials: "same-origin" });
       if (!resp.ok) throw new Error("Failed exporting CSV");
       const csv = await resp.text();
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

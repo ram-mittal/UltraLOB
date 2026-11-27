@@ -1,8 +1,8 @@
-// Reactive state management with role & session persistence
+// Reactive In-Memory Auth State (Zero localStorage/sessionStorage token persistence; refresh handled via HttpOnly cookie)
 const _state = {
-  user: null,          // { id, name, email, role, permissions, org_id, org_name }
-  token: null,
-  refreshToken: null,
+  user: null,
+  token: null,        // Short-lived (5m) access JWT held strictly in JS memory
+  csrfToken: null,    // Double-submit CSRF token synced with non-HttpOnly ultralob_csrf cookie
   isAuthenticated: false,
   broker: null,
   portfolio: {
@@ -13,7 +13,7 @@ const _state = {
   },
   strategies: [],
   subscribedStrategies: new Set(),
-  theme: 'dark'
+  theme: "dark"
 };
 
 const listeners = new Set();
@@ -21,7 +21,7 @@ const listeners = new Set();
 export const state = new Proxy(_state, {
   set(target, prop, value) {
     target[prop] = value;
-    listeners.forEach(fn => { try { fn(prop, value); } catch (e) { console.warn(e); } });
+    listeners.forEach((fn) => { try { fn(prop, value); } catch (e) { console.warn(e); } });
     return true;
   }
 });
@@ -31,49 +31,59 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
-export function getState() { return { ..._state }; }
+export function getState() {
+  return { ..._state };
+}
 
-export function saveAuth(user, token = null, refreshToken = null) {
-  state.user = user;
-  state.isAuthenticated = true;
-  try {
-    localStorage.setItem('ultralob_user', JSON.stringify(user));
-    if (token) {
-      state.token = token;
-      localStorage.setItem('ultralob_token', token);
+export function purgeLegacyAuthStorage() {
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.removeItem("ultralob_token");
+      localStorage.removeItem("ultralob_refresh_token");
+      localStorage.removeItem("ultralob_user");
+    } catch {}
+  }
+  if (typeof sessionStorage !== "undefined") {
+    try {
+      sessionStorage.removeItem("ultralob_token");
+      sessionStorage.removeItem("ultralob_refresh_token");
+      sessionStorage.removeItem("ultralob_user");
+    } catch {}
+  }
+}
+
+export function readCsrfCookie() {
+  if (typeof document === "undefined") return null;
+  const parts = String(document.cookie || "").split(";");
+  for (const part of parts) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    if (key === "ultralob_csrf") {
+      try { return decodeURIComponent(part.slice(idx + 1).trim()); } catch { return part.slice(idx + 1).trim(); }
     }
-    if (refreshToken) {
-      state.refreshToken = refreshToken;
-      localStorage.setItem('ultralob_refresh_token', refreshToken);
-    }
-  } catch {}
+  }
+  return null;
+}
+
+export function saveAuth(user, token = null, csrfToken = null) {
+  state.user = user || null;
+  state.isAuthenticated = Boolean(user);
+  if (token) state.token = token;
+  if (csrfToken) state.csrfToken = csrfToken;
+  purgeLegacyAuthStorage();
 }
 
 export function loadAuth() {
-  try {
-    const saved = localStorage.getItem('ultralob_user');
-    const token = localStorage.getItem('ultralob_token');
-    const refreshToken = localStorage.getItem('ultralob_refresh_token');
-    if (saved) {
-      state.user = JSON.parse(saved);
-      state.token = token || null;
-      state.refreshToken = refreshToken || null;
-      state.isAuthenticated = true;
-    }
-  } catch {}
+  purgeLegacyAuthStorage();
+  const cookieCsrf = readCsrfCookie();
+  if (cookieCsrf) state.csrfToken = cookieCsrf;
 }
 
 export function logout() {
   state.user = null;
   state.token = null;
-  state.refreshToken = null;
   state.isAuthenticated = false;
-  try {
-    localStorage.removeItem('ultralob_user');
-    localStorage.removeItem('ultralob_token');
-    localStorage.removeItem('ultralob_refresh_token');
-  } catch {}
-  location.hash = '#/';
+  purgeLegacyAuthStorage();
+  if (typeof location !== "undefined") location.hash = "#/overview";
 }
-
-loadAuth();

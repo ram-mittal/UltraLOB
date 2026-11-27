@@ -17,7 +17,7 @@ import institutionalHandler from "./institutional.js";
 import WebSocket, { WebSocketServer } from "ws";
 import { getDatabaseStatus } from "../db/client.js";
 import { assertJwtSecretConfigured, ensureDbReady, resolveAuthContext, query } from "./store.js";
-import { authorizeRequest } from "./security.js";
+import { authorizeRequest, isSecureRequest, verifyCsrfProtection } from "./security.js";
 import {
   LIVE_SYMBOLS,
   EQUITY_SYMBOLS,
@@ -111,6 +111,54 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use(express.json({ limit: "2mb" }));
 
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const STRICT_SPA_CSP = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'"
+  ].join("; ");
+
+  const LEGACY_CSP = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "form-action 'self'"
+  ].join("; ");
+
+  // Global Security Headers & Strict Content-Security-Policy
+  app.use((request, response, next) => {
+    response.setHeader("Content-Security-Policy", STRICT_SPA_CSP);
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    if (isSecureRequest(request)) {
+      response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+  });
+
+  // CSRF Defense (Origin + Double-Submit CSRF Token on cookie/browser mutations)
+  app.use("/api", (request, response, next) => {
+    const csrf = verifyCsrfProtection(request);
+    if (!csrf.ok) {
+      return response.status(csrf.status).json({ error: csrf.error, code: csrf.code });
+    }
+    next();
+  });
 
   // --- Static Assets ---
   app.use("/public", express.static(path.join(projectRoot, "public"), {
@@ -206,6 +254,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
 
   // --- Legacy Classic Terminal ---
   app.get(["/legacy", "/fix_trading_terminal.html"], (_request, response) => {
+    response.setHeader("Content-Security-Policy", LEGACY_CSP);
     response.sendFile(path.join(projectRoot, "terminal-legacy.html"));
   });
 

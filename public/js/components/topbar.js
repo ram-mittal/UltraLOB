@@ -157,7 +157,8 @@ export function init(onNavigate) {
     terminalContext.selectedAccountId = e.target.value;
   });
 
-  document.getElementById("topbar-logout-btn")?.addEventListener("click", () => {
+  document.getElementById("topbar-logout-btn")?.addEventListener("click", async () => {
+    try { await api.logoutSession(); } catch {}
     logout();
     if (typeof onNavigate === "function") onNavigate("/overview");
     else window.location.hash = "#/overview";

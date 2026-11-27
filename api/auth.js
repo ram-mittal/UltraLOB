@@ -9,10 +9,72 @@ import {
   verifyToken,
   query
 } from "./store.js";
-import { VALID_ROLES, ROLE_PERMISSIONS, createRateLimiter } from "./security.js";
+import {
+  VALID_ROLES,
+  ROLE_PERMISSIONS,
+  createRateLimiter,
+  isSecureRequest,
+  parseCookies,
+  serializeCookie,
+  verifyCsrfProtection
+} from "./security.js";
 import { recordAuditLog } from "../db/client.js";
 
+const ACCESS_TOKEN_TTL_SECONDS = 300; // 5-minute short-lived access credentials
+const REFRESH_TTL_SECONDS = 14 * 86400;
+const REFRESH_COOKIE_NAME = "ultralob_rt";
+const CSRF_COOKIE_NAME = "ultralob_csrf";
+
 const authRateLimiter = createRateLimiter({ windowMs: 60_000, max: 40, keyPrefix: "auth" });
+
+function createCsrfTokenValue() {
+  return crypto.randomBytes(24).toString("base64url");
+}
+
+function attachSessionCookies(request, response, refreshToken, existingCsrf = null) {
+  const secure = isSecureRequest(request);
+  const csrfToken = existingCsrf || createCsrfTokenValue();
+  response.setHeader("Set-Cookie", [
+    serializeCookie(REFRESH_COOKIE_NAME, refreshToken, {
+      httpOnly: true,
+      secure,
+      sameSite: "Lax",
+      path: "/api/auth",
+      maxAge: REFRESH_TTL_SECONDS
+    }),
+    serializeCookie(CSRF_COOKIE_NAME, csrfToken, {
+      httpOnly: false,
+      secure,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: REFRESH_TTL_SECONDS
+    })
+  ]);
+  return csrfToken;
+}
+
+function clearSessionCookies(request, response) {
+  const secure = isSecureRequest(request);
+  const expired = new Date(0);
+  response.setHeader("Set-Cookie", [
+    serializeCookie(REFRESH_COOKIE_NAME, "", {
+      httpOnly: true,
+      secure,
+      sameSite: "Lax",
+      path: "/api/auth",
+      maxAge: 0,
+      expires: expired
+    }),
+    serializeCookie(CSRF_COOKIE_NAME, "", {
+      httpOnly: false,
+      secure,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 0,
+      expires: expired
+    })
+  ]);
+}
 
 function sanitizeUser(user) {
   const role = user.role || "investor";
@@ -48,10 +110,10 @@ async function issueSessionTokens(user, dbAvailable) {
     role: user.role || "investor",
     orgId: user.org_id || null
   };
-  const accessToken = signToken(payload, 3600); // 1h short-lived access token
+  const accessToken = signToken(payload, ACCESS_TOKEN_TTL_SECONDS); // 5-minute short-lived access token
   const refreshToken = createRefreshTokenValue();
   const refreshHash = hashRefreshToken(refreshToken);
-  const expiresAt = new Date(Date.now() + 14 * 86400 * 1000);
+  const expiresAt = new Date(Date.now() + REFRESH_TTL_SECONDS * 1000);
 
   if (dbAvailable) {
     await query(
@@ -66,7 +128,24 @@ async function issueSessionTokens(user, dbAvailable) {
     });
   }
 
-  return { token: accessToken, refreshToken, expiresIn: 3600 };
+  return { token: accessToken, refreshToken, expiresIn: ACCESS_TOKEN_TTL_SECONDS };
+}
+
+function buildAuthResponsePayload(request, response, user, tokens) {
+  const cookies = parseCookies(request.headers?.cookie || "");
+  const csrfToken = attachSessionCookies(request, response, tokens.refreshToken, cookies[CSRF_COOKIE_NAME] || null);
+  const isBrowserClient = String(request.headers?.["x-ultralob-client"] || "").toLowerCase() === "browser";
+  const body = {
+    user: sanitizeUser(user),
+    token: tokens.token,
+    expiresIn: tokens.expiresIn,
+    csrfToken
+  };
+  // Browser clients hold the refresh token exclusively in the HttpOnly cookie
+  if (!isBrowserClient) {
+    body.refreshToken = tokens.refreshToken;
+  }
+  return body;
 }
 
 export default async function authHandler(request, response) {
@@ -86,6 +165,26 @@ export default async function authHandler(request, response) {
   if (rateLimited) return;
 
   const dbAvailable = await ensureDbReady().catch(() => false);
+  const cookies = parseCookies(request.headers?.cookie || "");
+
+  // GET /api/auth/csrf — Bootstrap double-submit CSRF cookie & report whether HttpOnly refresh cookie exists
+  if (request.method === "GET" && subPath === "/csrf") {
+    const existingCsrf = cookies[CSRF_COOKIE_NAME];
+    const csrfToken = existingCsrf || createCsrfTokenValue();
+    if (!existingCsrf) {
+      response.setHeader("Set-Cookie", serializeCookie(CSRF_COOKIE_NAME, csrfToken, {
+        httpOnly: false,
+        secure: isSecureRequest(request),
+        sameSite: "Lax",
+        path: "/",
+        maxAge: REFRESH_TTL_SECONDS
+      }));
+    }
+    return response.status(200).json({
+      csrfToken,
+      hasSession: Boolean(cookies[REFRESH_COOKIE_NAME])
+    });
+  }
 
   // POST /api/auth/register
   if (request.method === "POST" && subPath === "/register") {
@@ -154,7 +253,7 @@ export default async function authHandler(request, response) {
         ipAddress: getClientIp(request)
       });
 
-      return response.status(201).json({ user: sanitizeUser(user), ...tokens });
+      return response.status(201).json(buildAuthResponsePayload(request, response, user, tokens));
     }
 
     // Memory fallback when DATABASE_URL is not configured
@@ -176,7 +275,7 @@ export default async function authHandler(request, response) {
     mem.usersById.set(user.id, user);
 
     const tokens = await issueSessionTokens(user, false);
-    return response.status(201).json({ user: sanitizeUser(user), ...tokens });
+    return response.status(201).json(buildAuthResponsePayload(request, response, user, tokens));
   }
 
   // POST /api/auth/login
@@ -212,7 +311,7 @@ export default async function authHandler(request, response) {
         targetId: user.id,
         ipAddress: getClientIp(request)
       });
-      return response.status(200).json({ user: sanitizeUser(user), ...tokens });
+      return response.status(200).json(buildAuthResponsePayload(request, response, user, tokens));
     }
 
     const mem = getMemoryStore();
@@ -221,14 +320,23 @@ export default async function authHandler(request, response) {
       return response.status(401).json({ error: "Invalid email or password." });
     }
     const tokens = await issueSessionTokens(user, false);
-    return response.status(200).json({ user: sanitizeUser(user), ...tokens });
+    return response.status(200).json(buildAuthResponsePayload(request, response, user, tokens));
   }
 
-  // POST /api/auth/refresh — Rotate refresh token and issue a fresh access token
+  // POST /api/auth/refresh — Rotate HttpOnly cookie or API refresh token and issue fresh 5-min access JWT
   if (request.method === "POST" && subPath === "/refresh") {
-    const { refreshToken } = request.body || {};
+    const bodyToken = request.body?.refreshToken;
+    const cookieToken = cookies[REFRESH_COOKIE_NAME];
+    const usingCookie = !bodyToken && Boolean(cookieToken);
+
+    if (usingCookie) {
+      const csrf = verifyCsrfProtection(request, { requireCookieMatch: true });
+      if (!csrf.ok) return response.status(csrf.status).json({ error: csrf.error, code: csrf.code });
+    }
+
+    const refreshToken = bodyToken || cookieToken;
     if (!refreshToken || typeof refreshToken !== "string") {
-      return response.status(400).json({ error: "refreshToken is required." });
+      return response.status(401).json({ error: "Valid refresh session is required." });
     }
     const tokenHash = hashRefreshToken(refreshToken.trim());
 
@@ -244,9 +352,11 @@ export default async function authHandler(request, response) {
       );
       const row = res.rows[0];
       if (!row || row.revoked_at || new Date(row.expires_at).getTime() <= Date.now()) {
+        if (usingCookie) clearSessionCookies(request, response);
         return response.status(401).json({ error: "Invalid or expired refresh token." });
       }
       if (row.status && row.status !== "ACTIVE") {
+        if (usingCookie) clearSessionCookies(request, response);
         return response.status(403).json({ error: `Account status is ${row.status}.` });
       }
       await query(`UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1`, [row.rt_id]);
@@ -260,24 +370,34 @@ export default async function authHandler(request, response) {
         created_at: row.created_at
       };
       const tokens = await issueSessionTokens(user, true);
-      return response.status(200).json({ user: sanitizeUser(user), ...tokens });
+      return response.status(200).json(buildAuthResponsePayload(request, response, user, tokens));
     }
 
     const mem = getMemoryStore();
     const entry = mem.refreshTokens.get(tokenHash);
     if (!entry || entry.revokedAt || entry.expiresAt <= Date.now()) {
+      if (usingCookie) clearSessionCookies(request, response);
       return response.status(401).json({ error: "Invalid or expired refresh token." });
     }
     entry.revokedAt = Date.now();
     const user = mem.usersById.get(entry.userId);
-    if (!user) return response.status(401).json({ error: "User not found." });
+    if (!user) {
+      if (usingCookie) clearSessionCookies(request, response);
+      return response.status(401).json({ error: "User not found." });
+    }
     const tokens = await issueSessionTokens(user, false);
-    return response.status(200).json({ user: sanitizeUser(user), ...tokens });
+    return response.status(200).json(buildAuthResponsePayload(request, response, user, tokens));
   }
 
-  // POST /api/auth/logout — Revoke refresh token
+  // POST /api/auth/logout — Revoke refresh token & clear HttpOnly session cookies
   if (request.method === "POST" && subPath === "/logout") {
-    const { refreshToken } = request.body || {};
+    const bodyToken = request.body?.refreshToken;
+    const cookieToken = cookies[REFRESH_COOKIE_NAME];
+    if (!bodyToken && cookieToken) {
+      const csrf = verifyCsrfProtection(request, { requireCookieMatch: true });
+      if (!csrf.ok) return response.status(csrf.status).json({ error: csrf.error, code: csrf.code });
+    }
+    const refreshToken = bodyToken || cookieToken;
     if (refreshToken && typeof refreshToken === "string") {
       const tokenHash = hashRefreshToken(refreshToken.trim());
       if (dbAvailable) {
@@ -287,6 +407,7 @@ export default async function authHandler(request, response) {
         if (entry) entry.revokedAt = Date.now();
       }
     }
+    clearSessionCookies(request, response);
     return response.status(200).json({ status: "logged_out" });
   }
 

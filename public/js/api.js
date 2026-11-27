@@ -1,13 +1,64 @@
 // API Client for UltraLOB Institutional Platform
+// Uses strictly in-memory short-lived access JWT + HttpOnly refresh cookies + CSRF headers.
+import { state, readCsrfCookie, saveAuth, logout } from './state.js';
+
 const BASE = '';
+let refreshInFlight = null;
 
-async function request(path, options = {}) {
+function buildCsrfHeader(method) {
+  const m = String(method || 'GET').toUpperCase();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(m)) return {};
+  const csrf = state.csrfToken || readCsrfCookie();
+  return csrf ? { 'X-CSRF-Token': csrf } : {};
+}
+
+async function performRefresh() {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch(`${BASE}/api/auth/refresh`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-UltraLOB-Client': 'browser',
+        ...buildCsrfHeader('POST')
+      },
+      body: JSON.stringify({})
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Session expired');
+        const data = await res.json();
+        if (data?.user && data?.token) {
+          saveAuth(data.user, data.token, data.csrfToken || null);
+        }
+        return data;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+async function request(path, options = {}, retried = false) {
   const url = `${BASE}${path}`;
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
-  const token = localStorage.getItem('ultralob_token');
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const method = options.method || 'GET';
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-UltraLOB-Client': 'browser',
+    ...buildCsrfHeader(method),
+    ...options.headers
+  };
+  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...options, method, headers, credentials: 'same-origin' });
+  if (res.status === 401 && !retried && !path.startsWith('/api/auth/') && state.isAuthenticated) {
+    try {
+      await performRefresh();
+      return request(path, options, true);
+    } catch {
+      logout();
+    }
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);
@@ -70,11 +121,12 @@ export const api = {
   executeOrder: (payload) => request('/api/copy-trading/execute', { method: 'POST', body: JSON.stringify(payload) }),
   closeTrade: (tradeId, closePrice) => request('/api/copy-trading/close-trade', { method: 'POST', body: JSON.stringify({ tradeId, closePrice }) }),
 
-  // Auth & RBAC
+  // Auth & RBAC (HttpOnly refresh cookies + CSRF + short-lived in-memory JWT)
+  getCsrfStatus: () => request('/api/auth/csrf'),
   login: (email, password) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   register: (data) => request('/api/auth/register', { method: 'POST', body: JSON.stringify(data) }),
-  refreshSession: (refreshToken) => request('/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }) }),
-  logoutSession: (refreshToken) => request('/api/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken }) }),
+  refreshSession: () => performRefresh(),
+  logoutSession: () => request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
   me: () => request('/api/auth/me'),
 
   // Broker & Execution Bridge

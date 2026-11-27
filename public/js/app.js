@@ -125,26 +125,20 @@ async function initApp() {
     }
   }
 
-  if (state.token) {
-    try {
-      const me = await api.me();
-      if (me?.user) saveAuth(me.user, state.token, state.refreshToken);
-    } catch {
-      if (state.refreshToken) {
-        try {
-          const ref = await api.refreshSession(state.refreshToken);
-          if (ref?.user && ref?.token) {
-            saveAuth(ref.user, ref.token, ref.refreshToken || state.refreshToken);
-          } else {
-            logout();
-          }
-        } catch {
-          logout();
-        }
+  // Rehydrate short-lived access JWT from HttpOnly refresh cookie cleanly on boot without localStorage tokens
+  try {
+    const csrfRes = await api.getCsrfStatus();
+    if (csrfRes?.csrfToken) state.csrfToken = csrfRes.csrfToken;
+    if (csrfRes?.hasSession) {
+      const ref = await api.refreshSession();
+      if (ref?.user && ref?.token) {
+        saveAuth(ref.user, ref.token, ref.csrfToken || csrfRes.csrfToken);
       } else {
         logout();
       }
     }
+  } catch {
+    logout();
   }
 
   window.addEventListener("hashchange", renderCurrentRoute);
