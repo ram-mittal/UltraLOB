@@ -182,7 +182,7 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.get([
     "/", "/overview", "/marketplace", "/portfolio", "/ai", "/markets",
     "/risk", "/copy-trading", "/broker", "/execution", "/research",
-    "/reports", "/settings", "/dashboard", "/terminal", "/auth", "/strategy/:id"
+    "/reports", "/settings", "/admin", "/dashboard", "/terminal", "/auth", "/strategy/:id"
   ], (_request, response) => {
     response.sendFile(spaFile);
   });

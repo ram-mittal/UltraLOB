@@ -55,6 +55,7 @@ export const api = {
   getPortfolioSummary: () => request('/api/portfolio/summary'),
   rebalancePortfolio: (payload) => request('/api/portfolio/rebalance', { method: 'POST', body: JSON.stringify(payload) }),
   getPortfolioRisk: () => request('/api/portfolio/risk'),
+  runStressTest: (payload) => request('/api/portfolio/risk/stress-test', { method: 'POST', body: JSON.stringify(payload || {}) }),
   updateRiskLimits: (limits) => request('/api/portfolio/risk/limits', { method: 'POST', body: JSON.stringify(limits) }),
   toggleKillSwitch: (payload) => request('/api/portfolio/risk/kill-switch', { method: 'POST', body: JSON.stringify(payload) }),
   computeKellyResearch: (payload) => request('/api/portfolio/risk/kelly-research', { method: 'POST', body: JSON.stringify(payload) }),

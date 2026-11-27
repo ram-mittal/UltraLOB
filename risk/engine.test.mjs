@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   createDefaultRiskState,
   evaluateTradeGovernance,
-  computeBoundedKelly
+  computeBoundedKelly,
+  computePortfolioRiskAnalytics,
+  runPortfolioStressTest
 } from "./engine.js";
 
 test("enforces hierarchical kill switches without liquidating existing exposure", () => {
@@ -75,4 +77,29 @@ test("bounds Kelly Criterion strictly below hard ceiling and tags as research in
   assert.equal(k.classification, "SIMULATED_RESEARCH_INPUT_ONLY");
   assert.ok(k.full_kelly_pct > 10);
   assert.equal(k.hard_capped_risk_pct, 1.0);
+});
+
+test("computes historical VaR/CVaR when sufficient sample exists and avoids fabricating metrics below threshold", () => {
+  const awaiting = computePortfolioRiskAnalytics({ trades: [{ status: "closed", pnl: -50 }], equityHistory: [], initialCapital: 10000 });
+  assert.equal(awaiting.status, "AWAITING_SAMPLE");
+  assert.equal(awaiting.var_95_pct, null);
+  assert.equal(awaiting.cvar_95_pct, null);
+
+  const sampleTrades = [-200, 150, -320, 400, -120, 220, -450, 310, 90, -180].map((pnl) => ({ status: "closed", pnl }));
+  const eq = [10000, 9800, 9950, 9630, 10030, 9910, 10130, 9680, 9990, 10080, 9900].map((value) => ({ value }));
+  const ready = computePortfolioRiskAnalytics({ trades: sampleTrades, equityHistory: eq, initialCapital: 10000 });
+  assert.equal(ready.status, "READY");
+  assert.equal(ready.data_origin, "EMPIRICAL_TRADES");
+  assert.ok(ready.var_95_pct < 0);
+  assert.ok(ready.cvar_95_pct <= ready.var_95_pct);
+
+  const stress = runPortfolioStressTest({
+    equity: 10000,
+    grossNotional: 26500,
+    openTrades: [{ status: "open", side: "BUY", qty: 0.1, price: 2650 }],
+    riskLimits: { max_drawdown_pct: 12 }
+  });
+  assert.equal(stress.data_origin, "SIMULATED_RESEARCH");
+  assert.ok(stress.scenarios.length >= 3);
+  assert.ok(stress.scenarios[0].estimated_pnl_impact_usd < 0);
 });

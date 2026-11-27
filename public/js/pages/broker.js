@@ -1,276 +1,229 @@
-// Broker Connection Page (MT5 & Exness + MQL5 Copy Bridge EA)
-import { api } from '../api.js';
-import { state } from '../state.js';
-import { showToast } from '../app.js';
-
-const BROKERS = [
-  {
-    id: 'mt5',
-    name: 'MetaTrader 5',
-    icon: '📊',
-    gradient: 'from-blue-500 to-indigo-600',
-    description: 'Connect your MT5 account via the UltraLOB Copy Bridge EA or MetaApi Cloud for direct trade mirroring.',
-    features: ['Real-time trade & Monte Carlo signal mirroring', 'Includes downloadable UltraLOB_CopyBridge.mq5 EA', 'Supports any MT5 broker server worldwide', 'Optional MetaApi Cloud token verification'],
-    fields: [
-      { name: 'server', label: 'MT5 Server', type: 'text', placeholder: 'e.g., MetaQuotes-Demo or ICMarketsSC-MT5', required: true },
-      { name: 'login', label: 'Account Number', type: 'text', placeholder: 'e.g., 12345678', required: true },
-      { name: 'password', label: 'Investor / Trade Password', type: 'password', placeholder: 'Your MT5 password', required: true },
-      { name: 'metaapi_token', label: 'MetaApi Token (Optional)', type: 'password', placeholder: 'Leave blank to use MT5 Bridge EA', required: false },
-    ]
-  },
-  {
-    id: 'exness',
-    name: 'Exness',
-    icon: '🏦',
-    gradient: 'from-amber-500 to-orange-600',
-    description: 'Connect your Exness MT5 Real/Trial or API account for copy trading with raw spreads and instant signal routing.',
-    features: ['Exness MT5 Real & Trial servers supported', 'Raw Spread & Zero Spread account routing', 'Downloadable Exness-compatible .mq5 Bridge EA', 'Auto lot-sizing & drawdown guardrails'],
-    fields: [
-      { name: 'server', label: 'Exness Server', type: 'text', placeholder: 'e.g., Exness-MT5Real or Exness-MT5Trial8', required: true },
-      { name: 'account_id', label: 'Exness Account ID', type: 'text', placeholder: 'e.g., 192837465', required: true },
-      { name: 'api_key', label: 'API Key / Login Token', type: 'text', placeholder: 'Your Exness API key or MT5 login', required: true },
-      { name: 'api_secret', label: 'API Secret / Password', type: 'password', placeholder: 'Your Exness API secret or password', required: true },
-    ]
-  }
-];
+// Accounts & Brokers Screen — MT5 / Exness Demo Connections, EA Health, Heartbeat & Pairing Setup
+import { api } from "../api.js";
+import {
+  isBrowser, esc, fmtUsd, fmtNum, fmtTs,
+  metricTile, originBadge, statusBadge, stateBanner, dataTable
+} from "../components/ui.js";
 
 export function render() {
   return `
-  <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-    <!-- Header -->
-    <div class="mb-8">
-      <h1 class="text-2xl font-bold text-white mb-2">Connect Your Broker (MT5 / Exness)</h1>
-      <p class="text-surface-400">Link your MetaTrader 5 or Exness trading account so copy strategies and Monte Carlo signals execute directly on your terminal.</p>
-    </div>
-
-    <!-- Security Notice -->
-    <div class="glass-card rounded-xl p-5 mb-6 border-brand-500/20">
-      <div class="flex items-start gap-3">
-        <span class="text-xl flex-shrink-0">🔒</span>
+    <div class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 class="text-sm font-semibold text-white mb-1">Zero Custody & DEMO-Only Safeguard</h3>
-          <p class="text-xs text-surface-400 leading-relaxed">
-            Raw broker passwords and API secrets are never saved to disk. Live real-money accounts are blocked by design in this build.
-            Once paired, download <code class="text-brand-300">UltraLOB_Bridge_EA.mq5</code> (v0.2.0) for MT5 Demo OrderCheck validation & heartbeat telemetry.
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Broker Status Banner -->
-    <div class="glass-card rounded-xl p-5 mb-8" id="broker-status">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-          <div class="w-3 h-3 rounded-full bg-surface-600" id="broker-status-dot"></div>
-          <div>
-            <span class="text-sm text-surface-400 block" id="broker-status-text">Checking broker connection...</span>
-            <span class="text-xs text-surface-500" id="broker-status-sub"></span>
-          </div>
+          <h1 class="text-base font-semibold tracking-tight text-[#e6edf6]">Accounts & Broker Connections</h1>
+          <p class="text-xs text-[#94a3b8]">Manage MetaTrader 5 / Exness Demo terminal links, Expert Advisor heartbeat health, and execution bridge credentials.</p>
         </div>
         <div class="flex items-center gap-2">
-          <a href="/api/broker/mt5/ea" id="download-ea-btn" class="hidden btn-outline px-3 py-1.5 rounded-lg text-xs text-brand-300 font-medium">
-            ⬇️ Download .mq5 EA
-          </a>
-          <button id="disconnect-btn" class="hidden text-xs text-loss hover:text-loss-light border border-loss/30 px-3 py-1.5 rounded-lg transition-colors">
-            Disconnect
-          </button>
+          <a href="/api/broker/mt5/ea" download="UltraLOB_Bridge_EA.mq5" class="btn-secondary font-mono text-[11px]">Download MQL5 EA</a>
+          <a href="#/execution" class="btn-primary font-mono text-[11px]">Execution Monitor</a>
         </div>
       </div>
-      <div id="bridge-token-box" class="hidden mt-4 pt-4 border-t border-surface-800/60 flex flex-wrap items-center justify-between gap-3">
-        <div class="text-xs text-surface-400">
-          EA Bridge Token: <code class="text-brand-300 font-mono bg-surface-900 px-2 py-1 rounded" id="bridge-token-val"></code>
-        </div>
-        <div class="text-xs text-surface-500">
-          Signal Endpoint: <code class="text-surface-300 font-mono">/api/broker/mt5/signals</code>
-        </div>
-      </div>
-    </div>
 
-    <!-- Broker Cards -->
-    <div class="grid md:grid-cols-2 gap-6 mb-8">
-      ${BROKERS.map(b => `
-        <div class="glass-card rounded-xl overflow-hidden" id="broker-card-${b.id}">
-          <div class="bg-gradient-to-r ${b.gradient} p-6">
-            <div class="flex items-center gap-3 mb-2">
-              <span class="text-3xl">${b.icon}</span>
-              <h2 class="text-xl font-bold text-white">${b.name}</h2>
+      <!-- Safety Lock Notice -->
+      <div class="rounded border border-[#eab308]/40 bg-[#eab308]/5 px-4 py-2.5 text-xs text-[#fde047] flex flex-wrap items-center justify-between gap-2">
+        <span><strong>DEMO-ONLY EXECUTION BUILD:</strong> Live real-money broker routing is locked at architecture level. Only Demo MT5 &amp; Paper Sandbox accounts can be paired.</span>
+        ${originBadge("DEMO_ONLY")}
+      </div>
+
+      <div id="bk-kpi-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+      <!-- Paired Account Telemetry & New Connection Workflow -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <div class="lg:col-span-5 panel p-4 space-y-3">
+          <div class="border-b border-[#232a37] pb-2 flex items-center justify-between">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">Broker Pairing Setup</h2>
+              <p class="text-[11px] text-[#64748b]">Supports Direct MT5 Demo Bridge &amp; Exness MT5 Demo</p>
             </div>
-            <p class="text-sm text-white/80">${b.description}</p>
+            ${originBadge("DEMO_BROKER")}
           </div>
 
-          <div class="p-6 border-b border-surface-800/50">
-            <h4 class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">Capabilities</h4>
-            <ul class="space-y-2">
-              ${b.features.map(f => `
-                <li class="flex items-center gap-2 text-sm text-surface-300">
-                  <svg class="w-4 h-4 text-profit flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                  </svg>
-                  ${f}
-                </li>
-              `).join('')}
-            </ul>
-          </div>
-
-          <form class="p-6 space-y-4" id="form-${b.id}" onsubmit="return false;">
-            ${b.fields.map(f => `
+          <form id="bk-connect-form" class="space-y-2.5">
+            <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="block text-xs font-medium text-surface-400 mb-1.5">${f.label}</label>
-                <input type="${f.type}" name="${f.name}" placeholder="${f.placeholder}" ${f.required ? 'required' : ''}
-                       class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-white placeholder-surface-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/20 transition-colors">
+                <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Broker Infrastructure</label>
+                <select id="bk-type" name="type" class="input-term w-full font-mono text-[11px]">
+                  <option value="mt5">MetaTrader 5 (Demo)</option>
+                  <option value="exness">Exness MT5 (Demo)</option>
+                </select>
               </div>
-            `).join('')}
-            <button type="submit" class="btn-primary w-full py-3 rounded-xl text-white font-semibold text-sm" data-broker="${b.id}">
-              Connect ${b.name}
-            </button>
+              <div>
+                <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Environment</label>
+                <select name="environment" class="input-term w-full font-mono text-[11px]">
+                  <option value="DEMO">DEMO (Permitted)</option>
+                  <option value="LIVE" disabled>LIVE (Locked)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Account / Login ID</label>
+                <input name="login" required placeholder="e.g. 12345678" class="input-term w-full font-mono text-[11px]" />
+              </div>
+              <div>
+                <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Broker Trade Server</label>
+                <input name="server" value="Exness-MT5Trial" required class="input-term w-full font-mono text-[11px]" />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Investor Password / API Key (Never Stored in Cleartext)</label>
+              <input name="password" type="password" required placeholder="••••••••••••" class="input-term w-full font-mono text-[11px]" />
+            </div>
+
+            <button type="submit" class="btn-primary w-full font-mono">Pair Demo Account &amp; Issue EA Token</button>
           </form>
-        </div>
-      `).join('')}
-    </div>
 
-    <!-- Pending EA Signal Queue -->
-    <div class="glass-card rounded-xl p-6 mb-8">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h3 class="text-sm font-semibold text-white">📡 Outbound MT5 / Exness Signal Queue</h3>
-          <p class="text-xs text-surface-400">Signals emitted by the Monte Carlo Auto-Trader and Copy EAs waiting for your terminal</p>
+          <div id="bk-token-banner"></div>
         </div>
-        <button id="refresh-signals-btn" class="text-xs btn-outline px-3 py-1.5 rounded-lg text-brand-300">Refresh</button>
-      </div>
-      <div id="signals-queue" class="text-xs text-surface-500">Connect a broker to view outbound execution signals.</div>
-    </div>
 
-    <!-- Setup Guide -->
-    <div class="glass-card rounded-xl p-6">
-      <h3 class="text-sm font-semibold text-white mb-4">🛠️ Linking MetaTrader 5 / Exness Desktop</h3>
-      <div class="grid md:grid-cols-2 gap-6 text-sm">
-        <div>
-          <h4 class="font-medium text-surface-300 mb-2">1. Connect & Download EA:</h4>
-          <ol class="list-decimal list-inside space-y-1 text-surface-400 text-xs leading-relaxed">
-            <li>Submit your MT5 or Exness account credentials above</li>
-            <li>Click <strong>Download .mq5 EA</strong> in the status bar</li>
-            <li>Place <code class="text-surface-200">UltraLOB_CopyBridge.mq5</code> in <code class="text-surface-200">MQL5/Experts/</code></li>
-            <li>Compile in MetaEditor (F7) and attach to any chart</li>
-          </ol>
-        </div>
-        <div>
-          <h4 class="font-medium text-surface-300 mb-2">2. Enable WebRequest in MT5:</h4>
-          <ol class="list-decimal list-inside space-y-1 text-surface-400 text-xs leading-relaxed">
-            <li>In MT5/Exness Terminal go to <strong>Tools → Options → Expert Advisors</strong></li>
-            <li>Check <strong>Allow WebRequest for listed URL</strong></li>
-            <li>Add <code class="text-surface-200">${globalThis.location?.origin || 'https://ultralob.onrender.com'}</code></li>
-            <li>Enable Algo Trading so Monte Carlo signals mirror automatically</li>
-          </ol>
+        <div class="lg:col-span-7 space-y-3">
+          <div class="panel p-4 space-y-3">
+            <div class="flex items-center justify-between border-b border-[#232a37] pb-2">
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">Active Session Broker Connection</h2>
+              <button id="bk-disconnect-btn" class="hidden btn-danger px-2 py-0.5 text-[10px] font-mono">Disconnect</button>
+            </div>
+            <div id="bk-active-card"></div>
+          </div>
+
+          <div class="panel overflow-hidden">
+            <div class="px-4 py-3 border-b border-[#232a37] flex items-center justify-between">
+              <div>
+                <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">MT5 Execution Connectors &amp; EA Heartbeats</h2>
+                <p class="text-[11px] text-[#64748b]">PostgreSQL-backed connector telemetry, balance, equity, and terminal trade flags</p>
+              </div>
+              <button id="bk-refresh-btn" class="btn-secondary px-2 py-1 text-[10px] font-mono">Sync</button>
+            </div>
+            <div id="bk-connectors-table"></div>
+          </div>
         </div>
       </div>
     </div>
-  </div>`;
+  `;
 }
 
-export function init() {
-  async function loadStatus() {
+export async function init({ showToast }) {
+  if (!isBrowser()) return;
+
+  function maskLogin(val) {
+    const s = String(val || "");
+    if (!s) return "—";
+    if (s.length <= 4) return "••••";
+    return "••••" + s.slice(-4);
+  }
+
+  async function refresh() {
+    const [statusRes, monitorRes, healthRes] = await Promise.all([
+      api.getBrokerStatus().catch(() => null),
+      api.getExecutionMonitor().catch(() => ({ connectors: [] })),
+      api.getExecutionHealth().catch(() => null)
+    ]);
+
+    const broker = statusRes?.broker || null;
+    const connected = Boolean(statusRes?.connected && broker);
+    const connectors = monitorRes?.connectors || [];
+    const latestConn = connectors[0] || null;
+    const nowIso = new Date().toISOString();
+
+    let eaHealth = "DISCONNECTED";
+    if (latestConn?.last_heartbeat_at) {
+      const ageSec = (Date.now() - Date.parse(latestConn.last_heartbeat_at)) / 1000;
+      eaHealth = ageSec <= 90 && latestConn.terminal_connected ? "ONLINE" : "STALE";
+    } else if (connected) {
+      eaHealth = "AWAITING EA POLL";
+    }
+
+    document.getElementById("bk-kpi-grid").innerHTML = [
+      metricTile({ label: "Session Bridge", value: connected ? "PAIRED (DEMO)" : "DISCONNECTED", tone: connected ? "gain" : "warn", origin: "DEMO_BROKER", updatedAt: nowIso }),
+      metricTile({ label: "EA Heartbeat Health", value: eaHealth, subtext: latestConn?.last_heartbeat_at ? `Last: ${fmtTs(latestConn.last_heartbeat_at).slice(11, 19)}Z` : "Attach UltraLOB_Bridge_EA.mq5", tone: eaHealth === "ONLINE" ? "gain" : "neutral", origin: "DEMO_BROKER", updatedAt: nowIso }),
+      metricTile({ label: "Broker Account Balance", value: latestConn?.balance != null ? fmtUsd(latestConn.balance) : "—", subtext: latestConn ? `Equity: ${fmtUsd(latestConn.equity)}` : "Reported upon EA heartbeat", origin: latestConn ? "DEMO_BROKER" : "AWAITING_DATA", updatedAt: nowIso }),
+      metricTile({ label: "Execution Storage", value: String(healthRes?.storage || monitorRes?.storage || "not-configured").toUpperCase(), subtext: `EA Min v${healthRes?.ea_min_version || "0.2.0"}`, origin: "DEMO", updatedAt: nowIso })
+    ].join("");
+
+    const disBtn = document.getElementById("bk-disconnect-btn");
+    if (disBtn) disBtn.classList.toggle("hidden", !connected);
+
+    const cardEl = document.getElementById("bk-active-card");
+    if (cardEl) {
+      cardEl.innerHTML = connected
+        ? `
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 font-mono text-[11px]">
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">PROVIDER</div><div class="text-[#e6edf6]">${esc(broker.name)}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">MASKED ACCOUNT</div><div class="text-[#e6edf6]">${esc(maskLogin(broker.account))}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">SERVER</div><div class="text-[#e6edf6]">${esc(broker.server)}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">CREDENTIAL HINT</div><div class="text-[#94a3b8]">${esc(broker.credentialHint || "••••")}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">BRIDGE TOKEN</div><div class="text-[#93c5fd] truncate">${esc(broker.bridgeToken || "—")}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">PENDING SIGNALS</div><div class="text-[#e6edf6]">${esc(String(broker.pendingSignals ?? 0))}</div></div>
+          </div>
+          <div class="text-xs text-[#94a3b8]">${esc(broker.note)}</div>
+        `
+        : stateBanner({
+            kind: "disconnected",
+            title: "No Active Session Broker Paired",
+            message: "Complete the pairing workflow on the left or execute inside the Paper Sandbox Engine."
+          });
+    }
+
+    const connEl = document.getElementById("bk-connectors-table");
+    if (connEl) {
+      connEl.innerHTML = dataTable({
+        id: "bk-tbl-conn",
+        emptyTitle: "No EA Connectors Registered",
+        emptyMessage: "Pair a demo broker account to provision an MT5 Execution Bridge connector and download the MQL5 EA.",
+        columns: [
+          { key: "label", label: "Connector", render: (r) => `<div class="font-medium text-[#e6edf6]">${esc(r.label)}</div><div class="text-[10px] font-mono text-[#64748b]">${esc(maskLogin(r.account_login))} • ${esc(r.account_server || "MT5")}</div>` },
+          { key: "status", label: "Status", render: (r) => statusBadge(r.status) },
+          { key: "balance", label: "Balance", align: "right", mono: true, render: (r) => fmtUsd(r.balance) },
+          { key: "equity", label: "Equity", align: "right", mono: true, render: (r) => fmtUsd(r.equity) },
+          { key: "terminal", label: "EA Flags", render: (r) => r.terminal_connected ? statusBadge("ONLINE") : statusBadge("AWAITING") },
+          { key: "last_heartbeat_at", label: "Heartbeat", mono: true, render: (r) => r.last_heartbeat_at ? fmtTs(r.last_heartbeat_at).slice(11, 19) + "Z" : "Never" }
+        ],
+        rows: connectors
+      });
+    }
+  }
+
+  document.getElementById("bk-connect-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const type = fd.get("type") || "mt5";
+    const login = fd.get("login");
+    const server = fd.get("server");
+    const password = fd.get("password");
+
+    const payload = type === "exness"
+      ? { type, account_id: login, server, api_key: password, environment: "DEMO", mode: "mt5_bridge" }
+      : { type, login, server, password, environment: "DEMO" };
+
     try {
-      const res = await api.getBrokerStatus();
-      updateStatusUI(res.connected ? res.broker : null);
-    } catch {
-      updateStatusUI(null);
-    }
-  }
-
-  async function updateStatusUI(broker) {
-    const dot = document.getElementById('broker-status-dot');
-    const text = document.getElementById('broker-status-text');
-    const sub = document.getElementById('broker-status-sub');
-    const disc = document.getElementById('disconnect-btn');
-    const dl = document.getElementById('download-ea-btn');
-    const tokenBox = document.getElementById('bridge-token-box');
-    const tokenVal = document.getElementById('bridge-token-val');
-    const queueEl = document.getElementById('signals-queue');
-
-    state.broker = broker;
-    if (broker) {
-      if (dot) dot.className = 'w-3 h-3 rounded-full bg-profit animate-pulse';
-      if (text) { text.className = 'text-sm text-profit font-medium'; text.textContent = `${broker.name} connected — Account ${broker.account} (${broker.server})`; }
-      if (sub) sub.textContent = broker.note || '';
-      disc?.classList.remove('hidden');
-      dl?.classList.remove('hidden');
-      tokenBox?.classList.remove('hidden');
-      if (tokenVal) tokenVal.textContent = broker.bridgeToken;
-
-      try {
-        const sigRes = await api.getMt5Signals(broker.bridgeToken);
-        if (queueEl) {
-          if (!sigRes.signals?.length) {
-            queueEl.innerHTML = '<div class="text-surface-500 py-3">No pending signals in queue. Trigger a trade or run the Monte Carlo Auto-Trader in the Terminal.</div>';
-          } else {
-            queueEl.innerHTML = `
-              <table class="w-full text-xs font-mono">
-                <thead><tr class="border-b border-surface-800 text-surface-500">
-                  <th class="text-left pb-2">Signal ID</th><th class="text-left pb-2">Symbol</th>
-                  <th class="text-center pb-2">Side</th><th class="text-right pb-2">Lot/Qty</th>
-                  <th class="text-right pb-2">Entry</th><th class="text-right pb-2">SL / TP</th>
-                </tr></thead>
-                <tbody>
-                  ${sigRes.signals.map(s => `
-                    <tr class="border-b border-surface-800/40">
-                      <td class="py-2 text-surface-400">${s.id}</td>
-                      <td class="py-2 text-white">${s.symbol}</td>
-                      <td class="py-2 text-center"><span class="chip ${s.side === 'BUY' ? 'chip-green' : 'chip-red'}">${s.side}</span></td>
-                      <td class="py-2 text-right text-surface-300">${s.volume}</td>
-                      <td class="py-2 text-right text-white">$${s.entryPrice}</td>
-                      <td class="py-2 text-right text-surface-400">${s.stopLoss || '—'} / ${s.takeProfit || '—'}</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>`;
-          }
-        }
-      } catch {}
-    } else {
-      if (dot) dot.className = 'w-3 h-3 rounded-full bg-surface-600';
-      if (text) { text.className = 'text-sm text-surface-400'; text.textContent = 'No broker connected (Paper Demo Engine active)'; }
-      if (sub) sub.textContent = '';
-      disc?.classList.add('hidden');
-      dl?.classList.add('hidden');
-      tokenBox?.classList.add('hidden');
-      if (queueEl) queueEl.textContent = 'Connect MT5 or Exness above to inspect queued execution signals.';
-    }
-  }
-
-  BROKERS.forEach(b => {
-    const form = document.getElementById(`form-${b.id}`);
-    form?.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const data = Object.fromEntries(new FormData(form));
-      const btn = form.querySelector('button[type="submit"]');
-      btn.innerHTML = '<span class="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>Connecting...';
-      btn.disabled = true;
-
-      try {
-        const res = await api.connectBroker({ type: b.id, ...data });
-        showToast(`${b.name} connected successfully!`, 'success');
-        await updateStatusUI(res.broker);
-      } catch (err) {
-        showToast(err.message, 'error');
-      } finally {
-        btn.textContent = `Connect ${b.name}`;
-        btn.disabled = false;
+      const res = await api.connectBroker(payload);
+      showToast(`Paired ${res.broker?.name || type.toUpperCase()} Demo account`, "success");
+      const tokenBox = document.getElementById("bk-token-banner");
+      if (tokenBox && res.execution_connector?.access_token) {
+        tokenBox.innerHTML = `
+          <div class="panel-elevated p-3 border border-[#3b82f6]/40 space-y-1 text-xs">
+            <div class="font-semibold text-[#93c5fd]">One-Time EA Execution Token Generated</div>
+            <div class="font-mono text-[11px] text-[#e6edf6] break-all select-all bg-[#0b0e13] p-2 rounded border border-[#232a37]">${esc(res.execution_connector.access_token)}</div>
+            <div class="text-[10px] text-[#94a3b8]">Connector ID: <span class="font-mono">${esc(res.execution_connector.id)}</span> — paste into UltraLOB_Bridge_EA.mq5</div>
+          </div>
+        `;
       }
-    });
+      refresh();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
   });
 
-  document.getElementById('disconnect-btn')?.addEventListener('click', async () => {
+  document.getElementById("bk-disconnect-btn")?.addEventListener("click", async () => {
     try {
       await api.disconnectBroker();
-      showToast('Broker disconnected.', 'info');
-      await updateStatusUI(null);
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
+      showToast("Session broker disconnected", "info");
+      refresh();
+    } catch (err) { showToast(err.message, "error"); }
   });
 
-  document.getElementById('refresh-signals-btn')?.addEventListener('click', loadStatus);
+  document.getElementById("bk-refresh-btn")?.addEventListener("click", refresh);
 
-  loadStatus();
-  return null;
+  await refresh();
 }

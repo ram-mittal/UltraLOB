@@ -194,52 +194,170 @@ export function evaluateAdvisoryPipeline({
   });
 
   // Determine advisory synthesis strictly honoring deterministic gates
-  let decision = "APPROVE_ADVISORY";
-  let confidence = 0.72;
+  let decision = "TRADE";
+  let gateStatus = "APPROVED_ADVISORY";
+  let confidence = 0.74;
   const reasons = [];
 
   if (!riskCheck.approved) {
-    decision = "BLOCKED_BY_RISK";
+    decision = "HALT";
+    gateStatus = "BLOCKED_BY_RISK";
     confidence = 0.0;
     reasons.push(`Independent Risk Engine veto (${riskCheck.code}): ${riskCheck.message}`);
   } else if (!quant.validated) {
-    decision = "BLOCKED_BY_LIFECYCLE";
+    decision = "WAIT";
+    gateStatus = "BLOCKED_BY_LIFECYCLE";
     confidence = 0.15;
     reasons.push(`${quant.code || "Strategy"} is in ${quant.lifecycle_status} status; empirical validation required prior to execution.`);
   } else if (events.restricted) {
-    decision = "BLOCKED_BY_MACRO_EVENT";
+    decision = "WAIT";
+    gateStatus = "BLOCKED_BY_MACRO_EVENT";
     confidence = 0.2;
     reasons.push(`Active high-impact macro blackout: ${events.active_restrictions.map((r) => r.title).join(", ")}.`);
+  } else if (
+    portfolio.concentration_warning ||
+    Number(portfolioMetrics?.drawdown_pct || 0) >= Number(riskState?.limits?.max_drawdown_pct ?? 15) * 0.7
+  ) {
+    decision = "REDUCE EXPOSURE";
+    gateStatus = "EXPOSURE_ELEVATED";
+    confidence = 0.35;
+    reasons.push(
+      portfolio.concentration_warning ||
+      `Portfolio drawdown (${Number(portfolioMetrics?.drawdown_pct || 0).toFixed(2)}%) is approaching hard risk limit; prioritize exposure reduction.`
+    );
+  } else if (market.regime === "TRENDING_BULLISH" && side === "SELL") {
+    decision = "WAIT";
+    gateStatus = "COUNTER_TREND_CONFLICT";
+    confidence = 0.4;
+    reasons.push("Counter-trend SELL conflicts with detected TRENDING_BULLISH regime.");
+  } else if (market.regime === "TRENDING_BEARISH" && side === "BUY") {
+    decision = "WAIT";
+    gateStatus = "COUNTER_TREND_CONFLICT";
+    confidence = 0.4;
+    reasons.push("Counter-trend BUY conflicts with detected TRENDING_BEARISH regime.");
+  } else if (market.regime === "HIGH_VOLATILITY") {
+    decision = "WAIT";
+    gateStatus = "HIGH_VOLATILITY_FILTER";
+    confidence = 0.45;
+    reasons.push(`Elevated volatility (ATR ${market.atr_pct}%) exceeds institutional calm regime threshold; stand aside.`);
+  } else if (market.regime === "AWAITING_DATA") {
+    decision = "WAIT";
+    gateStatus = "AWAITING_MARKET_DATA";
+    confidence = 0.5;
+    reasons.push("Live XAUUSD OHLCV candles awaiting synchronization; cannot confirm entry alignment.");
   } else {
-    // Market alignment score when regime data exists
-    if (market.regime === "TRENDING_BULLISH" && side === "SELL") {
-      decision = "HOLD_WAIT";
-      confidence = 0.4;
-      reasons.push("Counter-trend SELL conflicts with detected TRENDING_BULLISH regime.");
-    } else if (market.regime === "TRENDING_BEARISH" && side === "BUY") {
-      decision = "HOLD_WAIT";
-      confidence = 0.4;
-      reasons.push("Counter-trend BUY conflicts with detected TRENDING_BEARISH regime.");
-    } else {
-      reasons.push("Independent Risk Gate passed.");
-      reasons.push(`Quant lifecycle gate verified (${quant.lifecycle_status}).`);
-      reasons.push(`Macro window is ${events.status}.`);
-      if (portfolio.concentration_warning) {
-        confidence -= 0.15;
-        reasons.push(portfolio.concentration_warning);
-      }
-      if (market.regime === "AWAITING_DATA") {
-        confidence = Math.min(confidence, 0.55);
-        reasons.push("Live XAUUSD regime feed awaiting candles; verify terminal chart context before human approval.");
-      }
-    }
+    reasons.push("Independent Risk Gate passed.");
+    reasons.push(`Quant lifecycle gate verified (${quant.lifecycle_status}).`);
+    reasons.push(`Macro window is ${events.status}.`);
+    reasons.push(`Market regime (${market.regime}) aligns with ${side} bias.`);
   }
+
+  const clampedConfidence = Number(Math.max(0, Math.min(1, confidence)).toFixed(2));
+  const score = Math.round(clampedConfidence * 100);
+  const signalQuality = !riskCheck.approved
+    ? `BLOCKED (${score}/100)`
+    : clampedConfidence >= 0.72
+      ? `A — INSTITUTIONAL (${score}/100)`
+      : clampedConfidence >= 0.5
+        ? `B — CONDITIONAL (${score}/100)`
+        : `LOW / STAND ASIDE (${score}/100)`;
+
+  const directionalBias = market.regime === "TRENDING_BULLISH"
+    ? "LONG (BULLISH)"
+    : market.regime === "TRENDING_BEARISH"
+      ? "SHORT (BEARISH)"
+      : market.regime === "RANGE_BOUND"
+        ? "NEUTRAL (MEAN REVERSION)"
+        : market.regime === "HIGH_VOLATILITY"
+          ? "DEFENSIVE (VOLATILE)"
+          : `UNCONFIRMED (${side} PROPOSED)`;
+
+  const rawAvgProfit = Number(strategy?.avg_profit_trade ?? latestBacktest?.metrics?.avg_win ?? 0);
+  const rawAvgLoss = Math.abs(Number(strategy?.avg_loss_trade ?? latestBacktest?.metrics?.avg_loss ?? 0));
+  const estimatedNetR = rawAvgProfit > 0 && rawAvgLoss > 0
+    ? Number((rawAvgProfit / rawAvgLoss).toFixed(2))
+    : null;
+
+  const equityVal = Number(portfolioMetrics?.equity || 0);
+  const monetaryRiskUsd = Number(((equityVal * Number(proposedRiskPct || 0)) / 100).toFixed(2));
+  const entryConditions = market.last_close != null
+    ? `${side} setup aligned when price holds near ${market.last_close} (EMA12 ${market.ema_fast} vs EMA26 ${market.ema_slow}, ATR ${market.atr_pct}%). Logic: ${strategy?.entry_logic || "Strategy rules"}`
+    : `Awaiting live OHLCV structure confirmation. Strategy logic: ${strategy?.entry_logic || "Rule-based trigger pending candle feed"}`;
+
+  const invalidation = market.ema_slow != null
+    ? `Invalidated on close beyond EMA26 (${market.ema_slow}) / swing invalidation; hard cap ${riskState?.limits?.max_risk_per_trade_pct ?? 1}% equity risk.`
+    : `${strategy?.stop_loss_methodology || "Structure + ATR stop"}; hard cap ${riskState?.limits?.max_risk_per_trade_pct ?? 1}% equity risk.`;
+
+  const portfolioImpact = {
+    equity: equityVal,
+    proposed_allocation_usd: Number(proposedAllocationUsd),
+    allocation_pct_of_equity: equityVal > 0 ? Number(((Number(proposedAllocationUsd) / equityVal) * 100).toFixed(2)) : 0,
+    symbol_exposure_before_pct: portfolio.symbol_allocation_pct,
+    symbol_exposure_after_pct: portfolio.projected_symbol_allocation_pct,
+    current_leverage: portfolio.current_leverage,
+    drawdown_pct: Number((portfolioMetrics?.drawdown_pct || 0).toFixed(2))
+  };
+
+  const supportingEvidence = [
+    {
+      stage: "Market Intelligence",
+      status: market.regime === "AWAITING_DATA" ? "AWAITING" : "OK",
+      origin: market.data_origin,
+      summary: market.last_close != null
+        ? `${symbol} close ${market.last_close} | EMA12 ${market.ema_fast} / EMA26 ${market.ema_slow} | ATR ${market.atr_pct}%`
+        : market.note
+    },
+    {
+      stage: "Quant Verification",
+      status: quant.validated ? "VERIFIED" : "BLOCKED",
+      origin: quant.data_origin,
+      summary: `${strategy?.code || "STRAT"} (${quant.lifecycle_status})${quant.metrics?.profit_factor ? ` | PF ${quant.metrics.profit_factor}` : ""}`
+    },
+    {
+      stage: "Independent Risk Gate",
+      status: riskCheck.approved ? "PASS" : "VETO",
+      origin: "HARD_RISK_ENGINE",
+      summary: riskCheck.message
+    },
+    {
+      stage: "Portfolio Fit",
+      status: portfolio.concentration_warning ? "WARNING" : "OK",
+      origin: "PORTFOLIO_STATE",
+      summary: `Projected ${symbol} weight ${portfolio.projected_symbol_allocation_pct}% | Lev ${portfolio.current_leverage}x`
+    },
+    {
+      stage: "Execution & Events",
+      status: events.restricted ? "RESTRICTED" : execution.spread_ok ? "CLEAR" : "SPREAD_HIGH",
+      origin: execution.environment,
+      summary: `${execution.broker_name} | Macro: ${events.status}${execution.observed_spread_points != null ? ` | Spread ${execution.observed_spread_points} pts` : ""}`
+    }
+  ];
+
+  const ttlMinutes = decision === "TRADE" ? 240 : 30;
+  const expiresAt = new Date(nowMs + ttlMinutes * 60_000).toISOString();
 
   return {
     mode: "ADVISORY",
     autonomous_override_permitted: false,
+    recommendation_status: "ADVISORY_RECOMMENDATION",
+    execution_authorization_status: "SEPARATE_HUMAN_AUTHORIZATION_REQUIRED",
     decision,
-    confidence: Number(Math.max(0, Math.min(1, confidence)).toFixed(2)),
+    gate_status: gateStatus,
+    confidence: clampedConfidence,
+    instrument: symbol,
+    strategy_id: strategy?.id || null,
+    strategy_code: strategy?.code || null,
+    market_regime: market.regime,
+    directional_bias: directionalBias,
+    signal_quality: signalQuality,
+    signal_quality_score: score,
+    entry_conditions: entryConditions,
+    invalidation,
+    estimated_net_r: estimatedNetR,
+    monetary_risk_usd: monetaryRiskUsd,
+    portfolio_impact: portfolioImpact,
+    supporting_evidence: supportingEvidence,
+    expires_at: expiresAt,
     proposal: {
       strategy_id: strategy?.id || null,
       symbol,

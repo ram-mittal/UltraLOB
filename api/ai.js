@@ -67,7 +67,24 @@ export default async function aiHandler(request, response) {
         `SELECT id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs, created_at
          FROM ai_decisions ORDER BY created_at DESC LIMIT 30`
       );
-      return response.status(200).json({ decisions: res.rows });
+      const decisions = res.rows.map((r) => {
+        const spec = r.engine_outputs?._decision_spec || {};
+        return {
+          ...spec,
+          id: r.id,
+          strategy_id: r.strategy_id,
+          mode: r.mode,
+          decision: r.decision,
+          confidence: Number(r.confidence),
+          risk_approved: r.risk_approved,
+          human_approved_by: r.human_approved_by,
+          human_approval_status: r.human_approved_by ? "APPROVED" : "PENDING",
+          rationale: r.rationale,
+          pipeline_stages: r.engine_outputs,
+          evaluated_at: spec.evaluated_at || r.created_at
+        };
+      });
+      return response.status(200).json({ decisions });
     }
     return response.status(200).json({ decisions: mem.aiDecisions.slice(0, 30) });
   }
@@ -137,16 +154,39 @@ export default async function aiHandler(request, response) {
     if (dbAvailable) {
       await query(
         `INSERT INTO ai_decisions
-         (id, strategy_id, engine_outputs, mode, decision, confidence, risk_approved, rationale)
-         VALUES ($1,$2,$3::jsonb,'ADVISORY',$4,$5,$6,$7)`,
+         (id, strategy_id, mode, decision, confidence, risk_approved, human_approved_by, rationale, engine_outputs)
+         VALUES ($1,$2,'ADVISORY',$3,$4,$5,NULL,$6,$7::jsonb)`,
         [
           recordId,
           strategy.id,
-          JSON.stringify(evaluation.pipeline_stages),
           evaluation.decision,
           evaluation.confidence,
           evaluation.pipeline_stages["3_risk_engine"].approved,
-          evaluation.rationale
+          evaluation.rationale,
+          JSON.stringify({
+            ...evaluation.pipeline_stages,
+            _decision_spec: {
+              instrument: evaluation.instrument,
+              strategy_id: evaluation.strategy_id,
+              strategy_code: evaluation.strategy_code,
+              market_regime: evaluation.market_regime,
+              directional_bias: evaluation.directional_bias,
+              signal_quality: evaluation.signal_quality,
+              signal_quality_score: evaluation.signal_quality_score,
+              entry_conditions: evaluation.entry_conditions,
+              invalidation: evaluation.invalidation,
+              estimated_net_r: evaluation.estimated_net_r,
+              monetary_risk_usd: evaluation.monetary_risk_usd,
+              portfolio_impact: evaluation.portfolio_impact,
+              supporting_evidence: evaluation.supporting_evidence,
+              expires_at: evaluation.expires_at,
+              gate_status: evaluation.gate_status,
+              proposal: evaluation.proposal,
+              recommendation_status: evaluation.recommendation_status,
+              execution_authorization_status: evaluation.execution_authorization_status,
+              evaluated_at: evaluation.evaluated_at
+            }
+          })
         ]
       );
       await recordAuditLog({

@@ -1,168 +1,150 @@
-// UltraLOB Institutional Platform — Main App Router (12 Workspace Sections + Terminal/Auth)
-import { renderNavbar, updateActiveNav, WORKSPACE_SECTIONS } from './components/navbar.js';
-import { renderFooter } from './components/footer.js';
-
-const workspaceLoader = () => import('./pages/workspace.js');
+// UltraLOB Institutional Quantitative Terminal — Hash Router & Shell Controller
+import { state, loadAuth, saveAuth } from "./state.js";
+import { api } from "./api.js";
+import * as sidebar from "./components/sidebar.js";
+import * as topbar from "./components/topbar.js";
+import { destroyAllCharts } from "./components/charts.js";
+import { closeDrawer, esc } from "./components/ui.js";
 
 const pageLoaders = {
-  '/':              () => import('./pages/landing.js'),
-  '/overview':      () => import('./pages/dashboard.js'),
-  '/dashboard':     () => import('./pages/dashboard.js'),
-  '/marketplace':   () => import('./pages/marketplace.js'),
-  '/strategy':      () => import('./pages/strategy-detail.js'),
-  '/broker':        () => import('./pages/broker.js'),
-  '/terminal':      () => import('./pages/terminal.js'),
-  '/auth':          () => import('./pages/auth.js'),
-  '/portfolio':     workspaceLoader,
-  '/ai':            workspaceLoader,
-  '/markets':       workspaceLoader,
-  '/risk':          workspaceLoader,
-  '/copy-trading':  workspaceLoader,
-  '/execution':     workspaceLoader,
-  '/research':      workspaceLoader,
-  '/reports':       workspaceLoader,
-  '/settings':      workspaceLoader,
+  landing: () => import("./pages/dashboard.js"),
+  overview: () => import("./pages/dashboard.js"),
+  dashboard: () => import("./pages/dashboard.js"),
+  marketplace: () => import("./pages/marketplace.js"),
+  strategy: () => import("./pages/strategy-detail.js"),
+  portfolio: () => import("./pages/portfolio.js"),
+  "copy-trading": () => import("./pages/portfolio.js"),
+  ai: () => import("./pages/ai.js"),
+  risk: () => import("./pages/risk.js"),
+  execution: () => import("./pages/execution.js"),
+  broker: () => import("./pages/broker.js"),
+  research: () => import("./pages/research.js"),
+  reports: () => import("./pages/reports.js"),
+  admin: () => import("./pages/admin.js"),
+  settings: () => import("./pages/admin.js"),
+  terminal: () => import("./pages/terminal.js"),
+  markets: () => import("./pages/terminal.js"),
+  auth: () => import("./pages/auth.js")
 };
+
+function parseHash() {
+  const hash = (typeof window !== "undefined" ? window.location.hash.slice(1) : "") || "/overview";
+  const [pathPart, queryPart] = hash.split("?");
+  const parts = pathPart.split("/").filter(Boolean);
+  const page = parts[0] || "overview";
+  const id = parts[1] || null;
+  const params = new URLSearchParams(queryPart || "");
+  return { path: pathPart, page, id, params };
+}
+
+export function navigate(path) {
+  if (typeof window === "undefined") return;
+  closeDrawer();
+  window.location.hash = "#" + path;
+}
+
+export function showToast(message, type = "info") {
+  if (typeof document === "undefined") return;
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const colors = {
+    success: "bg-[#11151d] border-[#22c55e]/50 text-[#86efac]",
+    error: "bg-[#11151d] border-[#ef4444]/50 text-[#fca5a5]",
+    warning: "bg-[#11151d] border-[#eab308]/50 text-[#fde047]",
+    info: "bg-[#11151d] border-[#3b82f6]/50 text-[#93c5fd]"
+  };
+
+  const toast = document.createElement("div");
+  toast.className = `px-3.5 py-2.5 rounded border shadow-xl text-xs font-medium flex items-center gap-2 ${colors[type] || colors.info}`;
+  toast.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-current shrink-0"></span><span>${esc(message)}</span>`;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transition = "opacity 180ms ease";
+    setTimeout(() => toast.remove(), 200);
+  }, 3600);
+}
 
 let currentCleanup = null;
 
-function parseHash() {
-  const hash = location.hash.slice(1) || '/';
-  const [path, ...rest] = hash.split('?');
-  const params = new URLSearchParams(rest.join('?'));
-  const segments = path.split('/').filter(Boolean);
-  if (segments[0] === 'strategy' && segments[1]) {
-    return { path: '/strategy', id: segments[1], params };
-  }
-  return { path: '/' + (segments[0] || ''), id: null, params };
-}
+async function renderCurrentRoute() {
+  if (typeof document === "undefined") return;
+  const { path, page, id, params } = parseHash();
 
-async function navigate(route) {
-  const content = document.getElementById('page-content');
-  if (!content) return;
-
-  if (currentCleanup) {
-    try { currentCleanup(); } catch (e) { console.warn('Page cleanup error:', e); }
+  if (typeof currentCleanup === "function") {
+    try { currentCleanup(); } catch {}
     currentCleanup = null;
   }
+  destroyAllCharts();
+  closeDrawer();
 
-  const loaderKey = route.path;
-  const loader = pageLoaders[loaderKey];
-
-  if (!loader) {
-    content.innerHTML = `
-      <div class="flex items-center justify-center min-h-[60vh]">
-        <div class="text-center">
-          <div class="text-5xl mb-4">🔍</div>
-          <h2 class="text-2xl font-bold text-white mb-2">Section Not Found</h2>
-          <p class="text-surface-400 mb-6">The requested workspace route does not exist.</p>
-          <a href="#/overview" class="btn-primary px-6 py-2.5 rounded-lg text-white font-medium inline-block">Go to Overview</a>
-        </div>
-      </div>`;
-    return;
+  const sbEl = document.getElementById("sidebar-container");
+  const tbEl = document.getElementById("topbar-container");
+  if (sbEl) {
+    sbEl.innerHTML = sidebar.render(path);
+    sidebar.init(navigate);
+  }
+  if (tbEl) {
+    tbEl.innerHTML = topbar.render(path);
+    topbar.init(navigate);
   }
 
-  content.innerHTML = `
-    <div class="flex items-center justify-center min-h-[50vh]">
-      <div class="flex flex-col items-center gap-3">
-        <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
-        <span class="text-surface-400 text-xs">Loading module...</span>
-      </div>
-    </div>`;
+  const pageEl = document.getElementById("page-content");
+  if (!pageEl) return;
 
+  const loader = pageLoaders[page] || pageLoaders.overview;
   try {
-    const module = await loader();
-    content.innerHTML = `<div class="page-transition">${module.render(route)}</div>`;
-    if (module.init) {
-      currentCleanup = await module.init(route) || null;
+    const mod = await loader();
+    pageEl.innerHTML = mod.render({ path, id, params });
+    if (typeof mod.init === "function") {
+      currentCleanup = await mod.init({ path, id, params, navigate, showToast });
     }
-    updateActiveNav(loaderKey);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "instant" });
   } catch (err) {
-    console.error('Page load error:', err);
-    content.innerHTML = `
-      <div class="flex items-center justify-center min-h-[60vh]">
-        <div class="text-center">
-          <div class="text-5xl mb-4">⚠️</div>
-          <h2 class="text-2xl font-bold text-white mb-2">Module Load Error</h2>
-          <p class="text-surface-400 mb-6">${err.message}</p>
-          <a href="#/overview" class="btn-primary px-6 py-2.5 rounded-lg text-white font-medium inline-block">Return to Overview</a>
-        </div>
-      </div>`;
+    console.error("[router] Failed rendering route", path, err);
+    pageEl.innerHTML = `
+      <div class="panel p-6 border-[#ef4444]/40 max-w-xl mx-auto my-8">
+        <div class="text-xs font-mono uppercase text-[#ef4444] mb-1">MODULE LOAD ERROR</div>
+        <div class="text-sm text-[#e6edf6] mb-3">${esc(err?.message || "Failed loading module.")}</div>
+        <a href="#/overview" class="btn-secondary">Return to Overview</a>
+      </div>
+    `;
   }
-}
-
-export function showToast(message, type = 'info', duration = 4000) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const colors = {
-    info: 'border-brand-500 bg-brand-500/10',
-    success: 'border-profit bg-profit-bg',
-    error: 'border-loss bg-loss-bg',
-    warning: 'border-warn bg-warn-bg'
-  };
-  const icons = { info: 'ℹ️', success: '✅', error: '❌', warning: '⚠️' };
-  const toast = document.createElement('div');
-  toast.className = `flex items-center gap-3 px-4 py-3 rounded-lg border ${colors[type] || colors.info} text-white text-sm shadow-lg animate-slide-up`;
-  toast.innerHTML = `<span>${icons[type] || icons.info}</span><span>${message}</span>`;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(100%)';
-    toast.style.transition = 'all 0.3s ease';
-    setTimeout(() => toast.remove(), 300);
-  }, duration);
-}
-
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  window.__closeMobileMenu = () => {
-    document.getElementById('mobile-menu')?.classList.remove('open');
-    document.getElementById('mobile-overlay')?.classList.add('hidden');
-  };
-
-  window.__openMobileMenu = () => {
-    const menu = document.getElementById('mobile-menu');
-    const overlay = document.getElementById('mobile-overlay');
-    if (menu && overlay) {
-      menu.innerHTML = renderMobileMenu();
-      menu.classList.add('open');
-      overlay.classList.remove('hidden');
-    }
-  };
-}
-
-function renderMobileMenu() {
-  return `
-    <div class="flex items-center justify-between mb-6">
-      <span class="text-lg font-bold gradient-text">UltraLOB</span>
-      <button onclick="window.__closeMobileMenu()" class="text-surface-400 hover:text-white p-1">✕</button>
-    </div>
-    <div class="flex flex-col gap-1 overflow-y-auto max-h-[75vh]">
-      ${WORKSPACE_SECTIONS.map(l => `
-        <a href="#${l.path}" onclick="window.__closeMobileMenu()"
-           class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-surface-300 hover:text-white hover:bg-surface-800 transition-colors">
-          <span>${l.icon}</span><span>${l.label}</span>
-        </a>`).join('')}
-      <a href="#/terminal" onclick="window.__closeMobileMenu()"
-         class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-surface-300 hover:text-white hover:bg-surface-800 transition-colors">
-        <span>💻</span><span>Trading Terminal</span>
-      </a>
-    </div>
-    <div class="mt-6 pt-4 border-t border-surface-700">
-      <a href="#/auth" onclick="window.__closeMobileMenu()"
-         class="btn-primary w-full py-2.5 rounded-lg text-white font-medium text-center block text-sm">
-        Account / Sign In
-      </a>
-    </div>`;
 }
 
 async function initApp() {
-  document.getElementById('navbar-container').innerHTML = renderNavbar();
-  document.getElementById('footer-container').innerHTML = renderFooter();
-  window.addEventListener('hashchange', () => navigate(parseHash()));
-  navigate(parseHash());
+  if (typeof window === "undefined") return;
+  loadAuth();
+
+  if (!window.location.hash && window.location.pathname && window.location.pathname !== "/") {
+    const p = window.location.pathname;
+    if (pageLoaders[p.split("/").filter(Boolean)[0]]) {
+      window.history.replaceState(null, "", "/#" + p + window.location.search);
+    }
+  }
+
+  if (state.token) {
+    try {
+      const me = await api.me();
+      if (me?.user) saveAuth(state.token, me.user, state.refreshToken);
+    } catch {
+      // Session refresh deferred
+    }
+  }
+
+  window.addEventListener("hashchange", renderCurrentRoute);
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDrawer();
+  });
+  await renderCurrentRoute();
 }
 
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  initApp().catch(err => console.error('App init failed:', err));
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initApp);
+  } else {
+    initApp();
+  }
 }

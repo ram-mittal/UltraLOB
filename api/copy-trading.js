@@ -21,6 +21,12 @@ function computePortfolioMetrics(portfolio) {
   const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
   const closedTrades = (portfolio.trades || []).filter((t) => t.status === "closed");
 
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const dailyPnl = Number(closedTrades.filter((t) => now - (t.timestamp || 0) <= dayMs).reduce((s, t) => s + (Number(t.pnl) || 0), 0).toFixed(2));
+  const weeklyPnl = Number(closedTrades.filter((t) => now - (t.timestamp || 0) <= 7 * dayMs).reduce((s, t) => s + (Number(t.pnl) || 0), 0).toFixed(2));
+  const monthlyPnl = Number(closedTrades.filter((t) => now - (t.timestamp || 0) <= 30 * dayMs).reduce((s, t) => s + (Number(t.pnl) || 0), 0).toFixed(2));
+
   const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
   const realized = closedTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
   const equity = Number((portfolio.balance + unrealized).toFixed(2));
@@ -31,6 +37,7 @@ function computePortfolioMetrics(portfolio) {
   const allocatedCapital = Number(activeSubs.reduce((sum, s) => sum + Number(s.allocation || 0), 0).toFixed(2));
   const availableCapital = Number(Math.max(0, equity - allocatedCapital).toFixed(2));
   const marginUsed = Number(openTrades.reduce((sum, t) => sum + Number(t.margin || (t.qty * t.price * 0.05)), 0).toFixed(2));
+  const marginUtilizationPct = equity > 0 ? Number(((marginUsed / equity) * 100).toFixed(2)) : 0;
   const wins = closedTrades.filter((t) => (t.pnl || 0) > 0).length;
   const winRate = closedTrades.length > 0 ? Number(((wins / closedTrades.length) * 100).toFixed(1)) : null;
 
@@ -43,10 +50,14 @@ function computePortfolioMetrics(portfolio) {
     allocated_capital: allocatedCapital,
     available_capital: availableCapital,
     margin_used: marginUsed,
+    margin_utilization_pct: marginUtilizationPct,
     free_margin: Number(Math.max(0, equity - marginUsed).toFixed(2)),
     gross_notional: exposure.gross_notional,
     portfolio_leverage: exposure.portfolio_leverage,
     drawdown_pct: drawdownPct,
+    daily_pnl: dailyPnl,
+    weekly_pnl: weeklyPnl,
+    monthly_pnl: monthlyPnl,
     unrealized_pnl: Number(unrealized.toFixed(2)),
     realized_pnl: Number(realized.toFixed(2)),
     total_pnl: Number((realized + unrealized).toFixed(2)),

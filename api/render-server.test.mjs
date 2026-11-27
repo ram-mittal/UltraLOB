@@ -368,8 +368,20 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(aiEvalBlocked.status, 200);
     const aiBlockedData = await aiEvalBlocked.json();
     assert.equal(aiBlockedData.decision.mode, "ADVISORY");
-    // Must be blocked because XAUUSD instrument kill switch is still active from step 10!
-    assert.equal(aiBlockedData.decision.decision, "BLOCKED_BY_RISK");
+    // Must be halted because XAUUSD instrument kill switch is still active from step 10!
+    assert.equal(aiBlockedData.decision.decision, "HALT");
+    assert.equal(aiBlockedData.decision.gate_status, "BLOCKED_BY_RISK");
+    assert.equal(aiBlockedData.decision.instrument, "XAUUSD");
+
+    const stressRes = await fetch(baseUrl + "/api/portfolio/risk/stress-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({})
+    });
+    assert.equal(stressRes.status, 200);
+    const stressData = await stressRes.json();
+    assert.equal(stressData.stress.data_origin, "SIMULATED_RESEARCH");
+    assert.ok(Array.isArray(stressData.stress.scenarios) && stressData.stress.scenarios.length >= 3);
 
     // Human authorization must ALSO be refused by Risk Engine while kill switch is active
     const authDenied = await fetch(baseUrl + `/api/ai/decisions/${aiBlockedData.decision.id}/authorize`, {
@@ -454,7 +466,14 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
       "../public/js/pages/marketplace.js",
       "../public/js/pages/strategy-detail.js",
       "../public/js/pages/dashboard.js",
+      "../public/js/pages/portfolio.js",
+      "../public/js/pages/ai.js",
+      "../public/js/pages/risk.js",
+      "../public/js/pages/execution.js",
       "../public/js/pages/broker.js",
+      "../public/js/pages/research.js",
+      "../public/js/pages/reports.js",
+      "../public/js/pages/admin.js",
       "../public/js/pages/terminal.js",
       "../public/js/pages/auth.js",
       "../public/js/pages/workspace.js"

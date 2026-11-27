@@ -1,146 +1,112 @@
-// Auth Page (Login / Signup with RBAC Roles & Optional Organization)
-import { saveAuth } from '../state.js';
-import { api } from '../api.js';
-import { showToast } from '../app.js';
+// Institutional Operator Authentication Screen (RBAC Sign In & Registration)
+import { api } from "../api.js";
+import { saveAuth } from "../state.js";
+import { isBrowser, originBadge } from "../components/ui.js";
 
-export function render(route) {
-  const tab = route.params?.get('tab') || 'login';
+export function render({ params } = {}) {
+  const mode = params?.get("mode") === "register" ? "register" : "login";
   return `
-  <div class="min-h-[80vh] flex items-center justify-center px-4 py-12">
-    <div class="w-full max-w-md">
-      <div class="text-center mb-8">
-        <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand-500/20">
-          <span class="text-white font-bold text-xl">U</span>
+    <div class="max-w-md mx-auto my-8 panel p-6 space-y-5">
+      <div class="flex items-start justify-between border-b border-[#232a37] pb-3">
+        <div>
+          <div class="font-mono text-[10px] text-[#3b82f6] uppercase tracking-widest">UltraLOB Access Control</div>
+          <h1 class="text-base font-semibold text-[#e6edf6] mt-0.5">${mode === "register" ? "Create Institutional Operator" : "Operator Sign In"}</h1>
         </div>
-        <h1 class="text-2xl font-bold text-white">UltraLOB Access Portal</h1>
-        <p class="text-sm text-surface-400 mt-1">Institutional Strategy Allocation & Risk Infrastructure</p>
+        ${originBadge("DEMO")}
       </div>
 
-      <div class="flex bg-surface-800/50 rounded-xl p-1 mb-6 border border-surface-700/50">
-        <button id="tab-login" onclick="window.__authTab('login')"
-                class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${tab === 'login' ? 'bg-brand-500 text-white' : 'text-surface-400 hover:text-white'}">
-          Sign In
-        </button>
-        <button id="tab-signup" onclick="window.__authTab('signup')"
-                class="flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${tab === 'signup' ? 'bg-brand-500 text-white' : 'text-surface-400 hover:text-white'}">
-          Create Account
-        </button>
+      <div class="flex gap-1 bg-[#0b0e13] p-1 rounded border border-[#232a37]">
+        <button id="auth-tab-login" class="flex-1 py-1.5 text-xs font-mono rounded ${mode === "login" ? "bg-[#1c2330] text-[#e6edf6]" : "text-[#94a3b8]"}">Sign In</button>
+        <button id="auth-tab-reg" class="flex-1 py-1.5 text-xs font-mono rounded ${mode === "register" ? "bg-[#1c2330] text-[#e6edf6]" : "text-[#94a3b8]"}">Register Account</button>
       </div>
 
-      <div id="form-login" class="${tab === 'login' ? '' : 'hidden'}">
-        <form onsubmit="return false;" class="space-y-4" id="login-form">
-          <div>
-            <label class="block text-xs font-medium text-surface-400 mb-1.5">Email</label>
-            <input type="email" name="email" required placeholder="analyst@fund.io"
-                   class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-white">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-surface-400 mb-1.5">Password</label>
-            <input type="password" name="password" required placeholder="••••••••"
-                   class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-white">
-          </div>
-          <div id="login-error" class="hidden text-xs text-loss bg-loss-bg border border-loss/20 rounded-lg p-3"></div>
-          <button type="submit" class="btn-primary w-full py-3 rounded-xl text-white font-semibold text-sm">Sign In</button>
-        </form>
-      </div>
+      <form id="auth-form-login" class="space-y-3 ${mode === "register" ? "hidden" : ""}">
+        <div>
+          <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Institutional Email</label>
+          <input name="email" type="email" required placeholder="operator@desk.com" class="input-term w-full" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Password</label>
+          <input name="password" type="password" required placeholder="••••••••" class="input-term w-full" />
+        </div>
+        <button type="submit" class="btn-primary w-full font-mono">Authenticate Session</button>
+      </form>
 
-      <div id="form-signup" class="${tab === 'signup' ? '' : 'hidden'}">
-        <form onsubmit="return false;" class="space-y-4" id="signup-form">
-          <div>
-            <label class="block text-xs font-medium text-surface-400 mb-1.5">Full Name</label>
-            <input type="text" name="name" required placeholder="Ram Mittal"
-                   class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-white">
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-surface-400 mb-1.5">Email</label>
-            <input type="email" name="email" required placeholder="ram@ultralob.io"
-                   class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-white">
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-medium text-surface-400 mb-1.5">Platform Role</label>
-              <select name="role" class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2.5 text-xs text-white">
-                <option value="investor">Investor</option>
-                <option value="strategy_provider">Strategy Provider</option>
-                <option value="fund_manager">Fund Manager</option>
-                <option value="researcher">Quant Researcher</option>
-                <option value="risk_manager">Risk Manager</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-surface-400 mb-1.5">Organization (Optional)</label>
-              <input type="text" name="organization_name" placeholder="Firm / Desk"
-                     class="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2.5 text-xs text-white">
-            </div>
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-surface-400 mb-1.5">Password (min 6 chars)</label>
-            <input type="password" name="password" required minlength="6" placeholder="••••••••"
-                   class="w-full bg-surface-800 border border-surface-700 rounded-lg px-4 py-2.5 text-sm text-white">
-          </div>
-          <div id="signup-error" class="hidden text-xs text-loss bg-loss-bg border border-loss/20 rounded-lg p-3"></div>
-          <button type="submit" class="btn-primary w-full py-3 rounded-xl text-white font-semibold text-sm">Create Account</button>
-        </form>
-      </div>
-
-      <div class="mt-6 text-center">
-        <a href="#/overview" class="text-xs text-surface-400 hover:text-white underline">Inspect Sandbox Workspace →</a>
-      </div>
+      <form id="auth-form-reg" class="space-y-3 ${mode === "register" ? "" : "hidden"}">
+        <div>
+          <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Operator Full Name</label>
+          <input name="name" required placeholder="Desk Portfolio Manager" class="input-term w-full" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Email</label>
+          <input name="email" type="email" required placeholder="pm@desk.com" class="input-term w-full" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">Password (min 8 chars)</label>
+          <input name="password" type="password" required minlength="8" class="input-term w-full" />
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-[#94a3b8] mb-1">RBAC Role</label>
+          <select name="role" class="input-term w-full font-mono text-[11px]">
+            <option value="investor">Investor / Allocator</option>
+            <option value="trader">Execution Trader</option>
+            <option value="researcher">Quant Researcher</option>
+            <option value="fund_manager">Fund Manager</option>
+            <option value="admin">System Admin</option>
+          </select>
+        </div>
+        <button type="submit" class="btn-primary w-full font-mono">Register Institutional Operator</button>
+      </form>
     </div>
-  </div>`;
+  `;
 }
 
-export function init() {
-  window.__authTab = (tab) => {
-    document.getElementById('form-login')?.classList.toggle('hidden', tab !== 'login');
-    document.getElementById('form-signup')?.classList.toggle('hidden', tab !== 'signup');
-    const loginBtn = document.getElementById('tab-login');
-    const signupBtn = document.getElementById('tab-signup');
-    if (loginBtn) loginBtn.className = `flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${tab === 'login' ? 'bg-brand-500 text-white' : 'text-surface-400 hover:text-white'}`;
-    if (signupBtn) signupBtn.className = `flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${tab === 'signup' ? 'bg-brand-500 text-white' : 'text-surface-400 hover:text-white'}`;
-  };
+export async function init({ navigate, showToast }) {
+  if (!isBrowser()) return;
 
-  document.getElementById('login-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const form = e.target;
-    const btn = form.querySelector('button[type="submit"]');
-    const errEl = document.getElementById('login-error');
-    errEl?.classList.add('hidden');
-    btn.disabled = true;
-    try {
-      const res = await api.login(form.email.value, form.password.value);
-      saveAuth(res.user, res.token, res.refreshToken);
-      showToast(`Signed in as ${res.user.name} (${res.user.role})`, 'success');
-      location.hash = '#/overview';
-    } catch (err) {
-      if (errEl) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
-      btn.disabled = false;
-    }
+  const loginF = document.getElementById("auth-form-login");
+  const regF = document.getElementById("auth-form-reg");
+  const tLogin = document.getElementById("auth-tab-login");
+  const tReg = document.getElementById("auth-tab-reg");
+
+  tLogin?.addEventListener("click", () => {
+    loginF?.classList.remove("hidden");
+    regF?.classList.add("hidden");
+    tLogin.className = "flex-1 py-1.5 text-xs font-mono rounded bg-[#1c2330] text-[#e6edf6]";
+    tReg.className = "flex-1 py-1.5 text-xs font-mono rounded text-[#94a3b8]";
   });
 
-  document.getElementById('signup-form')?.addEventListener('submit', async (e) => {
+  tReg?.addEventListener("click", () => {
+    regF?.classList.remove("hidden");
+    loginF?.classList.add("hidden");
+    tReg.className = "flex-1 py-1.5 text-xs font-mono rounded bg-[#1c2330] text-[#e6edf6]";
+    tLogin.className = "flex-1 py-1.5 text-xs font-mono rounded text-[#94a3b8]";
+  });
+
+  loginF?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const form = e.target;
-    const btn = form.querySelector('button[type="submit"]');
-    const errEl = document.getElementById('signup-error');
-    errEl?.classList.add('hidden');
-    btn.disabled = true;
+    const fd = new FormData(loginF);
+    try {
+      const res = await api.login(fd.get("email"), fd.get("password"));
+      saveAuth(res.token, res.user, res.refreshToken);
+      showToast(`Authenticated as ${res.user.name} (${res.user.role})`, "success");
+      navigate("/overview");
+    } catch (err) { showToast(err.message, "error"); }
+  });
+
+  regF?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(regF);
     try {
       const res = await api.register({
-        name: form.name.value,
-        email: form.email.value,
-        role: form.role.value,
-        organization_name: form.organization_name.value,
-        password: form.password.value
+        name: fd.get("name"),
+        email: fd.get("email"),
+        password: fd.get("password"),
+        role: fd.get("role")
       });
-      saveAuth(res.user, res.token, res.refreshToken);
-      showToast(`Account created (${res.user.role}).`, 'success');
-      location.hash = '#/overview';
-    } catch (err) {
-      if (errEl) { errEl.textContent = err.message; errEl.classList.remove('hidden'); }
-      btn.disabled = false;
-    }
+      saveAuth(res.token, res.user, res.refreshToken);
+      showToast(`Registered operator ${res.user.name}`, "success");
+      navigate("/overview");
+    } catch (err) { showToast(err.message, "error"); }
   });
-
-  return () => { delete window.__authTab; };
 }

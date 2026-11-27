@@ -191,3 +191,146 @@ export function computeBoundedKelly({
     warning: "Research input only. Subject to independent hard portfolio risk caps."
   };
 }
+
+function quantileSorted(sorted, q) {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.min(sorted.length - 1, lo + 1);
+  return sorted[lo] * (1 - (pos - lo)) + sorted[hi] * (pos - lo);
+}
+
+/**
+ * Computes Historical VaR (95%, 99%), Expected Shortfall / CVaR (95%, 99%), and
+ * drawdown histogram buckets strictly from actual closed trades / equity snapshots.
+ */
+export function computePortfolioRiskAnalytics({ trades = [], equityHistory = [], initialCapital = 0 } = {}) {
+  const closed = (trades || []).filter((t) => t.status === "closed" && Number.isFinite(Number(t.pnl)));
+  const baseCap = Math.max(1, Number(initialCapital || equityHistory?.[0]?.value || 0));
+
+  const returnsPct = [];
+  if (closed.length >= 5) {
+    let running = baseCap;
+    for (const t of closed) {
+      const p = Number(t.pnl);
+      returnsPct.push((p / Math.max(1, running)) * 100);
+      running += p;
+    }
+  } else if (Array.isArray(equityHistory) && equityHistory.length >= 6) {
+    for (let i = 1; i < equityHistory.length; i++) {
+      const prev = Number(equityHistory[i - 1]?.value || 0);
+      const cur = Number(equityHistory[i]?.value || 0);
+      if (prev > 0) returnsPct.push(((cur - prev) / prev) * 100);
+    }
+  }
+
+  // Drawdown distribution buckets from equity snapshots
+  const eqValues = (equityHistory || []).map((p) => Number(p?.value ?? p)).filter(Number.isFinite);
+  const ddSeries = [];
+  let peak = 0;
+  for (const eq of eqValues) {
+    peak = Math.max(peak, eq);
+    if (peak > 0) ddSeries.push(Number((((peak - eq) / peak) * 100).toFixed(2)));
+  }
+
+  const buckets = [
+    { label: "0–1%", count: 0 },
+    { label: "1–3%", count: 0 },
+    { label: "3–5%", count: 0 },
+    { label: "5–10%", count: 0 },
+    { label: ">10%", count: 0 }
+  ];
+  for (const dd of ddSeries) {
+    if (dd <= 1) buckets[0].count++;
+    else if (dd <= 3) buckets[1].count++;
+    else if (dd <= 5) buckets[2].count++;
+    else if (dd <= 10) buckets[3].count++;
+    else buckets[4].count++;
+  }
+
+  if (returnsPct.length < 5) {
+    return {
+      status: "AWAITING_SAMPLE",
+      data_origin: "AWAITING_SAMPLE",
+      sample_size: returnsPct.length,
+      min_required_sample: 5,
+      var_95_pct: null,
+      var_99_pct: null,
+      cvar_95_pct: null,
+      cvar_99_pct: null,
+      drawdown_distribution: buckets,
+      note: "At least 5 closed trades or equity observations are required for historical VaR and Expected Shortfall."
+    };
+  }
+
+  const sorted = returnsPct.slice().sort((a, b) => a - b); // ascending (worst losses first)
+  const var95 = Math.min(0, quantileSorted(sorted, 0.05) ?? 0);
+  const var99 = Math.min(0, quantileSorted(sorted, 0.01) ?? 0);
+  const tail95 = sorted.filter((r) => r <= var95);
+  const tail99 = sorted.filter((r) => r <= var99);
+  const cvar95 = tail95.length ? tail95.reduce((a, b) => a + b, 0) / tail95.length : var95;
+  const cvar99 = tail99.length ? tail99.reduce((a, b) => a + b, 0) / tail99.length : var99;
+
+  return {
+    status: "READY",
+    data_origin: closed.length >= 5 ? "EMPIRICAL_TRADES" : "EQUITY_SNAPSHOTS",
+    sample_size: returnsPct.length,
+    min_required_sample: 5,
+    var_95_pct: Number(var95.toFixed(2)),
+    var_99_pct: Number(var99.toFixed(2)),
+    cvar_95_pct: Number(cvar95.toFixed(2)),
+    cvar_99_pct: Number(cvar99.toFixed(2)),
+    drawdown_distribution: buckets,
+    note: `Historical distribution over ${returnsPct.length} observations.`
+  };
+}
+
+/**
+ * Evaluates deterministic adverse market & liquidity shocks against current portfolio exposure.
+ */
+export function runPortfolioStressTest({ equity = 0, grossNotional = 0, openTrades = [], riskLimits = {} } = {}) {
+  const eq = Math.max(0, Number(equity || 0));
+  const openCount = (openTrades || []).filter((t) => t.status === "open").length;
+  const gross = Number(grossNotional || 0);
+  const maxDdLimit = Number(riskLimits.max_drawdown_pct || 12);
+
+  const scenarios = [
+    { id: "gold_gap_down_2pct", name: "XAUUSD -2.0% Liquidity Gap", price_shock_pct: -2.0, spread_mult: 2.0 },
+    { id: "vol_spike_5pct", name: "Extreme Macro Shock (-5.0% Exposure)", price_shock_pct: -5.0, spread_mult: 3.5 },
+    { id: "spread_widening_200", name: "Spread Widening + Slippage Stress (3x)", price_shock_pct: -0.75, spread_mult: 3.0 }
+  ];
+
+  const results = scenarios.map((sc) => {
+    const netDirectional = (openTrades || [])
+      .filter((t) => t.status === "open")
+      .reduce((acc, t) => {
+        const val = Number(t.qty || 0) * Number(t.price || 0);
+        return acc + (t.side === "BUY" ? val : -val);
+      }, 0);
+
+    // Directional loss + friction cost proportional to gross exposure
+    const priceImpact = -Math.abs(netDirectional) * (Math.abs(sc.price_shock_pct) / 100);
+    const liquidityFriction = -gross * 0.0005 * sc.spread_mult;
+    const totalShockUsd = Number((priceImpact + liquidityFriction).toFixed(2));
+    const impactPct = eq > 0 ? Number(((totalShockUsd / eq) * 100).toFixed(2)) : 0;
+    const breachesDrawdownCap = Math.abs(impactPct) >= maxDdLimit;
+
+    return {
+      ...sc,
+      classification: "SIMULATED_STRESS_TEST",
+      open_positions_evaluated: openCount,
+      estimated_pnl_impact_usd: totalShockUsd,
+      estimated_equity_impact_pct: impactPct,
+      breaches_drawdown_limit: breachesDrawdownCap,
+      post_shock_equity_usd: Number(Math.max(0, eq + totalShockUsd).toFixed(2))
+    };
+  });
+
+  return {
+    data_origin: "SIMULATED_RESEARCH",
+    evaluated_at: new Date().toISOString(),
+    equity_base_usd: Number(eq.toFixed(2)),
+    gross_exposure_usd: Number(gross.toFixed(2)),
+    scenarios: results
+  };
+}

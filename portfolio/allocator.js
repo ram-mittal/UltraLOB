@@ -233,9 +233,15 @@ export function allocatePortfolio({
     }
   }
 
+  const totalRiskWeighted = strategies.reduce((acc, s, i) => {
+    return acc + weightsPct[i] * Math.max(0.05, Number(s.risk_per_trade_pct ?? 0.5));
+  }, 0) || 1;
+
   const allocations = strategies.map((s, i) => {
     const weightPct = Number(weightsPct[i].toFixed(2));
     const allocatedUsd = Number(((capital * weightPct) / 100).toFixed(2));
+    const riskPerTrade = Number(s.risk_per_trade_pct ?? 0.5);
+    const riskContributionPct = Number((((weightsPct[i] * riskPerTrade) / totalRiskWeighted) * 100).toFixed(2));
     const belowMin = allocatedUsd < Number(s.min_capital || 0);
     if (belowMin) {
       warnings.push(`${s.code || s.id}: allocated $${allocatedUsd} is below min_capital $${s.min_capital}.`);
@@ -247,8 +253,9 @@ export function allocatePortfolio({
       instrument: String(s.instrument || "XAUUSD").toUpperCase(),
       lifecycle_status: s.lifecycle_status || "RESEARCH",
       weight_pct: weightPct,
+      risk_contribution_pct: riskContributionPct,
       allocated_usd: allocatedUsd,
-      risk_per_trade_pct: Number(s.risk_per_trade_pct ?? 0.5),
+      risk_per_trade_pct: riskPerTrade,
       vol_source: Array.isArray(s.returns) && s.returns.length >= 2 ? "EMPIRICAL_RETURNS" : "SPEC_PROXY",
       meets_min_capital: !belowMin
     };

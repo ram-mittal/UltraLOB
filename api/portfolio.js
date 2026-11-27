@@ -15,7 +15,7 @@ import {
   computePortfolioExposure,
   computeStrategyCorrelationMatrix
 } from "../portfolio/allocator.js";
-import { computeBoundedKelly } from "../risk/engine.js";
+import { computeBoundedKelly, computePortfolioRiskAnalytics, runPortfolioStressTest } from "../risk/engine.js";
 import { recordAuditLog } from "../db/client.js";
 
 function appendRiskAudit(mem, userId, actor, action, details) {
@@ -170,14 +170,46 @@ export default async function portfolioHandler(request, response) {
 
   // GET /api/portfolio/risk
   if (request.method === "GET" && subPath === "/risk") {
+    const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
+    const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
+    const equity = Number((portfolio.balance + unrealized).toFixed(2));
+    const analytics = computePortfolioRiskAnalytics({
+      trades: portfolio.trades || [],
+      equityHistory: portfolio.equityHistory || [],
+      initialCapital: portfolio.balance
+    });
+    const stress = runPortfolioStressTest({
+      equity,
+      grossNotional: computePortfolioExposure({ equity, openTrades, subscriptions: portfolio.subscriptions }).gross_notional,
+      openTrades,
+      riskLimits: riskState.limits
+    });
+
     return response.status(200).json({
       limits: riskState.limits,
       kill_switches: riskState.kill_switches,
       updated_at: riskState.updated_at,
+      analytics,
+      stress_preview: stress,
       events: mem.riskEvents.filter((e) => e.userId === userId).slice(0, 50),
       audit_history: mem.auditLogs.filter((a) => a.userId === userId).slice(0, 50),
       governance_note: "Independent hard limits are enforced before any execution. UltraLOB AI cannot bypass these limits."
     });
+  }
+
+  // POST /api/portfolio/risk/stress-test
+  if (request.method === "POST" && subPath === "/risk/stress-test") {
+    const openTrades = (portfolio.trades || []).filter((t) => t.status === "open");
+    const unrealized = openTrades.reduce((sum, t) => sum + (Number(t.pnl) || 0), 0);
+    const eq = Number(request.body?.equity_override || (portfolio.balance + unrealized) || 0);
+    const exp = computePortfolioExposure({ equity: eq, openTrades, subscriptions: portfolio.subscriptions });
+    const stress = runPortfolioStressTest({
+      equity: eq,
+      grossNotional: exp.gross_notional || Number(request.body?.gross_notional_override || 0),
+      openTrades,
+      riskLimits: riskState.limits
+    });
+    return response.status(200).json({ stress });
   }
 
   // POST /api/portfolio/risk/limits

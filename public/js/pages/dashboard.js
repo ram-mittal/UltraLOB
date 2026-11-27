@@ -1,273 +1,493 @@
-// Institutional Overview Dashboard (Data-Origin Separated • Honest Zero-Mock State)
-import { createEquityCurve, createDonutChart, destroyAllCharts } from '../components/charts.js';
-import { api } from '../api.js';
-import { showToast } from '../app.js';
+// Overview Screen — Institutional Portfolio Intelligence & Execution Summary
+import { api } from "../api.js";
+import { createEquityCurve, createDrawdownChart, createDonutChart } from "../components/charts.js";
+import {
+  isBrowser, esc, fmtUsd, fmtPct, fmtNum, fmtPrice, fmtTs,
+  metricTile, originBadge, statusBadge, stateBanner, dataTable, wireTableInteractions, openDrawer
+} from "../components/ui.js";
 
 export function render() {
   return `
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" id="dashboard-root">
-    <div class="flex items-center justify-center min-h-[50vh]">
-      <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+    <div id="overview-root" class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 class="text-base font-semibold tracking-tight text-[#e6edf6]">Institutional Portfolio Overview</h1>
+          <p class="text-xs text-[#94a3b8]">Consolidated equity, risk utilization, allocated strategies, and broker execution state.</p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button id="ov-fund-btn" class="btn-secondary font-mono text-[11px]">+ Fund Paper Sandbox</button>
+          <a href="#/portfolio" class="btn-secondary font-mono text-[11px]">Manage Allocations</a>
+          <a href="#/ai" class="btn-primary font-mono text-[11px]">UltraLOB AI Workspace</a>
+        </div>
+      </div>
+
+      <div id="ov-alerts-strip"></div>
+
+      <!-- KPI Metric Strip -->
+      <div id="ov-kpi-grid" class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        ${Array.from({ length: 8 }).map(() => `<div class="panel p-3.5 h-24 animate-pulse bg-[#11151d]"></div>`).join("")}
+      </div>
+
+      <!-- Charts Row -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <div class="lg:col-span-5 panel p-4">
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div>
+              <div class="text-xs font-semibold text-[#e6edf6]">Portfolio Equity Curve</div>
+              <div class="text-[11px] text-[#64748b]" id="ov-eq-meta">Account balance + unrealized MTM</div>
+            </div>
+            <span id="ov-eq-badge"></span>
+          </div>
+          <div id="ov-eq-wrap" class="h-56 relative"><canvas id="ov-eq-chart"></canvas></div>
+        </div>
+
+        <div class="lg:col-span-4 panel p-4">
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div>
+              <div class="text-xs font-semibold text-[#e6edf6]">Underwater Drawdown</div>
+              <div class="text-[11px] text-[#64748b]">Peak-to-trough decline series</div>
+            </div>
+            ${originBadge("PAPER_SANDBOX", { period: "Inception" })}
+          </div>
+          <div id="ov-dd-wrap" class="h-56 relative"><canvas id="ov-dd-chart"></canvas></div>
+        </div>
+
+        <div class="lg:col-span-3 panel p-4">
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div>
+              <div class="text-xs font-semibold text-[#e6edf6]">Capital Allocation</div>
+              <div class="text-[11px] text-[#64748b]">Strategy weight vs reserve cash</div>
+            </div>
+            ${originBadge("DEMO", { period: "Current" })}
+          </div>
+          <div id="ov-alloc-wrap" class="h-56 relative"><canvas id="ov-alloc-chart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Tables Row -->
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-3">
+        <div class="xl:col-span-7 panel overflow-hidden">
+          <div class="px-4 py-3 border-b border-[#232a37] flex items-center justify-between">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">Active Strategy Allocations</h2>
+              <p class="text-[11px] text-[#64748b]">Mandate-checked subscriptions active in copy engine</p>
+            </div>
+            <a href="#/marketplace" class="text-[11px] font-mono text-[#3b82f6] hover:underline">Browse Catalog →</a>
+          </div>
+          <div id="ov-strategies-table"></div>
+        </div>
+
+        <div class="xl:col-span-5 panel overflow-hidden">
+          <div class="px-4 py-3 border-b border-[#232a37] flex items-center justify-between">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">Risk Alerts & Governance Events</h2>
+              <p class="text-[11px] text-[#64748b]">Independent Risk Engine & execution audit stream</p>
+            </div>
+            <a href="#/risk" class="text-[11px] font-mono text-[#3b82f6] hover:underline">Risk Controls →</a>
+          </div>
+          <div id="ov-risk-events" class="divide-y divide-[#232a37] max-h-72 overflow-y-auto"></div>
+        </div>
+      </div>
+
+      <!-- Open Positions & Recent Executions -->
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-3">
+        <div class="xl:col-span-6 panel overflow-hidden">
+          <div class="px-4 py-3 border-b border-[#232a37] flex items-center justify-between">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">Open Positions</h2>
+              <p class="text-[11px] text-[#64748b]">Live Paper Sandbox & Demo positions with SL/TP governance</p>
+            </div>
+            <a href="#/terminal" class="text-[11px] font-mono text-[#3b82f6] hover:underline">Open Order Ticket →</a>
+          </div>
+          <div id="ov-positions-table"></div>
+        </div>
+
+        <div class="xl:col-span-6 panel overflow-hidden">
+          <div class="px-4 py-3 border-b border-[#232a37] flex items-center justify-between">
+            <div>
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[#e6edf6]">Recent Executions</h2>
+              <p class="text-[11px] text-[#64748b]">MT5 Bridge commands & closed execution records (click row to inspect)</p>
+            </div>
+            <a href="#/execution" class="text-[11px] font-mono text-[#3b82f6] hover:underline">Execution Monitor →</a>
+          </div>
+          <div id="ov-executions-table"></div>
+        </div>
+      </div>
     </div>
-  </div>`;
+  `;
 }
 
-function renderDashboardHTML(data) {
-  const p = data.summary;
-  const subs = data.subscriptions || [];
-  const trades = data.trades || [];
-  const broker = data.broker;
-  const risk = data.riskConfig || {};
-  const alerts = data.riskAlerts || [];
-  const dbReady = data.systemStatus?.database?.ready;
-
-  return `
-    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
-      <div>
-        <div class="flex flex-wrap items-center gap-2 mb-1">
-          <h1 class="text-2xl font-bold text-white">Institutional Overview</h1>
-          <span class="chip ${broker ? 'chip-blue' : 'chip-yellow'} text-[11px] font-mono">
-            DATA ORIGIN: ${broker ? 'DEMO_BROKER' : p.data_origin || 'PAPER_SANDBOX'}
-          </span>
-          <span class="chip ${dbReady ? 'chip-green' : 'chip-yellow'} text-[11px] font-mono">
-            DB: ${dbReady ? 'POSTGRESQL' : 'SANDBOX MEMORY'}
-          </span>
-        </div>
-        <p class="text-xs text-surface-400">
-          ${broker
-            ? `Broker Connected: <span class="text-profit font-medium">${broker.name} (${broker.account} • ${broker.server})</span>`
-            : `No MT5 Demo broker paired yet. Operating in <span class="text-surface-200 font-medium">Paper Sandbox</span> • <a href="#/broker" class="underline hover:text-white">Connect MT5 Demo EA</a>`}
-        </p>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <button id="fund-sandbox-btn" class="btn-outline px-3.5 py-2 rounded-lg text-xs font-medium text-white">
-          + Fund Paper Sandbox
-        </button>
-        <button id="kill-switch-btn" class="px-3.5 py-2 rounded-lg text-xs font-semibold border ${risk.kill_switch_active ? 'bg-loss text-white border-loss' : 'bg-loss-bg text-loss border-loss/40 hover:bg-loss/20'}">
-          ${risk.kill_switch_active ? '🛑 KILL SWITCH ACTIVE (Click to Reset)' : '⚠️ Activate Kill Switch'}
-        </button>
-        <a href="#/marketplace" class="btn-primary px-4 py-2 rounded-lg text-xs font-semibold text-white">Browse Strategies</a>
-      </div>
-    </div>
-
-    ${p.balance <= 0 && !broker ? `
-      <div class="mb-6 p-4 rounded-xl bg-brand-500/10 border border-brand-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div class="text-xs text-surface-300">
-          <strong class="text-white">Zero Initial Balance:</strong> UltraLOB never pre-fills fake profits or synthetic portfolio balances.
-          Fund a Paper Sandbox allocation or connect an MT5 Demo terminal to record real demo execution data.
-        </div>
-        <button id="quick-fund-10k" class="btn-primary px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white whitespace-nowrap">
-          Initialize $10,000 Paper Sandbox
-        </button>
-      </div>` : ''}
-
-    <!-- Capital & Risk KPIs -->
-    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-8">
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Total Capital</div>
-        <div class="text-base font-bold text-white font-mono">$${p.balance.toLocaleString()}</div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Equity</div>
-        <div class="text-base font-bold text-white font-mono">$${p.equity.toLocaleString()}</div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Allocated</div>
-        <div class="text-base font-bold text-brand-400 font-mono">$${(p.allocated_capital || 0).toLocaleString()}</div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Available</div>
-        <div class="text-base font-bold text-white font-mono">$${(p.available_capital || 0).toLocaleString()}</div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Total P&L</div>
-        <div class="text-base font-bold font-mono ${p.total_pnl >= 0 ? 'text-profit' : 'text-loss'}">
-          ${p.total_pnl >= 0 ? '+' : ''}$${p.total_pnl.toLocaleString()}
-        </div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Drawdown</div>
-        <div class="text-base font-bold text-loss font-mono">${(p.drawdown_pct || 0).toFixed(2)}%</div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Open Positions</div>
-        <div class="text-base font-bold text-white font-mono">${p.open_positions_count || 0} / ${risk.max_open_positions || 5}</div>
-      </div>
-      <div class="glass-card rounded-xl p-4">
-        <div class="text-[11px] text-surface-500 mb-1">Win Rate</div>
-        <div class="text-base font-bold text-white font-mono">${p.win_rate_today == null ? '—' : p.win_rate_today + '%'}</div>
-      </div>
-    </div>
-
-    <!-- Charts + Risk Alerts -->
-    <div class="grid lg:grid-cols-3 gap-6 mb-8">
-      <div class="glass-card rounded-xl p-6 lg:col-span-2">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-white">📈 Portfolio Equity Curve (${p.data_origin || 'SANDBOX'})</h3>
-          <span class="text-xs text-surface-500">Updates from actual closed/open ledger entries</span>
-        </div>
-        ${(data.equityHistory || []).length >= 2
-          ? '<div class="h-60"><canvas id="dash-equity"></canvas></div>'
-          : '<div class="h-52 rounded-xl border border-dashed border-surface-700 flex items-center justify-center text-xs text-surface-500 text-center p-6">Equity history will plot as sandbox or broker-confirmed trades settle.</div>'}
-      </div>
-      <div class="glass-card rounded-xl p-6">
-        <h3 class="text-sm font-semibold text-white mb-4">🛡️ Risk Engine & Alerts</h3>
-        <div class="space-y-2 text-xs mb-4">
-          <div class="flex justify-between"><span class="text-surface-400">Max Risk / Trade</span><span class="text-white font-mono">${risk.max_risk_per_trade_pct || 0.5}%</span></div>
-          <div class="flex justify-between"><span class="text-surface-400">Daily Loss Limit</span><span class="text-white font-mono">${risk.max_daily_loss_pct || 2.0}%</span></div>
-          <div class="flex justify-between"><span class="text-surface-400">Max Drawdown Cap</span><span class="text-white font-mono">${risk.max_drawdown_pct || 12.0}%</span></div>
-          <div class="flex justify-between"><span class="text-surface-400">Execution Mode</span><span class="text-warn font-mono">DEMO ONLY</span></div>
-        </div>
-        <div class="border-t border-surface-800 pt-3 space-y-2 max-h-36 overflow-y-auto">
-          ${alerts.length
-            ? alerts.map(a => `<div class="p-2 rounded bg-surface-900/80 border border-surface-800 text-[11px] text-surface-300">${a.message}</div>`).join('')
-            : '<div class="text-[11px] text-surface-500">No risk breaches recorded.</div>'}
-        </div>
-      </div>
-    </div>
-
-    <!-- Active Mandates / Strategy Allocations -->
-    <div class="glass-card rounded-xl p-6 mb-8">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-sm font-semibold text-white">📐 Strategy Allocation Mandates</h3>
-        <a href="#/marketplace" class="text-xs text-brand-400 hover:text-brand-300">+ Allocate Strategy</a>
-      </div>
-      ${subs.length ? `
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-surface-800 text-xs text-surface-500">
-              <th class="text-left pb-3 font-medium">Strategy</th>
-              <th class="text-left pb-3 font-medium">Lifecycle</th>
-              <th class="text-right pb-3 font-medium">Allocation</th>
-              <th class="text-right pb-3 font-medium">Risk/Trade</th>
-              <th class="text-center pb-3 font-medium">State</th>
-              <th class="text-right pb-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${subs.map(c => `
-              <tr class="border-b border-surface-800/50">
-                <td class="py-3"><a href="#/strategy/${c.strategyId}" class="text-white font-medium hover:text-brand-300">${c.strategyName}</a></td>
-                <td class="py-3"><span class="chip chip-yellow text-[10px]">${c.lifecycle_status || 'RESEARCH'}</span></td>
-                <td class="py-3 text-right font-mono text-surface-200">$${Number(c.allocation).toLocaleString()}</td>
-                <td class="py-3 text-right font-mono text-surface-300">${c.riskPerTradePct ?? 0.5}%</td>
-                <td class="py-3 text-center"><span class="chip ${c.status === 'active' ? 'chip-green' : 'chip-yellow'} text-[10px]">${c.status}</span></td>
-                <td class="py-3 text-right space-x-2">
-                  <button onclick="window.__toggleCopy?.('${c.strategyId}')" class="text-xs text-surface-300 hover:text-white px-2 py-1 rounded border border-surface-700">Toggle</button>
-                  <button onclick="window.__stopCopy?.('${c.strategyId}')" class="text-xs text-surface-400 hover:text-loss px-2 py-1 rounded border border-surface-700">Remove</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>` : `<div class="text-xs text-surface-500 py-6 text-center">No strategy allocations configured yet.</div>`}
-    </div>
-
-    <!-- Execution & Trade Ledger -->
-    <div class="glass-card rounded-xl p-6">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-sm font-semibold text-white">📋 Execution Ledger</h3>
-        <span class="text-xs text-surface-500">${trades.length} recorded orders</span>
-      </div>
-      ${trades.length ? `
-      <div class="overflow-x-auto">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="border-b border-surface-800 text-surface-500">
-              <th class="text-left pb-2">Time</th><th class="text-left pb-2">Origin</th>
-              <th class="text-left pb-2">Symbol</th><th class="text-center pb-2">Side</th>
-              <th class="text-right pb-2">Qty</th><th class="text-right pb-2">Price</th>
-              <th class="text-right pb-2">P&L</th><th class="text-center pb-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${trades.map(t => `
-              <tr class="border-b border-surface-800/50">
-                <td class="py-2 font-mono text-surface-400">${t.time}</td>
-                <td class="py-2"><span class="chip chip-blue text-[10px]">${t.data_origin || t.broker}</span></td>
-                <td class="py-2 text-white font-medium">${t.symbol}</td>
-                <td class="py-2 text-center"><span class="chip ${t.side === 'BUY' ? 'chip-green' : 'chip-red'}">${t.side}</span></td>
-                <td class="py-2 text-right font-mono">${t.qty}</td>
-                <td class="py-2 text-right font-mono text-white">$${Number(t.price).toLocaleString()}</td>
-                <td class="py-2 text-right font-mono ${t.pnl >= 0 ? 'text-profit' : 'text-loss'}">${t.pnl == null ? '—' : '$' + Number(t.pnl).toFixed(2)}</td>
-                <td class="py-2 text-center">
-                  ${t.status === 'open' ? `<button onclick="window.__closeTrade?.('${t.id}', ${t.price})" class="chip chip-blue">Close</button>` : '<span class="chip chip-green">closed</span>'}
-                </td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>` : '<div class="text-xs text-surface-500 py-6 text-center">No trades executed in this session.</div>'}
-    </div>`;
-}
-
-export async function init() {
-  const root = document.getElementById('dashboard-root');
-  if (!root) return;
-
-  let currentRisk = {};
+export async function init({ showToast, navigate }) {
+  if (!isBrowser()) return;
 
   async function refresh() {
-    try {
-      const data = await api.getPortfolio();
-      currentRisk = data.riskConfig || {};
-      root.innerHTML = renderDashboardHTML(data);
+    const [portRes, sumRes, riskRes, execRes] = await Promise.all([
+      api.getPortfolio().catch((e) => ({ _err: e.message })),
+      api.getPortfolioSummary().catch(() => null),
+      api.getPortfolioRisk().catch(() => null),
+      api.getExecutionMonitor().catch(() => null)
+    ]);
 
-      const eq = data.equityHistory || [];
-      if (eq.length >= 2) {
-        setTimeout(() => {
-          createEquityCurve('dash-equity', eq.map(p => p.label), eq.map(p => p.value));
-        }, 50);
+    if (portRes?._err) {
+      const grid = document.getElementById("ov-kpi-grid");
+      if (grid) {
+        grid.innerHTML = `<div class="col-span-full">${stateBanner({ kind: "error", title: "Portfolio Data Unavailable", message: portRes._err })}</div>`;
       }
+      return;
+    }
 
-      document.getElementById('quick-fund-10k')?.addEventListener('click', async () => {
-        await api.fundSandboxCapital(10000);
-        showToast('Initialized $10,000 Paper Sandbox capital.', 'success');
-        await refresh();
-      });
+    const metrics = portRes.metrics || {};
+    const subs = portRes.subscriptions || [];
+    const trades = portRes.trades || [];
+    const openTrades = trades.filter((t) => t.status === "open");
+    const closedTrades = trades.filter((t) => t.status === "closed");
+    const eqHistory = portRes.equityHistory || [];
+    const riskLimits = riskRes?.limits || sumRes?.risk_limits || {};
+    const killSwitches = riskRes?.kill_switches || sumRes?.kill_switches || {};
+    const events = riskRes?.events || [];
+    const origin = portRes.data_origin || metrics.data_origin || "PAPER_SANDBOX";
+    const nowIso = new Date().toISOString();
 
-      document.getElementById('fund-sandbox-btn')?.addEventListener('click', async () => {
-        const val = prompt('Enter Paper Sandbox capital USD (100 – 10,000,000):', '10000');
-        if (!val) return;
+    // Kill switch / unfunded alert banner
+    const alertStrip = document.getElementById("ov-alerts-strip");
+    if (alertStrip) {
+      const banners = [];
+      if (killSwitches.global_active) {
+        banners.push(stateBanner({
+          kind: "error",
+          title: "GLOBAL RISK KILL SWITCH ACTIVE",
+          message: killSwitches.global_reason || "All new order execution halted by Independent Risk Engine.",
+          actionHtml: `<a href="#/risk" class="btn-danger">Manage Kill Switch</a>`
+        }));
+      } else if ((metrics.balance || 0) <= 0) {
+        banners.push(stateBanner({
+          kind: "empty",
+          title: "Paper Sandbox Unfunded ($0.00)",
+          message: "Allocate virtual Paper Sandbox capital to test copy-trading allocations, drawdown controls, and risk sizing without simulated P&L fabrication.",
+          actionHtml: `<button id="ov-quick-fund-banner" class="btn-primary font-mono text-[11px]">Initialize $10,000 Sandbox</button>`
+        }));
+      }
+      alertStrip.innerHTML = banners.join("");
+      document.getElementById("ov-quick-fund-banner")?.addEventListener("click", async () => {
         try {
-          await api.fundSandboxCapital(Number(val));
-          showToast('Paper Sandbox balance updated.', 'success');
-          await refresh();
-        } catch (e) { showToast(e.message, 'error'); }
+          await api.fundSandboxCapital(10000);
+          showToast("Funded Paper Sandbox with $10,000.00", "success");
+          refresh();
+        } catch (err) {
+          showToast(err.message, "error");
+        }
       });
+    }
 
-      document.getElementById('kill-switch-btn')?.addEventListener('click', async () => {
-        const next = !currentRisk.kill_switch_active;
-        await api.saveRiskConfig({ kill_switch_active: next });
-        showToast(next ? 'Kill switch ACTIVATED.' : 'Kill switch reset.', next ? 'warning' : 'info');
-        await refresh();
+    // 8 KPI tiles
+    const kpiGrid = document.getElementById("ov-kpi-grid");
+    if (kpiGrid) {
+      kpiGrid.innerHTML = [
+        metricTile({
+          label: "Total Portfolio Equity",
+          value: fmtUsd(metrics.equity),
+          subtext: `Cash ${fmtUsd(metrics.balance)} | Unrealized ${fmtUsd(metrics.unrealized_pnl, { sign: true })}`,
+          origin,
+          period: "Current",
+          updatedAt: nowIso,
+          tooltip: "Account balance plus mark-to-market unrealized P&L on open positions."
+        }),
+        metricTile({
+          label: "Allocated Capital",
+          value: fmtUsd(metrics.allocated_capital),
+          subtext: `Available Reserve: ${fmtUsd(metrics.available_capital)}`,
+          origin,
+          period: "Current",
+          updatedAt: nowIso,
+          tooltip: "Sum of capital actively committed across enabled copy strategies."
+        }),
+        metricTile({
+          label: "Daily P&L",
+          value: fmtUsd(metrics.daily_pnl, { sign: true }),
+          subtext: `Realized: ${fmtUsd(metrics.realized_pnl, { sign: true })}`,
+          tone: (metrics.daily_pnl || 0) > 0 ? "gain" : (metrics.daily_pnl || 0) < 0 ? "loss" : "neutral",
+          origin,
+          period: "24H Rolling",
+          updatedAt: nowIso
+        }),
+        metricTile({
+          label: "Weekly P&L",
+          value: fmtUsd(metrics.weekly_pnl, { sign: true }),
+          subtext: `30D P&L: ${fmtUsd(metrics.monthly_pnl, { sign: true })}`,
+          tone: (metrics.weekly_pnl || 0) > 0 ? "gain" : (metrics.weekly_pnl || 0) < 0 ? "loss" : "neutral",
+          origin,
+          period: "7D Rolling",
+          updatedAt: nowIso
+        }),
+        metricTile({
+          label: "Monthly P&L",
+          value: fmtUsd(metrics.monthly_pnl, { sign: true }),
+          subtext: `Return: ${fmtPct(metrics.pnl_percent, { sign: true })}`,
+          tone: (metrics.monthly_pnl || 0) > 0 ? "gain" : (metrics.monthly_pnl || 0) < 0 ? "loss" : "neutral",
+          origin,
+          period: "30D Rolling",
+          updatedAt: nowIso
+        }),
+        metricTile({
+          label: "Current Drawdown",
+          value: fmtPct(metrics.drawdown_pct),
+          subtext: `Hard Cap: ${fmtPct(riskLimits.max_drawdown_pct ?? 15)}`,
+          tone: (metrics.drawdown_pct || 0) > (riskLimits.max_drawdown_pct || 15) * 0.7 ? "loss" : "neutral",
+          origin,
+          period: "Peak-to-Trough",
+          updatedAt: nowIso
+        }),
+        metricTile({
+          label: "Margin Utilization",
+          value: fmtPct(metrics.margin_utilization_pct),
+          subtext: `Used ${fmtUsd(metrics.margin_used)} | Lev ${fmtNum(metrics.portfolio_leverage, 2)}x`,
+          tone: (metrics.margin_utilization_pct || 0) > 50 ? "warn" : "neutral",
+          origin,
+          period: "Live Margin",
+          updatedAt: nowIso
+        }),
+        metricTile({
+          label: "Active Strategies",
+          value: `${metrics.active_copies || 0} <span class="text-xs font-normal text-[#94a3b8]">(${metrics.open_positions_count || 0} pos)</span>`,
+          subtext: `Closed Trades: ${closedTrades.length}`,
+          tone: "accent",
+          origin,
+          period: "Active Scope",
+          updatedAt: nowIso
+        })
+      ].join("");
+    }
+
+    // Charts
+    const eqBadge = document.getElementById("ov-eq-badge");
+    if (eqBadge) eqBadge.innerHTML = originBadge(origin, { period: "Inception", updatedAt: nowIso });
+
+    const eqWrap = document.getElementById("ov-eq-wrap");
+    const ddWrap = document.getElementById("ov-dd-wrap");
+    if (eqHistory.length >= 2) {
+      if (eqWrap && !eqWrap.querySelector("canvas")) eqWrap.innerHTML = `<canvas id="ov-eq-chart"></canvas>`;
+      if (ddWrap && !ddWrap.querySelector("canvas")) ddWrap.innerHTML = `<canvas id="ov-dd-chart"></canvas>`;
+      createEquityCurve("ov-eq-chart", eqHistory, "Portfolio Equity");
+      let peak = 0;
+      const ddSeries = eqHistory.map((pt) => {
+        const v = Number(pt.value ?? pt.equity ?? 0);
+        peak = Math.max(peak, v);
+        return { timestamp: pt.timestamp, drawdown: peak > 0 ? ((peak - v) / peak) * 100 : 0 };
       });
-    } catch (err) {
-      root.innerHTML = `<div class="p-8 text-center text-loss">Failed to load overview: ${err.message}</div>`;
+      createDrawdownChart("ov-dd-chart", ddSeries);
+    } else {
+      const msg = eqHistory.length === 0
+        ? "No equity snapshots yet. Fund Paper Sandbox or execute trades to record empirical history."
+        : "At least 2 equity snapshots are required to plot equity progression and peak-to-trough drawdown.";
+      if (eqWrap) eqWrap.innerHTML = stateBanner({ kind: "empty", title: "Awaiting Equity Curve", message: msg });
+      if (ddWrap) ddWrap.innerHTML = stateBanner({ kind: "empty", title: "Awaiting Drawdown Series", message: msg });
+    }
+
+    const allocWrap = document.getElementById("ov-alloc-wrap");
+    const activeSubs = subs.filter((s) => s.status === "active" && Number(s.allocation) > 0);
+    if (allocWrap && (activeSubs.length > 0 || (metrics.available_capital || 0) > 0)) {
+      if (!allocWrap.querySelector("canvas")) allocWrap.innerHTML = `<canvas id="ov-alloc-chart"></canvas>`;
+      const labels = [...activeSubs.map((s) => s.code || s.strategyName), "Unallocated Cash"];
+      const values = [...activeSubs.map((s) => Number(s.allocation)), Math.max(0, Number(metrics.available_capital || 0))];
+      createDonutChart("ov-alloc-chart", labels, values);
+    } else if (allocWrap) {
+      allocWrap.innerHTML = stateBanner({ kind: "empty", title: "No Capital Allocated", message: "Zero allocated or funded capital." });
+    }
+
+    // Active Strategies Table
+    const stratEl = document.getElementById("ov-strategies-table");
+    if (stratEl) {
+      stratEl.innerHTML = dataTable({
+        id: "ov-tbl-strategies",
+        emptyTitle: "No Subscribed Strategies",
+        emptyMessage: "Allocate capital to validated XAUUSD strategies from Strategy Marketplace.",
+        columns: [
+          { key: "code", label: "Strategy", sortKey: true, render: (r) => `<a href="#/strategy/${esc(r.strategyId)}" class="font-medium text-[#e6edf6] hover:text-[#3b82f6]"><span class="font-mono text-[#3b82f6] mr-1.5">${esc(r.code || "STRAT")}</span>${esc(r.strategyName)}</a>` },
+          { key: "instrument", label: "Inst", sortKey: true, mono: true },
+          { key: "allocation", label: "Allocated", align: "right", mono: true, sortKey: true, sortType: "number", render: (r) => fmtUsd(r.allocation) },
+          { key: "riskPerTradePct", label: "Risk/Tr", align: "right", mono: true, render: (r) => fmtPct(r.riskPerTradePct ?? 0.5) },
+          { key: "status", label: "State", render: (r) => statusBadge(r.status) },
+          {
+            key: "actions",
+            label: "Controls",
+            align: "right",
+            render: (r) => `
+              <div class="inline-flex items-center gap-1.5">
+                <button data-toggle-strat="${esc(r.strategyId)}" class="btn-secondary px-2 py-0.5 text-[10px] font-mono">${r.status === "active" ? "Pause" : "Resume"}</button>
+                <button data-unsub-strat="${esc(r.strategyId)}" class="btn-danger px-2 py-0.5 text-[10px] font-mono">Remove</button>
+              </div>
+            `
+          }
+        ],
+        rows: subs
+      });
+      wireTableInteractions("ov-tbl-strategies");
+      stratEl.querySelectorAll("[data-toggle-strat]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          try {
+            await api.toggleCopy(btn.dataset.toggleStrat);
+            showToast("Strategy status updated", "success");
+            refresh();
+          } catch (err) { showToast(err.message, "error"); }
+        });
+      });
+      stratEl.querySelectorAll("[data-unsub-strat]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          try {
+            await api.unsubscribe(btn.dataset.unsubStrat);
+            showToast("Capital unallocated cleanly", "info");
+            refresh();
+          } catch (err) { showToast(err.message, "error"); }
+        });
+      });
+    }
+
+    // Risk Alerts List
+    const evEl = document.getElementById("ov-risk-events");
+    if (evEl) {
+      evEl.innerHTML = events.length
+        ? events.slice(0, 12).map((ev) => `
+            <div class="px-4 py-2.5 flex items-start justify-between gap-3 hover:bg-[#161b25]/60">
+              <div class="space-y-1 min-w-0">
+                <div class="flex items-center gap-2">${statusBadge(ev.severity || "INFO")}<span class="text-xs text-[#e6edf6] truncate">${esc(ev.message)}</span></div>
+                <div class="text-[10px] font-mono text-[#64748b]">${esc(fmtTs(ev.createdAt || ev.timestamp))}</div>
+              </div>
+            </div>
+          `).join("")
+        : `<div class="p-4">${stateBanner({ kind: "empty", title: "No Risk Events", message: "Hard governance gates active. No breaches recorded." })}</div>`;
+    }
+
+    // Open Positions Table
+    const posEl = document.getElementById("ov-positions-table");
+    if (posEl) {
+      posEl.innerHTML = dataTable({
+        id: "ov-tbl-positions",
+        emptyTitle: "Flat Exposure (0 Open Positions)",
+        emptyMessage: "No open paper or demo positions currently active.",
+        columns: [
+          { key: "symbol", label: "Symbol", mono: true, sortKey: true },
+          { key: "side", label: "Side", render: (r) => `<span class="font-mono font-semibold ${r.side === "BUY" ? "text-[#22c55e]" : "text-[#ef4444]"}">${esc(r.side)}</span>` },
+          { key: "qty", label: "Size", align: "right", mono: true, sortKey: true, sortType: "number", render: (r) => fmtNum(r.qty, 3) },
+          { key: "price", label: "Entry", align: "right", mono: true, render: (r) => fmtPrice(r.price, r.symbol) },
+          { key: "pnl", label: "Unrealized", align: "right", mono: true, render: (r) => `<span class="${(r.pnl || 0) >= 0 ? "text-[#22c55e]" : "text-[#ef4444]"}">${fmtUsd(r.pnl || 0, { sign: true })}</span>` },
+          {
+            key: "close",
+            label: "",
+            align: "right",
+            render: (r) => `<button data-close-pos="${esc(r.id)}" data-close-px="${esc(r.price)}" class="btn-secondary px-2 py-0.5 text-[10px] font-mono">Close</button>`
+          }
+        ],
+        rows: openTrades
+      });
+      wireTableInteractions("ov-tbl-positions");
+      posEl.querySelectorAll("[data-close-pos]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          try {
+            await api.closeTrade(btn.dataset.closePos, Number(btn.dataset.closePx));
+            showToast("Position closed cleanly", "success");
+            refresh();
+          } catch (err) { showToast(err.message, "error"); }
+        });
+      });
+    }
+
+    // Recent Executions (MT5 bridge commands combined with sandbox trades, labeled by origin)
+    const execEl = document.getElementById("ov-executions-table");
+    if (execEl) {
+      const mt5Rows = (execRes?.commands || []).map((c) => ({
+        _rowId: c.id,
+        _clickable: true,
+        _raw: c,
+        origin: "DEMO_BROKER",
+        idShort: String(c.id || "").slice(0, 8),
+        symbol: c.symbol,
+        side: c.side,
+        qty: c.volume,
+        price: c.executed_price ?? c.requested_price,
+        status: c.status,
+        ts: c.executed_at || c.created_at
+      }));
+      const paperRows = trades.slice(0, 10).map((t) => ({
+        _rowId: t.id,
+        _clickable: true,
+        _raw: t,
+        origin: "PAPER_SANDBOX",
+        idShort: String(t.id || "").slice(0, 10),
+        symbol: t.symbol,
+        side: t.side,
+        qty: t.qty,
+        price: t.closePrice ?? t.price,
+        status: t.status === "open" ? "OPEN" : "FILLED",
+        ts: t.closedAt || t.timestamp
+      }));
+      const combined = [...mt5Rows, ...paperRows].slice(0, 10);
+
+      execEl.innerHTML = dataTable({
+        id: "ov-tbl-exec",
+        emptyTitle: "No Execution History",
+        emptyMessage: "Submit an order or pair MT5 Demo bridge to inspect live execution records.",
+        columns: [
+          { key: "idShort", label: "Exec ID", mono: true },
+          { key: "origin", label: "Origin", render: (r) => originBadge(r.origin) },
+          { key: "symbol", label: "Inst", mono: true },
+          { key: "side", label: "Side", mono: true },
+          { key: "qty", label: "Vol", align: "right", mono: true, render: (r) => fmtNum(r.qty, 2) },
+          { key: "price", label: "Price", align: "right", mono: true, render: (r) => fmtPrice(r.price, r.symbol) },
+          { key: "status", label: "State", render: (r) => statusBadge(r.status) }
+        ],
+        rows: combined
+      });
+      wireTableInteractions("ov-tbl-exec", (rowId) => {
+        const found = combined.find((x) => x._rowId === rowId);
+        if (!found) return;
+        openDrawer({
+          title: `Execution Detail: ${found.symbol} ${found.side}`,
+          subtitle: `ID: ${found._rowId}`,
+          badgeHtml: `${originBadge(found.origin)} ${statusBadge(found.status)}`,
+          bodyHtml: `<pre class="p-3 rounded bg-[#0b0e13] border border-[#232a37] text-[11px] font-mono text-[#cbd5e1] overflow-x-auto">${esc(JSON.stringify(found._raw, null, 2))}</pre>`,
+          footerHtml: `<button class="btn-secondary" onclick="window.location.hash='#/execution'">Open Execution Monitor</button>`
+        });
+      });
     }
   }
 
-  window.__toggleCopy = async (strategyId) => {
-    try { await api.toggleCopy(strategyId); await refresh(); }
-    catch (err) { showToast(err.message, 'error'); }
-  };
-
-  window.__stopCopy = async (strategyId) => {
-    try { await api.unsubscribe(strategyId); await refresh(); }
-    catch (err) { showToast(err.message, 'error'); }
-  };
-
-  window.__closeTrade = async (tradeId, fallbackPrice) => {
-    try { await api.closeTrade(tradeId, fallbackPrice); showToast('Position closed.', 'success'); await refresh(); }
-    catch (err) { showToast(err.message, 'error'); }
-  };
+  document.getElementById("ov-fund-btn")?.addEventListener("click", () => {
+    openDrawer({
+      title: "Fund Paper Sandbox Account",
+      subtitle: "Simulated DEMO evaluation capital — distinct from live broker custody",
+      badgeHtml: originBadge("PAPER_SANDBOX"),
+      bodyHtml: `
+        <div class="space-y-3">
+          <label class="block text-[11px] uppercase tracking-wider text-[#94a3b8]">Virtual Deposit Amount (USD)</label>
+          <input id="drawer-fund-amt" type="number" min="100" step="500" value="10000" class="input-term w-full font-mono" />
+          <div class="flex gap-2">
+            <button data-preset="5000" class="btn-secondary font-mono text-[11px]">$5,000</button>
+            <button data-preset="10000" class="btn-secondary font-mono text-[11px]">$10,000</button>
+            <button data-preset="50000" class="btn-secondary font-mono text-[11px]">$50,000</button>
+            <button data-preset="100000" class="btn-secondary font-mono text-[11px]">$100,000</button>
+          </div>
+          <button id="drawer-fund-submit" class="btn-primary w-full font-mono">Deposit to Paper Sandbox</button>
+        </div>
+      `
+    });
+    document.querySelectorAll("[data-preset]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const inp = document.getElementById("drawer-fund-amt");
+        if (inp) inp.value = b.dataset.preset;
+      });
+    });
+    document.getElementById("drawer-fund-submit")?.addEventListener("click", async () => {
+      const val = Number(document.getElementById("drawer-fund-amt")?.value || 10000);
+      try {
+        await api.fundSandboxCapital(val);
+        showToast(`Funded Paper Sandbox with ${fmtUsd(val)}`, "success");
+        document.getElementById("drawer-root").innerHTML = "";
+        refresh();
+      } catch (err) {
+        showToast(err.message, "error");
+      }
+    });
+  });
 
   await refresh();
-
-  return () => {
-    destroyAllCharts();
-    delete window.__toggleCopy;
-    delete window.__stopCopy;
-    delete window.__closeTrade;
-  };
 }
