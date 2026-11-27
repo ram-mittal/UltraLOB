@@ -156,7 +156,7 @@ export function generateInstitutionalStatement({
       role: user.role || "guest",
       organization: user.org_name || null
     },
-    data_origin: broker ? "DEMO_BROKER" : (portfolio.dataOrigin || "PAPER_SANDBOX"),
+    data_origin: broker?.upstreamVerified ? "DEMO_BROKER" : (portfolio.dataOrigin || "PAPER_SANDBOX"),
     execution_environment: "DEMO_ONLY",
     summary: {
       balance_usd: Number(Number(portfolio.balance || 0).toFixed(2)),

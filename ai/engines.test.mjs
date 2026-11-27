@@ -62,6 +62,17 @@ test("AI advisory pipeline never bypasses Risk Engine veto or lifecycle gates", 
   assert.equal(tradeReady.decision, "TRADE");
   assert.equal(tradeReady.estimated_net_r, 2);
   assert.equal(tradeReady.directional_bias, "LONG (BULLISH)");
+
+  // Unverified EA bridge must never report as active verified broker
+  const unverifiedEval = evaluateAdvisoryPipeline({
+    strategy: strat,
+    symbol: "XAUUSD",
+    broker: { name: "MetaTrader 5 (Demo)", upstreamVerified: false, verification_status: "PENDING_EA_HEARTBEAT" },
+    portfolioMetrics: { equity: 10000, open_positions_count: 0 },
+    riskState
+  });
+  assert.equal(unverifiedEval.pipeline_stages["5_execution_quality"].broker_paired, true);
+  assert.equal(unverifiedEval.pipeline_stages["5_execution_quality"].broker_verified, false);
 });
 
 test("Event Intelligence flags active high-impact macro blackouts accurately", () => {

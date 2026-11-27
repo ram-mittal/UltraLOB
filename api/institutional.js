@@ -16,6 +16,7 @@ import {
   generateInstitutionalStatement,
   formatStatementCsv
 } from "../institutional/governance.js";
+import { resolveUserBrokerStatus } from "./broker.js";
 
 function getMandateForUser(mem, userId) {
   if (!mem.mandates) mem.mandates = new Map();
@@ -25,7 +26,7 @@ function getMandateForUser(mem, userId) {
   return mem.mandates.get(userId);
 }
 
-export default async function institutionalHandler(request, response) {
+export default async function institutionalHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/institutional/, "").split("?")[0];
   const auth = extractAuthContext(request);
@@ -41,7 +42,7 @@ export default async function institutionalHandler(request, response) {
   if (request.method === "GET" && subPath === "/statement") {
     const portfolio = getPortfolioForUser(userId);
     const mandate = getMandateForUser(mem, userId);
-    const broker = mem.brokers.get(userId) || null;
+    const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     const riskEvents = mem.riskEvents.filter((e) => e.userId === userId);
     const auditLogs = mem.auditLogs.filter((a) => a.userId === userId);
 
@@ -49,7 +50,7 @@ export default async function institutionalHandler(request, response) {
       user: { name: auth.name, email: auth.email, role: auth.role, org_name: auth.orgId },
       portfolio,
       mandate,
-      broker,
+      broker: brokerState.broker,
       auditLogs,
       riskEvents
     });

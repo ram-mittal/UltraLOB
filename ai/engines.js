@@ -135,17 +135,21 @@ export function runPortfolioFit({ portfolioMetrics = {}, subscriptions = [], exp
  */
 export function runExecutionAssessment({ broker = null, spreadPoints = null, maxSpreadPoints = 100, postgresConfigured = false } = {}) {
   const spreadOk = spreadPoints == null || Number(spreadPoints) <= Number(maxSpreadPoints);
+  const verified = Boolean(broker?.upstreamVerified);
   return {
     engine: "ExecutionEngine",
     broker_paired: Boolean(broker),
-    broker_name: broker?.name || "Paper Sandbox Engine",
+    broker_verified: verified,
+    broker_name: verified ? broker.name : "Paper Sandbox Engine",
     environment: "DEMO_ONLY",
     postgres_execution_configured: Boolean(postgresConfigured),
     observed_spread_points: spreadPoints,
     spread_ok: spreadOk,
-    note: broker
-      ? "MT5 Demo bridge paired; subject to live EA heartbeat & OrderCheck."
-      : "No MT5 terminal paired; operating in Paper Sandbox."
+    note: verified
+      ? `Verified ${broker.name} connection active (${broker.verification_status || "VERIFIED"}).`
+      : broker
+        ? "Bridge configured but NOT upstream-verified (awaiting live EA heartbeat); Paper Sandbox fallback active."
+        : "No verified MT5 terminal connected; operating in Paper Sandbox."
   };
 }
 

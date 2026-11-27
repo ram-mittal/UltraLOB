@@ -104,15 +104,17 @@ async function hydrateTopbarStatus() {
 
     const accSel = document.getElementById("topbar-account-select");
     const envBadge = document.getElementById("topbar-env-badge");
-    const isPairedDemo = Boolean(brokerRes?.connected);
+    const isVerifiedDemo = Boolean(brokerRes?.connected && brokerRes?.upstreamVerified);
+    const isPairedPending = Boolean(brokerRes?.paired && !isVerifiedDemo);
     if (accSel) {
       const opts = [`<option value="paper-sandbox">Paper Sandbox (DEMO)</option>`];
-      if (isPairedDemo) {
+      if (isVerifiedDemo || isPairedPending) {
         const b = brokerRes.broker || {};
-        opts.unshift(`<option value="mt5-demo">${esc(b.name || "MT5 Demo")} ••••${esc(String(b.accountId || "").slice(-4))} (${b.isDemo !== false ? "DEMO" : "RESTRICTED"})</option>`);
+        const tag = isVerifiedDemo ? "VERIFIED DEMO" : "PENDING EA";
+        opts.unshift(`<option value="mt5-demo">${esc(b.name || "MT5 Demo")} ••••${esc(String(b.account || "").slice(-4))} (${tag})</option>`);
       }
       accSel.innerHTML = opts.join("");
-      if (isPairedDemo && terminalContext.selectedAccountId === "paper-sandbox") {
+      if ((isVerifiedDemo || isPairedPending) && terminalContext.selectedAccountId === "paper-sandbox") {
         accSel.value = terminalContext.selectedAccountId;
       }
     }

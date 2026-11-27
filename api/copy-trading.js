@@ -14,6 +14,7 @@ import { computeRiskNormalizedVolume } from "../execution/risk-manager.js";
 import { computePortfolioExposure } from "../portfolio/allocator.js";
 import { evaluateTradeGovernance } from "../risk/engine.js";
 import { validateAgainstMandate, createDefaultMandate } from "../institutional/governance.js";
+import { resolveUserBrokerStatus } from "./broker.js";
 
 function computePortfolioMetrics(portfolio) {
   const subs = portfolio.subscriptions || [];
@@ -78,8 +79,8 @@ function flattenRiskConfig(riskState) {
   };
 }
 
-async function queueBrokerSignal(mem, userId, trade, executionStore = null) {
-  const broker = mem.brokers.get(userId);
+async function queueBrokerSignal(mem, userId, trade, executionStore = null, brokerStatus = null) {
+  const broker = brokerStatus?.broker || mem.brokers.get(userId);
   if (!broker) return null;
 
   const cleanSymbol = trade.symbol.replace("/", "").toUpperCase();
@@ -88,6 +89,7 @@ async function queueBrokerSignal(mem, userId, trade, executionStore = null) {
     bridgeToken: broker.bridgeToken,
     brokerType: broker.type,
     environment: "DEMO",
+    upstreamVerified: Boolean(broker.upstreamVerified),
     account: broker.account,
     symbol: cleanSymbol,
     side: trade.side,
@@ -137,13 +139,21 @@ export default async function copyTradingHandler(request, response, { executionS
   // GET /api/copy-trading/portfolio
   if (request.method === "GET" && subPath === "/portfolio") {
     const dbStatus = getDatabaseStatus();
+    const dbAvailable = await ensureDbReady().catch(() => false);
+    const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     return response.status(200).json({
       summary: computePortfolioMetrics(portfolio),
       subscriptions: portfolio.subscriptions,
       trades: portfolio.trades.slice(0, 50),
       equityHistory: portfolio.equityHistory,
       mcConfig: portfolio.mcConfig,
-      broker: mem.brokers.get(userId) || null,
+      broker: brokerState.broker,
+      brokerVerification: {
+        connected: brokerState.connected,
+        paired: brokerState.paired,
+        upstreamVerified: brokerState.upstreamVerified,
+        verification_status: brokerState.verification_status
+      },
       riskConfig: flattenRiskConfig(riskState),
       riskAlerts: mem.riskEvents.filter((e) => e.userId === userId).slice(0, 20),
       systemStatus: {
@@ -433,8 +443,10 @@ export default async function copyTradingHandler(request, response, { executionS
         volumeStep: 0.001
       });
       const qty = sizing.ok ? sizing.volume : 0.001;
-      const connectedBroker = mem.brokers.get(userId);
-      const brokerName = connectedBroker ? connectedBroker.name : "Paper Sandbox Engine";
+      const dbAvail = await ensureDbReady().catch(() => false);
+      const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable: dbAvail });
+      const verifiedBroker = brokerState.connected && brokerState.upstreamVerified ? brokerState.broker : null;
+      const brokerName = verifiedBroker ? verifiedBroker.name : "Paper Sandbox Engine";
 
       const mainTrade = {
         id: "tr-" + crypto.randomUUID().slice(0, 8),
@@ -452,11 +464,11 @@ export default async function copyTradingHandler(request, response, { executionS
         pnl: 0,
         status: "open",
         broker: brokerName,
-        data_origin: connectedBroker ? "DEMO_BROKER" : "PAPER_SANDBOX",
+        data_origin: verifiedBroker ? "DEMO_BROKER" : "PAPER_SANDBOX",
         source: "Monte Carlo Signal"
       };
       portfolio.trades.unshift(mainTrade);
-      const brokerSignal = await queueBrokerSignal(mem, userId, mainTrade, executionStore);
+      const brokerSignal = await queueBrokerSignal(mem, userId, mainTrade, executionStore, brokerState);
       executedTrades.push({ trade: mainTrade, brokerSignal });
     }
 
@@ -496,8 +508,10 @@ export default async function copyTradingHandler(request, response, { executionS
       return response.status(status).json({ error: gov.message, code: gov.code });
     }
 
-    const connectedBroker = mem.brokers.get(userId);
-    const brokerName = connectedBroker ? connectedBroker.name : "Paper Sandbox Engine";
+    const dbAvail = await ensureDbReady().catch(() => false);
+    const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable: dbAvail });
+    const verifiedBroker = brokerState.connected && brokerState.upstreamVerified ? brokerState.broker : null;
+    const brokerName = verifiedBroker ? verifiedBroker.name : "Paper Sandbox Engine";
     const trade = {
       id: "tr-" + crypto.randomUUID().slice(0, 8),
       time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
@@ -513,12 +527,12 @@ export default async function copyTradingHandler(request, response, { executionS
       pnl: 0,
       status: "open",
       broker: brokerName,
-      data_origin: connectedBroker ? "DEMO_BROKER" : "PAPER_SANDBOX",
+      data_origin: verifiedBroker ? "DEMO_BROKER" : "PAPER_SANDBOX",
       source: "Terminal"
     };
 
     portfolio.trades.unshift(trade);
-    const brokerSignal = await queueBrokerSignal(mem, userId, trade, executionStore);
+    const brokerSignal = await queueBrokerSignal(mem, userId, trade, executionStore, brokerState);
 
     return response.status(201).json({ trade, brokerSignal });
   }

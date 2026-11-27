@@ -171,22 +171,22 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(createdPayload.strategy.lifecycle_status, "RESEARCH");
     assert.equal(createdPayload.strategy.total_return, null);
 
-    // 6. Broker connection rejects LIVE mode, pairs DEMO mode
+    // 6. Broker connection rejects LIVE mode, unimplemented raw passwords/API keys, and unverified fake-connected states
     const liveBlocked = await fetch(baseUrl + "/api/broker/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
       body: JSON.stringify({
         type: "exness",
+        mode: "ea_bridge",
         environment: "LIVE",
         server: "Exness-MT5Real",
-        account_id: "19283746",
-        api_key: "ex-key",
-        api_secret: "ex-sec"
+        account_id: "19283746"
       })
     });
     assert.equal(liveBlocked.status, 403);
 
-    const conn = await fetch(baseUrl + "/api/broker/connect", {
+    // Reject unimplemented direct MT5 password / Exness API secret flows with 501 (never fake connected:true)
+    const unimplementedExness = await fetch(baseUrl + "/api/broker/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
       body: JSON.stringify({
@@ -198,11 +198,69 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
         api_secret: "ex-sec-demo"
       })
     });
-    assert.equal(conn.status, 200);
+    assert.equal(unimplementedExness.status, 501);
+    const unimplPayload = await unimplementedExness.json();
+    assert.equal(unimplPayload.code, "ADAPTER_NOT_IMPLEMENTED");
+    assert.equal(unimplPayload.connected, false);
+    assert.equal(unimplPayload.upstreamVerified, false);
+
+    // Provision non-custodial EA bridge (no password): strictly connected:false + upstreamVerified:false until EA heartbeat
+    const conn = await fetch(baseUrl + "/api/broker/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({
+        type: "exness",
+        mode: "ea_bridge",
+        environment: "DEMO",
+        server: "Exness-MT5Trial8",
+        account_id: "19283746"
+      })
+    });
+    assert.equal(conn.status, 202);
     const connData = await conn.json();
-    assert.equal(connData.connected, true);
+    assert.equal(connData.connected, false);
+    assert.equal(connData.paired, true);
+    assert.equal(connData.upstreamVerified, false);
+    assert.equal(connData.verification_status, "PENDING_EA_HEARTBEAT");
     assert.equal(connData.broker.environment, "DEMO");
     assert.ok(connData.broker.bridgeToken);
+
+    const statusCheck = await fetch(baseUrl + "/api/broker/status", {
+      headers: { Authorization: `Bearer ${invData.token}` }
+    });
+    assert.equal(statusCheck.status, 200);
+    const statusData = await statusCheck.json();
+    assert.equal(statusData.connected, false);
+    assert.equal(statusData.upstreamVerified, false);
+    assert.equal(statusData.verification_status, "PENDING_EA_HEARTBEAT");
+
+    // Unverified MetaApi upstream failure must NOT store or return connected:true
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (String(url).includes("agiliumtrade")) {
+        return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 });
+      }
+      return origFetch(url, opts);
+    };
+    try {
+      const badMeta = await origFetch(baseUrl + "/api/broker/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+        body: JSON.stringify({
+          type: "mt5",
+          mode: "metaapi_demo",
+          environment: "DEMO",
+          metaapi_account_id: "fake-acc",
+          metaapi_token: "bad-tok"
+        })
+      });
+      assert.equal(badMeta.status, 502);
+      const badMetaJson = await badMeta.json();
+      assert.equal(badMetaJson.connected, false);
+      assert.equal(badMetaJson.upstreamVerified, false);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
 
     const eaFile = await fetch(baseUrl + "/api/broker/mt5/ea", {
       headers: { Authorization: `Bearer ${invData.token}` }

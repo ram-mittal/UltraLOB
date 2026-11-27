@@ -131,8 +131,8 @@ if (process.env.ULTRALOB_RENDER_MODE === "true") {
   app.use("/api/copy-trading", (request, response) => copyTradingHandler(request, response, { executionStore }));
   app.use("/api/portfolio", (request, response) => portfolioHandler(request, response));
   app.use("/api/research", (request, response) => researchHandler(request, response));
-  app.use("/api/ai", (request, response) => aiHandler(request, response));
-  app.use("/api/institutional", (request, response) => institutionalHandler(request, response));
+  app.use("/api/ai", (request, response) => aiHandler(request, response, { executionStore }));
+  app.use("/api/institutional", (request, response) => institutionalHandler(request, response, { executionStore }));
 
   // --- Health Check & Institutional System Telemetry ---
   app.get("/healthz", (_request, response) => {

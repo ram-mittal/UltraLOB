@@ -12,8 +12,9 @@ import { getDatabaseStatus, recordAuditLog } from "../db/client.js";
 import { fetchMacroCalendar, evaluateEventRestriction } from "../ai/events.js";
 import { evaluateAdvisoryPipeline } from "../ai/engines.js";
 import { evaluateTradeGovernance } from "../risk/engine.js";
+import { resolveUserBrokerStatus } from "./broker.js";
 
-export default async function aiHandler(request, response) {
+export default async function aiHandler(request, response, { executionStore = null } = {}) {
   response.setHeader("Cache-Control", "no-store, max-age=0");
   const subPath = (request.path || request.url || "").replace(/^\/api\/ai/, "").split("?")[0];
   const auth = extractAuthContext(request);
@@ -121,6 +122,7 @@ export default async function aiHandler(request, response) {
       (bt) => bt.strategy_id === strategy.id && bt.data_origin === "REAL_MARKET"
     ) || null;
 
+    const brokerState = await resolveUserBrokerStatus(userId, { executionStore, dbAvailable });
     const evaluation = evaluateAdvisoryPipeline({
       strategy,
       latestBacktest,
@@ -133,7 +135,7 @@ export default async function aiHandler(request, response) {
       portfolioMetrics,
       subscriptions: portfolio.subscriptions,
       riskState,
-      broker: mem.brokers.get(userId) || null,
+      broker: brokerState.broker,
       postgresConfigured: getDatabaseStatus().configured,
       macroEvents: cal.events,
       customBlackouts: mem.customMacroEvents
