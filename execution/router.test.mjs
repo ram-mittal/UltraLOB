@@ -78,12 +78,18 @@ class MemoryStore {
     return { matched_connectors: ids.length, queued_commands: ids.length, command_ids: ids };
   }
   async takeNextQueuedCommand(connectorId) {
+    const now = Date.now();
     const item = [...this.commands.values()].find((command) =>
-      command.connector_id === connectorId && command.status === "QUEUED"
+      command.connector_id === connectorId && (
+        command.status === "QUEUED" ||
+        (command.status === "DISPATCHED" && Number(command.lease_expires_at || 0) < now)
+      )
     );
     if (!item) return null;
     item.status = "DISPATCHED";
-    this.events.push({ connector_id: connectorId, command_id: item.id, event_type: "COMMAND_DISPATCHED", payload: {} });
+    item.attempts = (item.attempts || 0) + 1;
+    item.lease_expires_at = now + 15000;
+    this.events.push({ connector_id: connectorId, command_id: item.id, event_type: "COMMAND_DISPATCHED", payload: { attempts: item.attempts } });
     return item;
   }
   async updateCommandRisk(id, risk) {
@@ -308,6 +314,70 @@ test("does not dispatch from a non-demo heartbeat", async () => {
     const response = await fetch(ctx.url + "/connectors/" + pairing.connector.id + "/next", { headers: bearer });
     assert.equal(response.status, 403);
     assert.equal((await response.json()).code, "DEMO_ACCOUNT_REQUIRED");
+  } finally {
+    await new Promise((resolve) => ctx.server.close(resolve));
+  }
+});
+
+test("replays expired leases on reconnect and enforces broker order & deal reconciliation", async () => {
+  const ctx = await startTestServer();
+  try {
+    const admin = { "x-ultralob-admin-key": "unit-test-admin-key" };
+    const created = await postJson(ctx.url + "/connectors", {
+      label: "MT5 reconnect test",
+      broker: "MT5",
+      environment: "DEMO",
+      strategy_ids: ["ul-01-gold-trend"],
+      allowed_symbols: ["XAUUSD"]
+    }, admin);
+    const pairing = await created.json();
+    const bearer = { Authorization: "Bearer " + pairing.access_token };
+
+    await postJson(ctx.url + "/connectors/" + pairing.connector.id + "/heartbeat", heartbeatBody(), bearer);
+
+    await postJson(ctx.url + "/signals", {
+      signal_id: "signal-reconnect-001",
+      strategy_id: "ul-01-gold-trend",
+      strategy_version: "1.0.0",
+      symbol: "XAUUSD",
+      side: "BUY",
+      risk_pct: 0.5,
+      stop_loss: 1995,
+      take_profit: 2010
+    }, admin);
+
+    const firstPoll = await fetch(ctx.url + "/connectors/" + pairing.connector.id + "/next", { headers: bearer });
+    const firstCmd = await firstPoll.json();
+    assert.equal(firstCmd.status, "command");
+
+    // Simulate network drop before ack and lease expiration, followed by reconnect heartbeat
+    ctx.store.commands.get(firstCmd.command_id).lease_expires_at = Date.now() - 1000;
+    await postJson(ctx.url + "/connectors/" + pairing.connector.id + "/heartbeat", heartbeatBody(), bearer);
+
+    const reconnectPoll = await fetch(ctx.url + "/connectors/" + pairing.connector.id + "/next", { headers: bearer });
+    const replayedCmd = await reconnectPoll.json();
+    assert.equal(replayedCmd.status, "command");
+    assert.equal(replayedCmd.command_id, firstCmd.command_id);
+    assert.equal(ctx.store.commands.get(firstCmd.command_id).attempts, 2);
+
+    // Reject FILLED ack missing broker_deal_id reconciliation record
+    const missingDealAck = await postJson(
+      ctx.url + "/connectors/" + pairing.connector.id + "/commands/" + firstCmd.command_id + "/ack",
+      { status: "FILLED", broker_order_id: "550101" },
+      bearer
+    );
+    assert.equal(missingDealAck.status, 400);
+    assert.equal((await missingDealAck.json()).code, "BROKER_RECONCILIATION_REQUIRED");
+
+    // Valid FILLED ack with both broker_order_id and broker_deal_id reconciles cleanly
+    const reconciledAck = await postJson(
+      ctx.url + "/connectors/" + pairing.connector.id + "/commands/" + firstCmd.command_id + "/ack",
+      { status: "FILLED", broker_order_id: "550101", broker_deal_id: "880202", broker_retcode: "10009" },
+      bearer
+    );
+    assert.equal(reconciledAck.status, 200);
+    assert.equal((await reconciledAck.json()).command_status, "FILLED");
+    assert.equal(ctx.store.commands.get(firstCmd.command_id).broker_deal_id, "880202");
   } finally {
     await new Promise((resolve) => ctx.server.close(resolve));
   }

@@ -329,6 +329,8 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(statusData.connected, false);
     assert.equal(statusData.upstreamVerified, false);
     assert.equal(statusData.verification_status, "DISCONNECTED");
+    assert.equal(statusData.status_breakdown.account_connection, "DISCONNECTED");
+    assert.equal(statusData.status_breakdown.demo_execution, "NOT_READY");
     assert.equal(statusData.execution_bridge.requires_postgresql, true);
     assert.equal(statusData.execution_bridge.storage, "not-configured");
 
@@ -423,7 +425,31 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
     assert.equal(fundRes.status, 200);
     assert.equal((await fundRes.json()).balance, 10000);
 
-    const mcExec = await fetch(baseUrl + "/api/copy-trading/mc-signal", {
+    // Monte Carlo evaluation is pure research unless backed by a human-approved TRADE decision + Risk Gate
+    const mcEvalOnly = await fetch(baseUrl + "/api/copy-trading/mc-signal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({
+        symbol: "BTC/USD",
+        spot: 97500,
+        direction: "long",
+        targetFirstProb: 0.68,
+        stopFirstProb: 0.22,
+        expectedReturn: 0.012,
+        medianReturn: 0.010,
+        stopPrice: 96525,
+        targetPrice: 98962.5,
+        execute: false
+      })
+    });
+    assert.equal(mcEvalOnly.status, 200);
+    const mcEvalData = await mcEvalOnly.json();
+    assert.equal(mcEvalData.evaluation.qualified, true);
+    assert.equal(mcEvalData.evaluation.data_origin, "SIMULATED_RESEARCH");
+    assert.equal(mcEvalData.executedTrades.length, 0);
+
+    // Attempting to execute Monte Carlo signal directly without an approved AI decision must fail (403)
+    const mcUnapproved = await fetch(baseUrl + "/api/copy-trading/mc-signal", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
       body: JSON.stringify({
@@ -439,10 +465,18 @@ test("Render adapter serves Phase 1 institutional SPA, RBAC auth, honest strateg
         execute: true
       })
     });
-    assert.equal(mcExec.status, 200);
-    const mcData = await mcExec.json();
-    assert.equal(mcData.evaluation.qualified, true);
-    assert.equal(mcData.executedTrades.length, 1);
+    assert.equal(mcUnapproved.status, 403);
+    assert.equal((await mcUnapproved.json()).code, "DECISION_APPROVAL_REQUIRED");
+
+    // Manual Paper Sandbox ticket executes safely through Independent Risk Engine
+    const manualPaperExec = await fetch(baseUrl + "/api/copy-trading/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${invData.token}` },
+      body: JSON.stringify({ symbol: "BTC/USD", side: "BUY", qty: 0.01, price: 97500 })
+    });
+    assert.equal(manualPaperExec.status, 201);
+    const execPayload = await manualPaperExec.json();
+    assert.equal(execPayload.trade.data_origin, "PAPER_SANDBOX");
 
     // MT5 bridge signal polling also requires PostgreSQL storage (503 without DATABASE_URL)
     const signals = await fetch(

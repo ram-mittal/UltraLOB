@@ -468,11 +468,19 @@ export function createExecutionRouter({
     if (status === "REJECTED" && !cleanString(body.error_message, 240)) {
       return errorResponse(res, 400, "REJECTION_REASON_REQUIRED", "A rejection reason is required.");
     }
+    const brokerOrderId = cleanString(body.broker_order_id, 64) || null;
+    const brokerDealId = cleanString(body.broker_deal_id, 64) || null;
+    if (["ACCEPTED", "PARTIAL", "FILLED"].includes(status) && !brokerOrderId) {
+      return errorResponse(res, 400, "BROKER_RECONCILIATION_REQUIRED", "broker_order_id is required to acknowledge accepted or filled orders.");
+    }
+    if (["PARTIAL", "FILLED"].includes(status) && !brokerDealId) {
+      return errorResponse(res, 400, "BROKER_RECONCILIATION_REQUIRED", "broker_deal_id is required to reconcile filled or partial executions.");
+    }
 
     const updated = await store.acknowledgeCommand(req.connector.id, req.params.commandId, {
       status,
-      broker_order_id: cleanString(body.broker_order_id, 64) || null,
-      broker_deal_id: cleanString(body.broker_deal_id, 64) || null,
+      broker_order_id: brokerOrderId,
+      broker_deal_id: brokerDealId,
       broker_retcode: cleanString(body.broker_retcode, 64) || null,
       broker_comment: cleanString(body.broker_comment, 240) || null,
       error_code: cleanString(body.error_code, 64) || null,

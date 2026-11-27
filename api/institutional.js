@@ -243,10 +243,41 @@ export default async function institutionalHandler(request, response, { executio
   if (request.method === "GET" && subPath === "/organization") {
     const gate = authorizeRequest(auth, ["portfolio:read", "org:manage"], { isMutation: false, apiKeyScope: "portfolio:read" });
     if (!gate.ok) return response.status(gate.status).json({ error: gate.error, code: gate.code });
-    const members = mem.orgMembers.filter((m) => m.ownerUserId === userId || (auth.orgId && m.orgId === auth.orgId));
+
+    let orgName = null;
+    let members = mem.orgMembers.filter((m) => m.ownerUserId === userId || (auth.orgId && m.orgId === auth.orgId));
+    if (dbAvailable && auth.orgId && /^[0-9a-f-]{36}$/i.test(auth.orgId)) {
+      const [orgRes, memRes] = await Promise.all([
+        query(`SELECT name FROM organizations WHERE id = $1 LIMIT 1`, [auth.orgId]).catch(() => ({ rows: [] })),
+        query(
+          `SELECT u.id, u.email, u.name, om.org_role, u.status, om.created_at
+           FROM org_members om
+           JOIN users u ON u.id = om.user_id
+           WHERE om.org_id = $1
+           ORDER BY om.created_at ASC`,
+          [auth.orgId]
+        ).catch(() => ({ rows: [] }))
+      ]);
+      orgName = orgRes.rows[0]?.name || null;
+      const seen = new Set(memRes.rows.map((r) => r.email));
+      members = [
+        ...memRes.rows.map((r) => ({
+          id: r.id,
+          orgId: auth.orgId,
+          email: r.email,
+          name: r.name,
+          org_role: r.org_role,
+          status: r.status,
+          created_at: r.created_at
+        })),
+        ...members.filter((m) => !seen.has(m.email))
+      ];
+    }
+
     return response.status(200).json({
       organization: {
         org_id: auth.orgId || null,
+        name: orgName,
         role: auth.role,
         can_manage_org: roleHasPermission(auth.role, "org:manage") || auth.role === "admin",
         members
@@ -262,12 +293,42 @@ export default async function institutionalHandler(request, response, { executio
     if (!cleanEmail || !cleanEmail.includes("@")) {
       return response.status(400).json({ error: "Valid member email is required." });
     }
+    const cleanOrgRole = ["OWNER", "MANAGER", "ANALYST", "RISK_OFFICER", "MEMBER"].includes(org_role) ? org_role : "ANALYST";
+    if (dbAvailable && auth.orgId && /^[0-9a-f-]{36}$/i.test(auth.orgId)) {
+      const existingUser = await query(`SELECT id, email FROM users WHERE email = $1 LIMIT 1`, [cleanEmail]).catch(() => ({ rows: [] }));
+      if (existingUser.rows[0]) {
+        await query(
+          `INSERT INTO org_members (org_id, user_id, org_role)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (org_id, user_id) DO UPDATE SET org_role = $3`,
+          [auth.orgId, existingUser.rows[0].id, cleanOrgRole]
+        );
+        await recordAuditLog({
+          actorUserId: auth.userId,
+          actorRole: auth.role,
+          action: "ORG_MEMBER_UPDATED",
+          targetType: "organization",
+          targetId: auth.orgId,
+          details: { member_email: cleanEmail, org_role: cleanOrgRole }
+        });
+        return response.status(201).json({
+          member: {
+            id: existingUser.rows[0].id,
+            orgId: auth.orgId,
+            email: cleanEmail,
+            org_role: cleanOrgRole,
+            status: "ACTIVE",
+            created_at: new Date().toISOString()
+          }
+        });
+      }
+    }
     const member = {
       id: "mem-" + crypto.randomUUID().slice(0, 8),
       ownerUserId: userId,
       orgId: auth.orgId || userId,
       email: cleanEmail,
-      org_role: ["OWNER", "MANAGER", "ANALYST", "RISK_OFFICER", "MEMBER"].includes(org_role) ? org_role : "ANALYST",
+      org_role: cleanOrgRole,
       status: "INVITED",
       created_at: new Date().toISOString()
     };

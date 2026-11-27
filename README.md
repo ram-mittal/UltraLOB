@@ -45,7 +45,26 @@ UltraLOB's web architecture provides **Institutional Strategy Allocation, Resear
 * **Institutional Reports, Mandates & Enterprise Keys (`institutional/`)**: Investor mandate enforcement (`investor_profiles`), JSON/CSV statements, non-billing High-Water-Mark fee accounting previews, and SHA-256 enterprise API keys (`x-api-key`).
 * **Real-Time Market Feeds & Classic Terminal (`/terminal`, `/legacy`)**: Browser-direct Kraken Spot BTC/USD WebSocket, server-side Twelve Data `XAU/USD` & US equity candles/streams, and Antithetic GBM Monte Carlo pricing.
 
-**Execution disclaimer:** All hosted broker connectors default to **DEMO ONLY** (`LIVE` accounts are rejected by design in both API and MQL5 EA). Simulated/Monte Carlo research runs are explicitly labeled and never mixed with real historical or broker-confirmed data. See [SETUP.md](SETUP.md) for PostgreSQL and API key setup.
+**Execution & Runtime Disclaimer:**
+- **C++ Engine vs. Web App:** The standalone C++20 FIX 4.4 / binary matching engine (`server/main.cpp`) is a **separate runtime** and is **not connected** to the hosted Node/Render web application.
+- **Simulated FIX Ticket:** The hosted `/legacy` FIX 4.4 order ticket (`TargetCompID=ULTRALOB-MOCK`) and depth ladder are **simulated in-browser** and do not route orders to a broker or C++ engine.
+- **MT5 Bridge is Demo-Only:** All MT5 connectors enforce `DEMO_ONLY` (`LIVE` accounts are rejected by both API and MQL5 EA) and strictly require persistent PostgreSQL (`DATABASE_URL`).
+- **Exness REST API:** Not yet implemented (`501 ADAPTER_NOT_IMPLEMENTED`). Direct MT5 broker passwords are not collected (`501`).
+
+### Component Maturity & Runtime Classification
+
+| Component | Classification | Scope & Current Limitations |
+|---|---|---|
+| C++20 Limit Order Book, FIX 4.4 Engine, WAL Journal & Risk Engine | **Implemented and tested** *(standalone C++ CI)* | Standalone native binaries (`server/main.cpp`); 16 GoogleTest suites via `ctest`; separate runtime from hosted web app |
+| Node.js Auth, RBAC, `HttpOnly` Refresh Cookies, CSRF & Strict CSP | **Implemented but not yet production-validated** | Tested under Node test suite (`npm test`); requires live Postgres + Redis/multi-node verification & private Render env vars |
+| Strategy Marketplace (`UL-01`–`UL-05`), Portfolio Allocator, Hard Risk Engine & 7-Engine AI Gate | **Implemented but not yet production-validated** | Core logic & unit tests pass; AI remains advisory-only and cannot bypass risk limits or lifecycle gates |
+| Python Research Backtester (`research/`) | **Implemented and tested** | Real OHLCV / MT5 CSV / walk-forward / cost models tested via `unittest`; synthetic runs cannot promote strategies to `BACKTESTED` |
+| Live Market Data Feeds (Kraken BTC/USD WS, Twelve Data REST/WS) | **Implemented and tested** *(unit/normalizer tests)* | External vendor latency/entitlements depend on Kraken public channels and `TWELVE_DATA_API_KEY` tier |
+| MT5 EA Execution Bridge (`execution/`, `mt5/Experts/UltraLOB_Bridge_EA.mq5`) | **Demo-only** | Strictly `DEMO_ONLY`; requires persistent PostgreSQL (`DATABASE_URL`) and live EA heartbeat; never routes live funds |
+| Hosted `/legacy` FIX 4.4 Order Ticket (`ULTRALOB-MOCK`) | **Simulated** | Client-side JavaScript simulation; disconnected from C++ matching engine and brokers |
+| Paper Sandbox Ledger (`PORTFOLIO PAPER_SANDBOX`) & Monte Carlo Forecasts | **Simulated** | Virtual $0 starting capital; Monte Carlo cannot execute or queue orders without an approved `TRADE` decision + risk gate |
+| PostgreSQL Portfolio/Risk Hydration & Audit Storage | **Implemented but not yet production-validated** | Migrations `001`–`005` implemented; requires provisioned PostgreSQL (`DATABASE_URL`); without it, non-MT5 state uses ephemeral memory |
+| Exness REST API Adapter, Live-Money Routing & Dedicated CUDA Pricing Host | **Planned or awaiting external integration** | Exness REST & direct MT5 password logins return `501 ADAPTER_NOT_IMPLEMENTED`; CUDA requires external NVIDIA GPU host |
 
 ---
 
@@ -53,10 +72,10 @@ UltraLOB's web architecture provides **Institutional Strategy Allocation, Resear
 
 UltraLOB is composed of **two separate runtime systems**:
 
-1. The hosted **web application** on Render, which serves the dashboard, market-data interfaces and Monte Carlo pricing API.
-2. The standalone **C++ exchange engine**, which accepts FIX 4.4 and binary TCP clients, applies pre-trade risk checks, sequences orders, journals requests, matches orders and publishes execution/market-data events.
+1. The hosted **web application** on Render (`server.js`), serving the SPA terminal, PostgreSQL/in-memory APIs, market-data gateways, simulated `/legacy` FIX view, Python research bridge, and DEMO-only MT5 Execution API.
+2. The standalone **C++ exchange engine** (`server/main.cpp`), which accepts FIX 4.4 and binary TCP clients, applies pre-trade risk checks, sequences orders, journals requests, matches orders and publishes UDP multicast ITCH market-data events.
 
-They are separate deployables. The current Render web terminal does **not** submit its simulated FIX ticket orders to the standalone C++ matching engine.
+They are completely separate deployables. Neither `/terminal` nor `/legacy` submits orders to the standalone C++ matching engine.
 
 ### Hosted web application and quantitative pricing
 
@@ -132,7 +151,7 @@ The first broker integration is a **single-operator MT5 demo connector**, not ye
 
 The connector is deliberately demo-only: it refuses real/contest accounts, connector creation only accepts `environment: DEMO`, and the execution health endpoint reports `live_execution_enabled: false`. Connector status changes, signal queueing, risk rejections, dispatches and broker acknowledgements are stored in an append-only PostgreSQL event table. An operator can pause or revoke a connector and inspect command/event history through admin-only routes. The EA's `Enable Demo Execution` input defaults to false. It polls with MQL5 `WebRequest` on a timer, so this first transport is for lower-frequency copy execution rather than tick-level/HFT routing.
 
-See [MT5 Demo Bridge setup](docs/MT5_DEMO_BRIDGE.md) for PostgreSQL configuration, connector pairing, EA installation and a controlled test signal. The API does not yet have user login/self-service account management, Exness integration, multi-strategy marketplace, billing or automated Monte Carlo-to-signal logic. The current web terminal's FIX order ticket remains a separate UI simulation.
+See [MT5 Demo Bridge setup](docs/MT5_DEMO_BRIDGE.md) for PostgreSQL configuration, connector pairing, EA installation and a controlled test signal. The Exness REST API adapter (`501 ADAPTER_NOT_IMPLEMENTED`) and live-money trading mode are **not implemented**. Monte Carlo simulations cannot automatically generate executed orders without a human-approved `TRADE` decision (`approved_decision_id`) and Independent Risk Engine gate clearance. The hosted `/legacy` FIX order ticket remains an explicitly simulated UI.
 
 ### Standalone C++ exchange and matching engine
 

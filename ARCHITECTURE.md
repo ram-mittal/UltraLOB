@@ -69,11 +69,20 @@ UltraLOB never mixes data sources without explicit UI and API labeling:
 
 ---
 
-## 4. Implementation Status (Phases 1–6 Complete)
+## 4. Component Maturity & Runtime Classification
 
-- **Phase 1 (Foundation):** Architecture audit, PostgreSQL schema + migrations (`db/migrations/`), RBAC auth + rotating refresh tokens (`api/auth.js`, `api/security.js`), honest XAUUSD Strategy Registry (`UL-01`..`UL-05` in `RESEARCH` status with zero fake metrics), 12-section institutional UI navigation, strict data provenance labeling.
-- **Phase 2 (Quant Research Engine):** Pure-Python OHLCV backtesting engine (`research/engine.py`, `metrics.py`, `monte_carlo.py`, `data_feed.py`) modeling spread/commission/slippage/swap/delay, OOS split, walk-forward windows, and Monte Carlo trade-sequence stress tests; implemented `UL-01`, `UL-02`, and `UL-03` on XAUUSD with Twelve Data & MT5 CSV loaders (`api/research.js`).
-- **Phase 3 (MT5 Execution Bridge):** Unified broker & copy-trading routing onto PostgreSQL `execution/` bridge (`UltraLOB_Bridge_EA.mq5` v0.2.0 with `OrderCalcMargin` & version telemetry), shared risk-normalized sizing (`computeRiskNormalizedVolume`), and real-time Execution Monitor UI (`/execution`).
-- **Phase 4 (Portfolio & Risk Engine):** Multi-strategy allocation optimizer (`portfolio/allocator.js` supporting Fixed, Risk-Weighted, Volatility-Adjusted, ERC, and Fractional), net/gross exposure aggregation, empirical correlation checks, independent hard Risk Engine (`risk/engine.js`) with Global/Strategy/Instrument kill switches and immutable audit trails (`/portfolio`, `/risk`).
-- **Phase 5 (UltraLOB AI):** 7-engine advisory-only pipeline (`ai/engines.js`, `ai/events.js`, `api/ai.js`) integrating Macro Event Intelligence blackouts and mandatory Risk Engine re-verification before human authorization (`/ai`).
-- **Phase 6 (Institutional Features):** Investor mandate enforcement (`investor_profiles`), organization desk management, HWM fee accounting framework (explicitly non-billing), scoped enterprise API keys, and CSV/JSON institutional statements (`/reports`, `/settings`).
+> **Critical Architectural Boundaries:**  
+> - **C++ Matching Engine (`server/main.cpp`)** is a standalone native TCP runtime and is **not connected** to the hosted Node/Render web application or web FIX view.  
+> - **Hosted FIX Order Ticket (`/legacy`, `ULTRALOB-MOCK`)** is **explicitly simulated** in browser JavaScript.  
+> - **MT5 Execution Bridge (`execution/`, `mt5/`)** is strictly **demo-only** and **requires persistent PostgreSQL storage (`DATABASE_URL`)**; without `DATABASE_URL`, non-MT5 components fall back to ephemeral in-memory storage and MT5 endpoints return `503`.  
+> - **Exness REST API adapter** and **direct MT5 password logins** are **not implemented** (`501 ADAPTER_NOT_IMPLEMENTED`).
+
+| Subsystem | Maturity Status | Notes & Validation Scope |
+|---|---|---|
+| C++20 Matching Engine, FIX 4.4 Acceptor & Binary Gateway (`src/`, `include/`, `server/main.cpp`) | **Implemented and tested** *(standalone C++ CI)* | Validated by 16 GoogleTest C++ suites; isolated from hosted Render web app |
+| Python Research Backtester & Option Pricer Core (`research/`, `pricing_service/`) | **Implemented and tested** | Tested via `research/tests` and `pricing_service/test_api.py`; CUDA requires external GPU host |
+| Portfolio Allocator, Hard Risk Engine, EA Risk Sizing & Governance Rules (`portfolio/`, `risk/`, `execution/risk-manager.js`) | **Implemented and tested** | Covered by automated `npm test` unit suites |
+| Auth (`HttpOnly` refresh cookies, 5m memory JWT, CSRF, strict CSP), RBAC, Ownership Isolation & PG Schema (`001`–`005`) | **Implemented but not yet production-validated** | Verified under Node HTTP integration tests with in-memory fallback; full production PostgreSQL deployment pending external host validation |
+| MT5 Demo Execution Bridge (`execution/router.js`, `postgres-store.js`, `UltraLOB_Bridge_EA.mq5`) | **Demo-only** | Strictly enforces `DEMO_ONLY`, fresh EA heartbeats, lease replay, and order/deal reconciliation; blocked (`503`) without `DATABASE_URL` |
+| Hosted `/legacy` FIX 4.4 Terminal, Paper Sandbox Portfolio, Monte Carlo Scenarios | **Simulated** | Client-side FIX simulation (`ULTRALOB-MOCK`) and virtual Paper Sandbox ledger; MC cannot execute without approved `TRADE` decision + risk check |
+| Exness REST API Adapter, Live-Money Broker Execution, External CUDA Cluster | **Planned or awaiting external integration** | Explicitly rejected (`501` / `403` / `CUDA unavailable`) in current build |

@@ -1,0 +1,106 @@
+name: UltraLOB CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  nodejs-and-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Syntax check all JavaScript / ESM modules
+        run: |
+          find api db execution institutional lib portfolio public/js risk server.js -maxdepth 3 \
+            -type f \( -name "*.js" -o -name "*.mjs" \) \
+            ! -path "public/vendor/*" \
+            -print0 | xargs -0 -n1 node --check
+
+      - name: Run full Node test suite (npm test)
+        run: npm test
+
+      - name: Dependency vulnerability audit (npm audit)
+        run: npm audit --audit-level=high
+
+  python-research-and-pricing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build pricing service for FastAPI tests
+        run: |
+          cmake -S pricing_service -B build-pricing -DCMAKE_BUILD_TYPE=Release -DULTRALOB_ENABLE_CUDA=OFF
+          cmake --build build-pricing --parallel 2
+          ctest --test-dir build-pricing --output-on-failure
+
+      - name: Install Python test and static analysis dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r pricing_service/requirements.txt pytest httpx ruff bandit
+
+      - name: Run Python research unit tests
+        run: python -B -m unittest discover -s research/tests -v
+
+      - name: Run FastAPI pricing integration tests
+        env:
+          ULTRALOB_TEST_BUILD_DIR: build-pricing
+        run: python -m pytest -q pricing_service/test_api.py
+
+      - name: Python static analysis & security scan (ruff + bandit)
+        run: |
+          python -m compileall -q research pricing_service
+          ruff check research pricing_service
+          bandit -r research pricing_service -x research/tests,pricing_service/test_api.py -ll
+
+  cpp-core-cmake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ninja and cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cppcheck
+
+      - name: Configure root CMake project
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build root CMake project
+        run: cmake --build build --parallel 2
+
+      - name: Run all C++ GoogleTest suites (ctest)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: C++ static analysis (cppcheck)
+        run: cppcheck --enable=warning,performance,portability --error-exitcode=0 --suppress=missingIncludeSystem include src server
+
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify no tracked bytecode, traces, or secret .env files
+        run: |
+          ! git ls-files | grep -E '(\.pyc$|__pycache__/|^trace\.json$)'
+          ! git ls-files | grep -E '^\.env(\.|$)' | grep -v '\.example$'

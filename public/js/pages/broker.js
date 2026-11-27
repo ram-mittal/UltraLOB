@@ -232,7 +232,10 @@ export async function init({ showToast }) {
             <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">PROVIDER / MODE</div><div class="text-[#e6edf6]">${esc(broker.name)}</div></div>
             <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">ACCOUNT LABEL</div><div class="text-[#e6edf6]">${esc(maskLogin(broker.account))}</div></div>
             <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">SERVER</div><div class="text-[#e6edf6]">${esc(broker.server)}</div></div>
-            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">UPSTREAM VERIFIED</div><div class="${verifiedConnected ? "text-[#22c55e]" : "text-[#eab308]"}">${verifiedConnected ? "TRUE" : "FALSE (PENDING)"}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">ACCOUNT CONNECTION</div><div class="text-[#93c5fd]">${esc(statusRes?.status_breakdown?.account_connection || "PAIRED")}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">TERMINAL HEARTBEAT</div><div class="text-[#e6edf6]">${esc(statusRes?.status_breakdown?.terminal_heartbeat || "AWAITING")}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">BROKER VERIFICATION</div><div class="${verifiedConnected ? "text-[#22c55e]" : "text-[#eab308]"}">${esc(statusRes?.status_breakdown?.broker_verification || (verifiedConnected ? "VERIFIED" : "PENDING"))}</div></div>
+            <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">DEMO EXECUTION GATE</div><div class="${verifiedConnected ? "text-[#22c55e]" : "text-[#94a3b8]"}">${esc(statusRes?.status_breakdown?.demo_execution || "NOT_READY")}</div></div>
             <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">BRIDGE TOKEN</div><div class="text-[#93c5fd] truncate">${esc(broker.bridgeToken || "—")}</div></div>
             <div class="panel-elevated p-2.5"><div class="text-[10px] text-[#64748b]">PENDING SIGNALS</div><div class="text-[#e6edf6]">${esc(String(broker.pendingSignals ?? 0))}</div></div>
           </div>

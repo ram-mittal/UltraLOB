@@ -443,7 +443,8 @@ export default async function copyTradingHandler(request, response, { executionS
       stopPrice,
       targetPrice,
       strategyId = "mc-research-signal",
-      execute = false
+      execute = false,
+      approved_decision_id = null
     } = request.body || {};
 
     const spotNum = Number(spot);
@@ -491,6 +492,46 @@ export default async function copyTradingHandler(request, response, { executionS
 
     let executedTrades = [];
     if (qualified && execute) {
+      // P1 Data Integrity: Monte Carlo simulations must NEVER automatically become trade instructions
+      // without a valid, human-approved TRADE decision (approved_decision_id) passing the hard risk gate.
+      const decisionId = approved_decision_id ? String(approved_decision_id).trim() : "";
+      let approvedDec = decisionId ? (mem.aiDecisions || []).find((d) => d.id === decisionId) : null;
+      if (!approvedDec && decisionId && dbAvailable && /^[0-9a-f-]{36}$/i.test(decisionId)) {
+        const decRes = await query(
+          `SELECT id, user_id, decision, risk_approved, human_approved_by, engine_outputs
+           FROM ai_decisions WHERE id = $1 LIMIT 1`,
+          [decisionId]
+        ).catch(() => ({ rows: [] }));
+        if (decRes.rows[0]) {
+          const r = decRes.rows[0];
+          const spec = r.engine_outputs?._decision_spec || {};
+          approvedDec = {
+            id: r.id,
+            userId: r.user_id,
+            decision: r.decision,
+            risk_approved: r.risk_approved,
+            human_approval_status: r.human_approved_by ? "APPROVED" : "PENDING",
+            expires_at: spec.expires_at || null
+          };
+        }
+      }
+      const notExpired = !approvedDec?.expires_at || Date.parse(approvedDec.expires_at) > Date.now();
+      const decValid = Boolean(
+        approvedDec &&
+        (approvedDec.userId === userId || auth.role === "admin") &&
+        approvedDec.human_approval_status === "APPROVED" &&
+        approvedDec.decision === "TRADE" &&
+        (approvedDec.risk_approved !== false && approvedDec.pipeline_stages?.["3_risk_engine"]?.approved !== false) &&
+        notExpired
+      );
+      if (!decValid) {
+        return response.status(403).json({
+          error: "Monte Carlo simulations cannot execute trade instructions without an approved, non-expired TRADE decision (approved_decision_id) and Risk Engine gate clearance.",
+          code: "DECISION_APPROVAL_REQUIRED",
+          evaluation
+        });
+      }
+
       const metrics = computePortfolioMetrics(portfolio);
       const effectiveRiskPct = metrics.balance > 0
         ? Math.min(riskState.limits.max_risk_per_trade_pct, Math.max(0.05, (cfg.riskAmountUsd / metrics.balance) * 100))

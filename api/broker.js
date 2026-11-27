@@ -138,15 +138,33 @@ export async function resolveUserBrokerStatus(userId, { executionStore = null, d
     ? mem.mt5Signals.filter((s) => s.bridgeToken === record.bridgeToken && s.status === "pending").length
     : 0;
 
+  const terminalHeartbeatStatus = record.mode === "metaapi-demo"
+    ? (upstreamVerified ? "NOT_APPLICABLE_METAAPI" : "NOT_APPLICABLE")
+    : connector?.terminal_connected
+      ? (verificationStatus === "VERIFIED_EA_HEARTBEAT" ? "ONLINE_FRESH" : "STALE")
+      : "AWAITING_HEARTBEAT";
+
+  const statusBreakdown = {
+    account_connection: "PAIRED",
+    terminal_heartbeat: terminalHeartbeatStatus,
+    broker_verification: verificationStatus,
+    demo_execution: upstreamVerified && (record.mode === "metaapi-demo" || connector?.ea_trade_allowed !== false)
+      ? "READY"
+      : "NOT_READY",
+    environment: "DEMO_ONLY"
+  };
+
   return {
     connected: upstreamVerified,
     paired: true,
     upstreamVerified,
     verification_status: verificationStatus,
+    status_breakdown: statusBreakdown,
     broker: {
       ...record,
       upstreamVerified,
       verification_status: verificationStatus,
+      status_breakdown: statusBreakdown,
       connected: upstreamVerified,
       data_origin: upstreamVerified ? "DEMO_BROKER" : "AWAITING_VERIFICATION",
       status: upstreamVerified ? "connected" : "pending_ea_heartbeat",
@@ -253,6 +271,13 @@ export default async function brokerHandler(request, response, { executionStore 
       paired: status.paired,
       upstreamVerified: status.upstreamVerified,
       verification_status: status.verification_status,
+      status_breakdown: status.status_breakdown || {
+        account_connection: status.paired ? "PAIRED" : "DISCONNECTED",
+        terminal_heartbeat: "NONE",
+        broker_verification: status.verification_status,
+        demo_execution: "NOT_READY",
+        environment: "DEMO_ONLY"
+      },
       broker: status.broker,
       execution_bridge: {
         postgres_configured: dbStatus.configured,

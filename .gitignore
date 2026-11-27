@@ -1,19 +1,40 @@
 # Build & dependencies
 build/
+build-*/
+cmake-build-*/
 .cache/
 node_modules/
 data/runtime.json
-__pycache__/
-*.pyc
-.pytest_cache/
 
-# Executables and debug symbols
+# Local environment secrets (preserve example templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.vercel.example
+!pricing_service/.env.example
+
+# Python caches & coverage
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Profiling traces, core dumps & build outputs
+trace.json
+*.trace.json
 *.exe
 *.pdb
 *.obj
 *.lib
 *.a
 *.dll
+*.so
+*.dylib
 
 # Logs and Journals
 *.journal
